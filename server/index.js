@@ -15494,8 +15494,11 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
 
   const orgScope = await resolveOrgScopeForRequest(req, context, { queryOrgId: queryOrgParam });
   const { resolvedOrgId, scopedOrgIds, membershipSet, primaryOrgId } = orgScope;
+  let effectiveScopedOrgIds = Array.isArray(scopedOrgIds) ? [...scopedOrgIds] : [];
+  let effectiveAssignedOnly = assignedOnly;
+  let membershipFallbackApplied = false;
   const requestOrgId = req.organizationId || null;
-  const effectiveOrgId = requestOrgId || resolvedOrgId || primaryOrgId || null;
+  let effectiveOrgId = requestOrgId || resolvedOrgId || primaryOrgId || null;
 
   if (effectiveOrgId && !context.isPlatformAdmin && !membershipSet.has(effectiveOrgId)) {
     res.status(403).json({
@@ -15507,29 +15510,84 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!context.isPlatformAdmin && scopedOrgIds.length === 0) {
-    res.status(403).json({
-      ok: false,
-      code: 'org_membership_required',
-      message: 'Organization membership required.',
-      requestId,
-    });
-    return;
+  if (!context.isPlatformAdmin && effectiveScopedOrgIds.length === 0) {
+    const userIdForFallback = typeof context.userId === 'string' ? context.userId.trim() : '';
+    if (userIdForFallback && supabase) {
+      try {
+        const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+        const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+        const userFilter = assignmentsSupportUserIdUuid
+          ? `user_id.eq.${userIdForFallback},user_id_uuid.eq.${userIdForFallback}`
+          : `user_id.eq.${userIdForFallback}`;
+        const { data: assignmentOrgRows, error: assignmentOrgError } = await supabase
+          .from('assignments')
+          .select(`${assignmentsOrgColumn},organization_id,org_id`)
+          .eq('assignment_type', 'course')
+          .eq('active', true)
+          .or(userFilter)
+          .limit(200);
+        if (assignmentOrgError) {
+          throw assignmentOrgError;
+        }
+        const derivedOrgIds = Array.from(
+          new Set(
+            (assignmentOrgRows || [])
+              .map((row) =>
+                normalizeOrgIdValue(
+                  pickOrgId(
+                    row?.organization_id,
+                    row?.org_id,
+                    assignmentsOrgColumn === 'organization_id' ? row?.organization_id : row?.org_id,
+                  ),
+                ),
+              )
+              .filter(Boolean),
+          ),
+        );
+        if (derivedOrgIds.length > 0) {
+          effectiveScopedOrgIds = derivedOrgIds;
+          effectiveOrgId = effectiveOrgId || derivedOrgIds[0] || null;
+          effectiveAssignedOnly = true;
+          membershipFallbackApplied = true;
+        }
+      } catch (fallbackError) {
+        logger.warn('[client/courses] org_scope_fallback_failed', {
+          requestId,
+          userId: userIdForFallback,
+          message: fallbackError?.message ?? String(fallbackError),
+        });
+      }
+    }
+
+    if (effectiveScopedOrgIds.length === 0) {
+      res.status(200).json({
+        ok: true,
+        data: [],
+        requestId,
+        meta: {
+          code: 'org_membership_required',
+          membershipFallbackApplied: false,
+        },
+      });
+      return;
+    }
   }
 
   const assignmentOrgId = effectiveOrgId ?? primaryOrgId;
   logger.debug('[client/courses] request_context', {
     requestId,
     assignedOnly,
+    effectiveAssignedOnly,
     requestedOrgId: queryOrgParam,
     resolvedOrgId,
     primaryOrgId,
     requestOrgId,
     effectiveOrgId,
-    scopedOrgIds,
+    scopedOrgIds: effectiveScopedOrgIds,
+    membershipFallbackApplied,
     membershipCount: membershipSet.size,
   });
-  if (assignedOnly && !assignmentOrgId && !context.isPlatformAdmin) {
+  if (effectiveAssignedOnly && !assignmentOrgId && !context.isPlatformAdmin) {
     res.status(400).json({
       ok: false,
       code: 'org_required',
@@ -15766,9 +15824,9 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   try {
     let assignmentCourseIds = null;
-    if (assignedOnly && assignmentOrgId) {
+    if (effectiveAssignedOnly && assignmentOrgId) {
       assignmentCourseIds = await resolveAssignmentCourseIds();
-      if (assignedOnly && Array.isArray(assignmentCourseIds) && assignmentCourseIds.length === 0) {
+      if (effectiveAssignedOnly && Array.isArray(assignmentCourseIds) && assignmentCourseIds.length === 0) {
         res.status(200).json({ ok: true, data: [], requestId });
         return;
       }
@@ -15786,14 +15844,14 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
       .order('order_index', { ascending: true, foreignTable: 'modules' })
       .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE });
 
-    if (assignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)) {
+    if (effectiveAssignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)) {
       courseQuery = courseQuery.in('id', assignmentCourseIds);
     }
-    if (!context.isPlatformAdmin || scopedOrgIds.length > 0) {
-      if (scopedOrgIds.length === 1) {
-        courseQuery = courseQuery.eq('organization_id', scopedOrgIds[0]);
-      } else if (scopedOrgIds.length > 1) {
-        courseQuery = courseQuery.in('organization_id', scopedOrgIds);
+    if (!context.isPlatformAdmin || effectiveScopedOrgIds.length > 0) {
+      if (effectiveScopedOrgIds.length === 1) {
+        courseQuery = courseQuery.eq('organization_id', effectiveScopedOrgIds[0]);
+      } else if (effectiveScopedOrgIds.length > 1) {
+        courseQuery = courseQuery.in('organization_id', effectiveScopedOrgIds);
       }
     }
 
@@ -15806,10 +15864,11 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     const list = Array.isArray(data) ? data : [];
     const responseMeta = {
       orgId: assignmentOrgId ?? (scopedOrgIds.length === 1 ? scopedOrgIds[0] : null),
-      scopedOrgCount: scopedOrgIds.length,
-      assignedOnly,
-      assignmentFilterActive: assignedOnly && Array.isArray(assignmentCourseIds),
+      scopedOrgCount: effectiveScopedOrgIds.length,
+      assignedOnly: effectiveAssignedOnly,
+      assignmentFilterActive: effectiveAssignedOnly && Array.isArray(assignmentCourseIds),
       assignmentCourseCount: Array.isArray(assignmentCourseIds) ? assignmentCourseIds.length : null,
+      membershipFallbackApplied,
       count: list.length,
     };
     if (list.length === 0) {
@@ -15828,7 +15887,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     logStructuredError('[client/courses] published_fetch_failed', error, {
       route: '/api/client/courses',
       queryName: error?.queryName ?? 'client_courses_published',
-      assignedOnly,
+      assignedOnly: effectiveAssignedOnly,
       orgId: assignmentOrgId ?? null,
       requestId,
     });
@@ -23079,6 +23138,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   let updatedTotal = 0;
   let skippedTotal = 0;
   const insertedAssignments = [];
+  const requestScopedUserAssignmentKeys = new Set();
   const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
   const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
 
@@ -23221,15 +23281,32 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
         targetUserIds = [null];
       }
     }
-    const hasOrgWideTarget = targetUserIds.length === 1 && targetUserIds[0] === null;
     const buildSurveyAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
+    const hasOrgWideTarget = targetUserIds.length === 1 && targetUserIds[0] === null;
+    const effectiveTargetUserIds = hasOrgWideTarget
+      ? targetUserIds
+      : targetUserIds.filter((value) => {
+        const key = buildSurveyAssignmentKey(value);
+        if (requestScopedUserAssignmentKeys.has(key)) {
+          return false;
+        }
+        requestScopedUserAssignmentKeys.add(key);
+        return true;
+      });
+    const requestScopedDuplicateSkipCount = Math.max(targetUserIds.length - effectiveTargetUserIds.length, 0);
+
+    if (effectiveTargetUserIds.length === 0) {
+      skippedTotal += requestScopedDuplicateSkipCount;
+      return;
+    }
+
     const orgColumnName = assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id';
     const assignmentUserKeyExpr = assignmentsSupportUserIdUuid
       ? 'coalesce(user_id::text, user_id_uuid::text)'
       : 'user_id::text';
 
     const verifyPersistedSurveyAssignments = async () => {
-      const expectedKeys = new Set(targetUserIds.map((value) => buildSurveyAssignmentKey(value)));
+  const expectedKeys = new Set(effectiveTargetUserIds.map((value) => buildSurveyAssignmentKey(value)));
       if (expectedKeys.size === 0) return [];
 
       const runVerificationRead = async () => {
@@ -23245,7 +23322,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
                 and active = true
                 and ${assignmentUserKeyExpr} = any($4::text[])
             `,
-            [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, targetUserIds],
+              [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, effectiveTargetUserIds],
           );
         }
 
@@ -23331,13 +23408,12 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
             select id, user_id, user_id_uuid, metadata, assigned_by
             from public.assignments
             where survey_id::text = $1::text
-              and ${orgColumnName}::text = $2::text
-              and assignment_type = $3
+              and assignment_type = $2
               and active = true
-              and (${assignmentUserKeyExpr} = any($4::text[]))
+              and (${assignmentUserKeyExpr} = any($3::text[]))
             for update
           `,
-          [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, targetUserIds],
+          [surveyId, SURVEY_ASSIGNMENT_TYPE, effectiveTargetUserIds],
         )
         : await tx.unsafe(
           `
@@ -23360,7 +23436,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
         existingMap.set(buildKey(userKey), row);
       });
 
-  targetUserIds.forEach((userId) => {
+      effectiveTargetUserIds.forEach((userId) => {
         const key = buildKey(userId);
         const existing = existingMap.get(key);
         if (existing) {
@@ -23368,6 +23444,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
             id: existing.id,
             metadata: mergeMetadata(existing.metadata),
             active: true,
+            organization_id: canonicalOrganizationId,
           };
           if (dueProvided) patch.due_at = dueAtValue ?? null;
           if (noteProvided) patch.note = noteValue ?? null;
@@ -23402,6 +23479,10 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
           params.push(patch.assigned_by ?? null);
           setSegments.push(`assigned_by = $${params.length}`);
         }
+        if (Object.prototype.hasOwnProperty.call(patch, 'organization_id')) {
+          params.push(patch.organization_id ?? null);
+          setSegments.push(`${orgColumnName} = $${params.length}`);
+        }
         params.push(patch.id);
         await tx.unsafe(
           `
@@ -23422,7 +23503,17 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
                 (survey_id, course_id, user_id, user_id_uuid, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
               values
                 ($1, null, $2, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb, true, $10, now(), now())
-              returning id
+              on conflict on constraint assignments_unique_user_per_survey
+              do update
+                set ${orgColumnName} = excluded.${orgColumnName},
+                    status = excluded.status,
+                    due_at = excluded.due_at,
+                    note = excluded.note,
+                    assigned_by = excluded.assigned_by,
+                    metadata = coalesce(public.assignments.metadata, '{}'::jsonb) || excluded.metadata,
+                    active = true,
+                    updated_at = now()
+              returning id, (xmax = 0) as inserted
             `,
             [
               insertRow.survey_id,
@@ -23443,7 +23534,17 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
                 (survey_id, course_id, user_id, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
               values
                 ($1, null, $2, $3, $4, $5, $6, $7, $8::jsonb, true, $9, now(), now())
-              returning id
+              on conflict on constraint assignments_unique_user_per_survey
+              do update
+                set ${orgColumnName} = excluded.${orgColumnName},
+                    status = excluded.status,
+                    due_at = excluded.due_at,
+                    note = excluded.note,
+                    assigned_by = excluded.assigned_by,
+                    metadata = coalesce(public.assignments.metadata, '{}'::jsonb) || excluded.metadata,
+                    active = true,
+                    updated_at = now()
+              returning id, (xmax = 0) as inserted
             `,
             [
               insertRow.survey_id,
@@ -23457,8 +23558,10 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
               canonicalOrganizationId,
             ],
           );
-        if (Array.isArray(inserted) && inserted[0]?.id) {
-          insertedRows.push(inserted[0]);
+        if (Array.isArray(inserted) && inserted[0]?.id && inserted[0]?.inserted === true) {
+          insertedRows.push({ id: inserted[0].id });
+        } else if (Array.isArray(inserted) && inserted[0]?.id) {
+          updates.push({ id: inserted[0].id, metadata: insertRow.metadata, assigned_by: insertRow.assigned_by ?? null });
         }
       }
 
@@ -23475,7 +23578,8 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   aggregateResponse.push(...persistedRows);
     insertedTotal += insertedRows.length;
     updatedTotal += updatedRows.length;
-    skippedTotal += Math.max(targetUserIds.length - insertedRows.length - updatedRows.length, 0);
+    skippedTotal += Math.max(effectiveTargetUserIds.length - insertedRows.length - updatedRows.length, 0);
+    skippedTotal += requestScopedDuplicateSkipCount;
     insertedAssignments.push(...insertedRows);
   };
 
@@ -23625,6 +23729,19 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       res.status(503).json({
         error: 'database_unavailable',
         message: 'Survey assignment write failed because the database is unavailable.',
+      });
+      return;
+    }
+    if (error?.code === '23505') {
+      res.status(200).json({
+        data: aggregateResponse,
+        meta: {
+          inserted: insertedTotal,
+          updated: updatedTotal,
+          skipped: Math.max(skippedTotal, 1),
+          invalidTargetIds,
+          duplicateConflictRecovered: true,
+        },
       });
       return;
     }

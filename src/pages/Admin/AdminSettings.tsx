@@ -20,6 +20,8 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import Button from '../../components/ui/Button';
 
 const AdminSettings = () => {
   const [activeTab, setActiveTab] = useState('profile');
@@ -81,6 +83,15 @@ const AdminSettings = () => {
     { id: 'branding', name: 'Branding', icon: Palette },
     { id: 'integrations', name: 'Integrations', icon: Globe }
   ];
+
+  const tabDescriptions: Record<string, string> = {
+    profile: 'Update your admin profile and contact details.',
+    notifications: 'Choose how and when you receive platform updates.',
+    security: 'Review access controls and credential visibility settings.',
+    system: 'Manage global platform behavior and operational defaults.',
+    branding: 'Control colors, assets, and custom style overrides.',
+    integrations: 'Store third-party credentials and monitor connection readiness.'
+  };
 
   const handleInputChange = (section: string, field: string, value: any) => {
     setSettings(prev => ({
@@ -314,10 +325,9 @@ const AdminSettings = () => {
               readOnly
               className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm"
             />
-            <button className="bg-orange-500 text-white px-3 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-1">
-              <RefreshCw className="h-4 w-4" />
-              <span>Regenerate</span>
-            </button>
+            <Button variant="primary" size="sm" leadingIcon={<RefreshCw className="h-4 w-4" />}>
+              Regenerate
+            </Button>
           </div>
         </div>
       </div>
@@ -594,26 +604,29 @@ const AdminSettings = () => {
   );
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Settings</h1>
-        <p className="text-gray-600">Manage your admin profile, system configuration, and integrations</p>
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Settings', to: '/admin/settings' }]} />
+      </div>
+      <div className="mb-8 space-y-2">
+        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
+        <p className="text-sm text-gray-600 sm:text-base">Manage your admin profile, system configuration, and integrations</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Sidebar */}
         <div className="lg:col-span-1">
-          <nav className="space-y-2">
+          <nav className="flex gap-2 overflow-x-auto rounded-lg border border-gray-200 bg-white p-2 lg:block lg:space-y-2 lg:border-0 lg:bg-transparent lg:p-0">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`w-full flex items-center space-x-3 px-4 py-3 text-left rounded-lg transition-colors duration-200 ${
+                  className={`flex shrink-0 items-center space-x-3 rounded-lg px-4 py-3 text-left transition-colors duration-200 lg:w-full ${
                     activeTab === tab.id
-                      ? 'bg-orange-50 text-orange-600 border-r-2 border-orange-500'
+                      ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-200 lg:border-r-2 lg:border-orange-500 lg:ring-0'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`}
                 >
@@ -627,18 +640,17 @@ const AdminSettings = () => {
 
         {/* Content */}
         <div className="lg:col-span-3">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-            <div className="flex items-center justify-between mb-8">
-              <h2 className="text-2xl font-bold text-gray-900">
+          <div className="card-lg p-5 sm:p-8">
+            <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
                 {tabs.find(tab => tab.id === activeTab)?.name}
-              </h2>
-              <button
-                onClick={handleSave}
-                className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
-              >
-                <Save className="h-4 w-4" />
-                <span>Save Changes</span>
-              </button>
+                </h2>
+                <p className="mt-1 text-sm text-gray-600">{tabDescriptions[activeTab]}</p>
+              </div>
+              <Button onClick={handleSave} size="sm" leadingIcon={<Save className="h-4 w-4" />}>
+                Save Changes
+              </Button>
             </div>
 
             {activeTab === 'profile' && renderProfileTab()}

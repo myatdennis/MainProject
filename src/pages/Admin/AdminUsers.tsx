@@ -33,6 +33,7 @@ import type { CourseAssignment } from '../../types/assignment';
 import PageWrapper from '../../components/PageWrapper';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
+import Button from '../../components/ui/Button';
 import ActionsMenu from '../../components/ui/ActionsMenu';
 import { listOrgs } from '../../dal/orgs';
 import { useSecureAuth } from '../../context/SecureAuthContext';
@@ -555,20 +556,28 @@ const AdminUsers = () => {
           <h1 className="h1">User Management</h1>
           <p className="muted-text">Monitor learner progress, assign courses, and manage user accounts</p>
         </div>
-        <button
+        <Button
           onClick={() => void fetchUsers()}
-          className="flex items-center gap-2 text-gray-500 hover:text-gray-800 text-sm"
+          variant="ghost"
+          size="sm"
+          leadingIcon={<RefreshCw className="h-4 w-4" />}
           title="Refresh users"
         >
-          <RefreshCw className="h-4 w-4" />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {usersError && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 mt-0.5 flex-shrink-0" />
-          <p className="text-sm">{usersError}</p>
+          <div className="flex-1">
+            <p className="text-sm">{usersError}</p>
+            <div className="mt-3">
+              <Button size="sm" variant="outline" onClick={() => void fetchUsers()}>
+                Retry loading users
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -847,13 +856,14 @@ const AdminUsers = () => {
               ? 'Invite your first user by clicking "Add User" above.'
               : 'Try adjusting your search or filter criteria.'}
             action={(
-              <button
-                type="button"
+              <Button
                 onClick={() => { setSearchTerm(''); setFilterOrg('all'); setFilterStatus('all'); setSelectedUsers([]); }}
-                className="btn-outline"
+                type="button"
+                variant="outline"
+                size="sm"
               >
                 Reset filters
-              </button>
+              </Button>
             )}
             illustrationSrc={undefined}
           />

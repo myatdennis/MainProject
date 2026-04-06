@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, FileText, Video, Archive, Search, Filter, Calendar, Folder } from 'lucide-react';
 import EmptyState from '../../components/ui/EmptyState';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import Button from '../../components/ui/Button';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import documentsDal, { type DocumentMeta } from '../../dal/documents';
 import { useToast } from '../../context/ToastContext';
@@ -19,10 +20,14 @@ const LMSDownloads = () => {
   const [bulkDownloading, setBulkDownloading] = useState(false);
   const { user, activeOrgId, sessionStatus, orgResolutionStatus } = useSecureAuth();
   const { showToast } = useToast();
+  const awaitingAuth = sessionStatus !== 'authenticated';
+  const awaitingOrgContext = !awaitingAuth && orgResolutionStatus !== 'ready';
 
   const loadDocuments = useCallback(async () => {
-    if (sessionStatus !== 'authenticated') return;
-    if (orgResolutionStatus !== 'ready') return;
+    if (sessionStatus !== 'authenticated' || orgResolutionStatus !== 'ready') {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -122,6 +127,10 @@ const LMSDownloads = () => {
   };
 
   const handleSelectAll = () => {
+    if (filteredResources.length === 0) {
+      setSelectedItems([]);
+      return;
+    }
     if (selectedItems.length === filteredResources.length) {
       setSelectedItems([]);
     } else {
@@ -205,18 +214,37 @@ const LMSDownloads = () => {
               title="Downloads unavailable"
               description={loadError}
               action={(
-                <button
-                  type="button"
-                  onClick={loadDocuments}
-                  className="btn-outline"
-                >
+                <Button type="button" variant="outline" size="sm" onClick={() => void loadDocuments()}>
                   Retry
-                </button>
+                </Button>
               )}
               illustrationSrc={undefined}
             />
           </div>
         )}
+
+        {!isLoading && !loadError && awaitingAuth && (
+          <div className="mb-6">
+            <EmptyState
+              title="Sign in to view downloads"
+              description="Your resources are available once your learner session is active."
+              action={<Button asChild size="sm"><a href="/login">Go to login</a></Button>}
+            />
+          </div>
+        )}
+
+        {!isLoading && !loadError && awaitingOrgContext && (
+          <div className="mb-6">
+            <EmptyState
+              title="Preparing your workspace"
+              description="We’re still resolving your organization context so we can show the right files."
+              action={<Button variant="ghost" size="sm" onClick={() => void loadDocuments()}>Retry</Button>}
+            />
+          </div>
+        )}
+
+        {!awaitingAuth && !awaitingOrgContext && (
+          <>
 
       {/* Search and Filter Bar */}
       <div className="card-lg card-hover mb-8">
@@ -250,20 +278,21 @@ const LMSDownloads = () => {
           
           <div className="flex items-center space-x-4">
             {selectedItems.length > 0 && (
-              <button
+              <Button
                 onClick={handleDownloadSelected}
                 disabled={bulkDownloading}
-                className="btn-cta px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 disabled:opacity-70"
+                leadingIcon={<Download className="h-4 w-4" />}
+                size="sm"
               >
                 <Download className="h-4 w-4" />
                 <span>{bulkDownloading ? 'Preparing downloads…' : `Download Selected (${selectedItems.length})`}</span>
-              </button>
+              </Button>
             )}
             <button
               onClick={handleSelectAll}
               className="nav-link font-medium"
             >
-              {selectedItems.length === filteredResources.length ? 'Deselect All' : 'Select All'}
+              {filteredResources.length > 0 && selectedItems.length === filteredResources.length ? 'Deselect All' : 'Select All'}
             </button>
           </div>
         </div>
@@ -274,7 +303,9 @@ const LMSDownloads = () => {
         <h2 className="h2 mb-4">Browse by Category</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {categories.map((category) => {
-            const categoryCount = resourceItems.filter((r) => r.category === category).length;
+            const categoryCount = category === 'All Modules'
+              ? resourceItems.length
+              : resourceItems.filter((r) => r.category === category).length;
             const isActive = activeCategory === category || (activeCategory === 'all' && category === 'All Modules');
             return (
               <button
@@ -349,15 +380,16 @@ const LMSDownloads = () => {
                   <div className="text-sm text-slate/80">
                     <span className="font-medium">Category:</span> {resource.category}
                   </div>
-                  <button
+                  <Button
                     type="button"
                     onClick={() => handleDownload(resource.document)}
                     disabled={isDownloading}
-                    className="btn-outline px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 disabled:opacity-70"
+                    variant="outline"
+                    size="sm"
+                    leadingIcon={<Download className="h-4 w-4" />}
                   >
-                    <Download className="h-4 w-4" />
                     <span>{isDownloading ? 'Preparing…' : 'Download'}</span>
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -371,13 +403,14 @@ const LMSDownloads = () => {
             title="No resources found"
             description="Try adjusting your search or filter criteria."
             action={(
-              <button
-                type="button"
+              <Button
                 onClick={() => { setSearchTerm(''); setFilterType('all'); setSelectedItems([]); }}
-                className="btn-outline"
+                type="button"
+                variant="outline"
+                size="sm"
               >
                 Reset filters
-              </button>
+              </Button>
             )}
             illustrationSrc={undefined}
           />
@@ -391,17 +424,20 @@ const LMSDownloads = () => {
           <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
             Download our complete resource package containing all course materials, videos, and worksheets in one convenient ZIP file.
           </p>
-          <button
+          <Button
             type="button"
             onClick={() => fullPackage?.document && handleDownload(fullPackage.document)}
             disabled={!fullPackage}
-            className="btn-cta px-8 py-4 rounded-full font-semibold text-lg transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2 disabled:opacity-70"
+            size="lg"
+            leadingIcon={<Archive className="h-5 w-5" />}
+            className="mx-auto"
           >
-            <Archive className="h-5 w-5" />
             <span>{fullPackage ? 'Download Complete Package' : 'Package not available yet'}</span>
-          </button>
+          </Button>
         </div>
       </div>
+      </>
+      )}
       </div>
     </div>
   );

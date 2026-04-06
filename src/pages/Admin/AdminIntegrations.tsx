@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, CheckCircle, AlertTriangle, Settings, Plus, Eye, EyeOff, RefreshCw, Database, Mail, CreditCard, Users, BarChart3, MessageSquare, Globe, Shield, Key } from 'lucide-react';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import Button from '../../components/ui/Button';
 import { useToast } from '../../context/ToastContext';
 
 const AdminIntegrations = () => {
@@ -241,27 +243,30 @@ const AdminIntegrations = () => {
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Integrations & API</h1>
-        <p className="text-gray-600">Connect with third-party services and manage API access</p>
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Integrations', to: '/admin/integrations' }]} />
+      </div>
+      <div className="mb-8 space-y-2">
+        <h1 className="text-3xl font-bold text-gray-900">Integrations & API</h1>
+        <p className="text-sm text-gray-600 sm:text-base">Connect with third-party services and manage API access</p>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-8">
+      <div className="card-lg mb-8">
         <div className="border-b border-gray-200">
-          <nav className="flex space-x-8 px-6">
+          <nav className="flex gap-2 overflow-x-auto px-2 py-2 sm:px-6 sm:py-0">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm ${
+                  className={`flex shrink-0 items-center space-x-2 rounded-md border-b-2 px-3 py-2 text-sm font-medium sm:rounded-none sm:px-1 sm:py-4 ${
                     activeTab === tab.id
-                      ? 'border-orange-500 text-orange-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-orange-500 bg-orange-50 text-orange-600 sm:bg-transparent'
+                      : 'border-transparent text-gray-500 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300 sm:hover:bg-transparent'
                   }`}
                 >
                   <Icon className="h-4 w-4" />
@@ -274,7 +279,8 @@ const AdminIntegrations = () => {
 
         <div className="p-6">
           {activeTab === 'overview' && (
-            <div>
+            <div className="space-y-8">
+              <p className="text-sm text-gray-600">Monitor connection health, sync status, and available integration controls.</p>
               {/* Integration Status Overview */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 <div className="bg-green-50 p-4 rounded-lg">
@@ -300,7 +306,7 @@ const AdminIntegrations = () => {
                 {integrations.map((integration) => {
                   const Icon = integration.icon;
                   return (
-                    <div key={integration.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
+                    <div key={integration.id} className="card-lg border border-gray-200 hover:shadow-md transition-shadow duration-200">
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex items-center space-x-3">
                           <div className={`p-2 rounded-lg ${integration.bgColor}`}>
@@ -336,14 +342,14 @@ const AdminIntegrations = () => {
                         Last sync: {integration.lastSync}
                       </div>
 
-                      <div className="flex items-center justify-between">
-                        <button onClick={() => handleConfigure(integration.id)} className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Button onClick={() => handleConfigure(integration.id)} variant="outline" size="sm">
                           Configure
-                        </button>
+                        </Button>
                         <div className="flex items-center space-x-2">
                           <button 
                             onClick={() => handleTest(integration.name)} 
-                            className="p-1 text-gray-400 hover:text-gray-600" 
+                            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" 
                             title="Test"
                             aria-label={`Test integration: ${integration.name}`}
                             tabIndex={0}
@@ -354,7 +360,7 @@ const AdminIntegrations = () => {
                           </button>
                           <button 
                             onClick={() => handleConfigure(integration.id)} 
-                            className="p-1 text-gray-400 hover:text-gray-600" 
+                            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" 
                             title="Settings"
                             aria-label={`Configure integration: ${integration.name}`}
                             tabIndex={0}
@@ -375,13 +381,12 @@ const AdminIntegrations = () => {
           )}
 
           {activeTab === 'webhooks' && (
-            <div>
-                <div className="flex items-center justify-between mb-6">
+            <div className="space-y-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="text-xl font-bold text-gray-900">Webhook Management</h2>
-                <button onClick={handleAddWebhook} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
-                  <Plus className="h-4 w-4" />
-                  <span>Add Webhook</span>
-                </button>
+                <Button onClick={handleAddWebhook} size="sm" leadingIcon={<Plus className="h-4 w-4" />}>
+                  Add Webhook
+                </Button>
               </div>
 
               <div className="space-y-4">
@@ -416,10 +421,10 @@ const AdminIntegrations = () => {
                         <span className="text-gray-600">Success Rate:</span>
                         <div className="font-medium text-gray-900">{webhook.successRate}%</div>
                       </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-wrap items-center gap-2">
                         <button 
                           onClick={() => handleTest(webhook.name)} 
-                          className="text-blue-600 hover:text-blue-700"
+                            className="text-sm font-medium text-blue-600 hover:text-blue-700"
                           aria-label={`Test webhook: ${webhook.name}`}
                           tabIndex={0}
                           role="button"
@@ -427,7 +432,7 @@ const AdminIntegrations = () => {
                         >Test</button>
                         <button 
                           onClick={() => alert('Edit webhook (demo)')} 
-                          className="text-gray-600 hover:text-gray-700"
+                          className="text-sm font-medium text-gray-600 hover:text-gray-700"
                           aria-label={`Edit webhook: ${webhook.name}`}
                           tabIndex={0}
                           role="button"
@@ -435,7 +440,7 @@ const AdminIntegrations = () => {
                         >Edit</button>
                         <button 
                           onClick={() => { if(confirm('Delete webhook?')) alert('Deleted (demo)'); }} 
-                          className="text-red-600 hover:text-red-700"
+                          className="text-sm font-medium text-red-600 hover:text-red-700"
                           aria-label={`Delete webhook: ${webhook.name}`}
                           tabIndex={0}
                           role="button"
@@ -453,7 +458,8 @@ const AdminIntegrations = () => {
           )}
 
           {activeTab === 'api' && (
-            <div>
+            <div className="space-y-6">
+              <p className="text-sm text-gray-600">Manage API credentials and monitor endpoint usage patterns.</p>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900 mb-6">API Keys</h2>
@@ -476,10 +482,9 @@ const AdminIntegrations = () => {
                           readOnly
                           className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-mono"
                         />
-                        <button onClick={() => handleRegenerate('production')} className="bg-orange-500 text-white px-3 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-1">
-                          <RefreshCw className="h-4 w-4" />
-                          <span>Regenerate</span>
-                        </button>
+                        <Button onClick={() => handleRegenerate('production')} size="sm" leadingIcon={<RefreshCw className="h-4 w-4" />}>
+                          Regenerate
+                        </Button>
                       </div>
                     </div>
 
@@ -501,10 +506,9 @@ const AdminIntegrations = () => {
                           readOnly
                           className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-mono"
                         />
-                        <button onClick={() => handleRegenerate('test')} className="bg-gray-500 text-white px-3 py-2 rounded-lg hover:bg-gray-600 transition-colors duration-200 flex items-center space-x-1">
-                          <RefreshCw className="h-4 w-4" />
-                          <span>Regenerate</span>
-                        </button>
+                        <Button onClick={() => handleRegenerate('test')} variant="secondary" size="sm" leadingIcon={<RefreshCw className="h-4 w-4" />}>
+                          Regenerate
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -521,7 +525,7 @@ const AdminIntegrations = () => {
                           }`}>
                             {endpoint.method}
                           </span>
-                          <code className="text-sm font-mono text-gray-900">{endpoint.endpoint}</code>
+                          <code className="text-sm font-mono text-gray-900 break-all">{endpoint.endpoint}</code>
                         </div>
                         <p className="text-sm text-gray-600 mb-2">{endpoint.description}</p>
                         <div className="text-xs text-gray-500">{endpoint.usage}</div>
@@ -534,7 +538,8 @@ const AdminIntegrations = () => {
           )}
 
           {activeTab === 'sso' && (
-            <div>
+            <div className="space-y-6">
+              <p className="text-sm text-gray-600">Review SSO provider status and authentication security controls.</p>
               <h2 className="text-xl font-bold text-gray-900 mb-6">Single Sign-On & Authentication</h2>
               
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

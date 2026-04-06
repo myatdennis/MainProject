@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { BarChart3, TrendingUp, Download, Calendar, Filter, RefreshCw, Eye, Share } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import Button from '../../components/ui/Button';
 import { useToast } from '../../context/ToastContext';
 
 const AdminReports = () => {
@@ -142,16 +143,18 @@ const AdminReports = () => {
       <div className="mb-6">
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Reports', to: '/admin/reports' }]} />
       </div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Reports & Analytics</h1>
-        <p className="text-gray-600">Comprehensive insights into learner progress, engagement, and course effectiveness</p>
+      <div className="mb-8 space-y-2">
+        <h1 className="text-3xl font-bold text-gray-900">Reports & Analytics</h1>
+        <p className="text-sm text-gray-600 sm:text-base">Comprehensive insights into learner progress, engagement, and course effectiveness</p>
       </div>
 
       {/* Filters */}
       <div className="card-lg card-hover mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-          <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-            <div className="flex items-center space-x-2">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Date Range</label>
+              <div className="flex items-center space-x-2">
               <Calendar className="h-5 w-5 text-gray-400" />
               <select
                 value={dateRange}
@@ -165,7 +168,10 @@ const AdminReports = () => {
                 <option value="custom">Custom Range</option>
               </select>
             </div>
-            <div className="flex items-center space-x-2">
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Report Type</label>
+              <div className="flex items-center space-x-2">
               <Filter className="h-5 w-5 text-gray-400" />
               <select
                 value={reportType}
@@ -179,17 +185,16 @@ const AdminReports = () => {
                 <option value="engagement">Engagement</option>
               </select>
             </div>
+            </div>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <button onClick={refreshReports} className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 font-medium">
-              <RefreshCw className="h-4 w-4" />
-              <span>Refresh</span>
-            </button>
-            <button onClick={exportReport} className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2">
-              <Download className="h-4 w-4" />
-              <span>Export Report</span>
-            </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={refreshReports} variant="ghost" size="sm" leadingIcon={<RefreshCw className="h-4 w-4" />}>
+              Refresh
+            </Button>
+            <Button onClick={exportReport} size="sm" leadingIcon={<Download className="h-4 w-4" />}>
+              Export Report
+            </Button>
           </div>
         </div>
       </div>
@@ -287,12 +292,12 @@ const AdminReports = () => {
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left py-3 px-4 font-semibold text-gray-900">Organization</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-900">Learners</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-900">Completion Rate</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-900">Engagement</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-900">Last Activity</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-900">Actions</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Organization</th>
+                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Learners</th>
+                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Completion Rate</th>
+                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Engagement</th>
+                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Last Activity</th>
+                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -325,7 +330,7 @@ const AdminReports = () => {
                   </td>
                   <td className="py-4 px-4 text-center">
                     <button 
-                      className="p-1 text-blue-600 hover:text-blue-800" 
+                      className="rounded-md p-1 text-blue-600 hover:bg-blue-50 hover:text-blue-800" 
                       title="View Details"
                       aria-label="View organization details"
                       tabIndex={0}
@@ -360,12 +365,11 @@ const AdminReports = () => {
 
       {/* Generated Reports */}
       <div className="card-lg">
-        <div className="flex items-center justify-between mb-6">
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-xl font-bold text-gray-900">Generated Reports</h2>
-          <button onClick={generateNewReport} className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2">
-            <BarChart3 className="h-4 w-4" />
-            <span>Generate New Report</span>
-          </button>
+          <Button onClick={generateNewReport} size="sm" leadingIcon={<BarChart3 className="h-4 w-4" />}>
+            Generate New Report
+          </Button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {reports.map((report, index) => (

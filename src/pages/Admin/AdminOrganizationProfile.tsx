@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Button from '../../components/ui/Button';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import EmptyState from '../../components/ui/EmptyState';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import {
   Activity,
@@ -1261,8 +1263,34 @@ useEffect(() => {
   // logAdminEvent('admin_dead_action_removed', { action: 'Edit Organization', orgId });
   // logAdminEvent('admin_nav_item_disabled', { nav: 'Performance', orgId });
 
+  if (!orgId) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Organizations', to: '/admin/organizations' }]} />
+        <div className="mt-6">
+          <EmptyState
+            title="Organization not specified"
+            description="Select an organization from the directory to view profile details, resources, and activation metrics."
+            action={(
+              <Button asChild size="sm">
+                <Link to="/admin/organizations">Open organizations</Link>
+              </Button>
+            )}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      <Breadcrumbs
+        items={[
+          { label: 'Admin', to: '/admin' },
+          { label: 'Organizations', to: '/admin/organizations' },
+          { label: profile?.organization?.name ?? 'Organization profile', to: `/admin/organizations/${orgId}` },
+        ]}
+      />
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Organization Profile</h1>
@@ -1271,12 +1299,13 @@ useEffect(() => {
       </div>
 
       <div className="mb-6">
-        <nav className="flex space-x-2">
+        <nav className="flex flex-wrap gap-2">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setActiveTab(t.key)}
-              className={`px-4 py-2 rounded-lg ${activeTab === t.key ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-700'}`}>
+              aria-pressed={activeTab === t.key}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === t.key ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
               {t.label}
             </button>
           ))}
