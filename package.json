@@ -72,6 +72,8 @@
     "schema:doctor": "node scripts/schema_doctor.mjs",
     "test:db-functions": "node scripts/test_db_functions.mjs",
     "test:api-smoke": "node scripts/test_api_smoke.mjs",
+    "smoke:survey-assignment": "node scripts/survey_assignment_smoke.mjs",
+    "smoke:survey-assignment:real-db": "SMOKE_EXPECT_DB_BACKED=true node scripts/survey_assignment_smoke.mjs",
     "verify:launch-schema": "node scripts/verify_launch_readiness_schema.mjs",
     "perf:smoke": "npx vitest run tests/integration/performance.smoke.spec.ts --config tests/vitest.integration.config.ts",
     "optimize:build": "npm ci && npm run build && npm run analyze",
