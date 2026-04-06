@@ -1743,17 +1743,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
           (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })();
         if (hasWindowOverride || clientE2EFlag || hasE2EBypassFlag || hasLocalStorageBypass) {
+          const e2eUserId =
+            typeof window !== 'undefined' && typeof (window as any).__E2E_USER_ID === 'string'
+              ? (window as any).__E2E_USER_ID
+              : '00000000-0000-0000-0000-000000000001';
+          const e2eEmail =
+            typeof window !== 'undefined' && typeof (window as any).__E2E_USER_EMAIL === 'string'
+              ? (window as any).__E2E_USER_EMAIL
+              : 'mya@the-huddle.co';
+          const e2eRoleRaw =
+            typeof window !== 'undefined' && typeof (window as any).__E2E_USER_ROLE === 'string'
+              ? String((window as any).__E2E_USER_ROLE)
+              : 'admin';
+          const e2eRole = e2eRoleRaw.trim().toLowerCase();
+          const isE2EAdmin = e2eRole === 'admin' || e2eRole === 'owner' || e2eRole === 'platform_admin';
+
           const mockPayload: SessionResponsePayload = {
-            user: { id: '00000000-0000-0000-0000-000000000001', email: 'mya@the-huddle.co' } as any,
+            user: { id: e2eUserId, email: e2eEmail } as any,
             memberships: [
-              { orgId: 'demo-sandbox-org', role: 'admin', status: 'active', organizationName: 'Demo Sandbox Org' } as any,
+              {
+                orgId: 'demo-sandbox-org',
+                role: isE2EAdmin ? 'admin' : e2eRole || 'learner',
+                status: 'active',
+                organizationName: 'Demo Sandbox Org',
+              } as any,
             ],
             organizationIds: ['demo-sandbox-org'],
             accessToken: 'e2e-access-token',
             refreshToken: 'e2e-refresh-token',
             expiresAt: Math.floor(Date.now() / 1000) + 3600,
-            isPlatformAdmin: true,
-            platformRole: 'admin',
+            isPlatformAdmin: isE2EAdmin,
+            platformRole: isE2EAdmin ? 'admin' : null,
           };
           // Persist tokens during E2E so client-side authorizedFetch and
           // other synchronous token readers see the tokens immediately.

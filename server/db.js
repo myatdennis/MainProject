@@ -11,15 +11,21 @@ import postgres from 'postgres'
 import pg from 'pg'
 
 const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? 'false').toLowerCase() === 'true'
+const isProductionEnv = (process.env.NODE_ENV || '').toLowerCase() === 'production'
 // Allow self-signed DB certificates in non-production environments or when
 // explicitly requested via env. Also honor DEV_FALLBACK and E2E_TEST_MODE so
 // local/E2E runs don't fail due to TLS chain issues during health probes.
 const defaultAllowSelfSigned =
-  (process.env.NODE_ENV || '').toLowerCase() !== 'production' ||
+  !isProductionEnv ||
   String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true' ||
   String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true'
-const ALLOW_DB_SELF_SIGNED =
+const requestedAllowSelfSigned =
   String(process.env.ALLOW_DB_SELF_SIGNED ?? String(defaultAllowSelfSigned)).toLowerCase() === 'true'
+const ALLOW_DB_SELF_SIGNED = !isProductionEnv && requestedAllowSelfSigned
+
+if (isProductionEnv && requestedAllowSelfSigned) {
+  console.warn('[server/db] Ignoring ALLOW_DB_SELF_SIGNED=true in production; strict TLS verification is enforced.')
+}
 const { Pool } = pg
 
 if (typeof setDefaultResultOrder === 'function') {

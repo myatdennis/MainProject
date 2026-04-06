@@ -37,6 +37,13 @@ if (isProduction && (demoModeRaw || allowDemoRaw || devFallbackRaw || e2eTestRaw
   process.exit(1);
 }
 
+// Decision path note:
+// - DEV_FALLBACK=true contributes to DEMO_MODE via `devFallbackRaw`.
+// - E2E_TEST_MODE=true sets E2E test bypass behavior.
+// - In server/index.js, fallback execution is selected when
+//   `isDemoMode || E2E_TEST_MODE || TEST_IDEMPOTENCY_FALLBACK_MODE`.
+// Therefore `NODE_ENV=test E2E_TEST_MODE=true DEV_FALLBACK=true` always
+// activates in-memory fallback execution unless those flags are changed.
 export const DEMO_MODE = !isProduction && (demoModeRaw || allowDemoRaw || devFallbackRaw);
 export const E2E_TEST_MODE = !isProduction && e2eTestRaw;
 export const DEV_FALLBACK = DEMO_MODE;

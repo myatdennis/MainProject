@@ -7,6 +7,7 @@ import orgService, { invalidateOrgListCache, type Org } from '../../dal/orgs';
 import adminUsers, { AdminUserRecord } from '../../dal/adminUsers';
 import { useToast } from '../../context/ToastContext';
 import { resolveUserFacingError } from '../../utils/userFacingError';
+import { emitSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
 
 type SurveyAssignmentModalProps = {
   isOpen: boolean;
@@ -41,6 +42,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
   const [administrationType, setAdministrationType] = useState<'single' | 'pre' | 'post' | 'pulse'>('single');
   const [linkedAssessmentId, setLinkedAssessmentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -55,6 +57,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
       setLinkedAssessmentId('');
       setOrgError(null);
       setUserError(null);
+      setSubmitError(null);
     }
   }, [isOpen, initialOrganizationIds]);
 
@@ -158,6 +161,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
       showToast('Select at least one organization or user.', 'error');
       return;
     }
+    setSubmitError(null);
     setSubmitting(true);
     try {
       await assignSurvey(surveyId, {
@@ -175,6 +179,11 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
             : undefined,
       });
       invalidateOrgListCache();
+      emitSurveyAssignmentsChanged({
+        reason: 'admin_assignment_saved',
+        surveyId,
+        assignmentId: null,
+      });
       showToast(
         `Assigned to ${selectedOrgIds.length} org${selectedOrgIds.length === 1 ? '' : 's'} and ${selectedUserIds.length} user${selectedUserIds.length === 1 ? '' : 's'}.`,
         'success',
@@ -187,6 +196,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
         fallback: 'Unable to assign survey.',
         action: 'Retry once the assignment service is healthy.',
       });
+      setSubmitError(message);
       showToast(message, 'error');
     } finally {
       setSubmitting(false);
@@ -216,11 +226,18 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
             type="button"
             aria-label="Close assignment modal"
             onClick={onClose}
+            disabled={submitting}
             className="rounded-full p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {submitError && (
+          <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {submitError}
+          </div>
+        )}
 
         <form onSubmit={handleAssign} className="grid grid-cols-1 gap-6 px-6 py-6 md:grid-cols-2">
           <section className="space-y-4">
@@ -420,6 +437,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
+                disabled={submitting}
                 className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
               >
                 Cancel

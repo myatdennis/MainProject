@@ -1,22 +1,19 @@
 import { computeGrowthBand } from './hdiScoring.js';
 import { compareHdiReports } from './hdiComparison.js';
+import { extractStableParticipantKeys, normalizeHdiAdministrationType } from './hdiContracts.js';
 
 const stableKeyCandidates = (response = {}) => {
   const metadata = response?.metadata && typeof response.metadata === 'object' ? response.metadata : {};
   const participant = metadata?.participant && typeof metadata.participant === 'object' ? metadata.participant : {};
-  return [
-    response.user_id,
-    metadata.participantKey,
-    metadata.participant_key,
-    participant.key,
-    metadata.email,
-    participant.email,
-    metadata.confidentialCode,
-    metadata.confidential_code,
-    participant.confidentialCode,
-  ]
-    .filter((value) => typeof value === 'string' && value.trim().length > 0)
-    .map((value) => value.trim().toLowerCase());
+  return extractStableParticipantKeys({
+    user_id: response.user_id,
+    participantKey: metadata.participantKey,
+    participant_key: metadata.participant_key,
+    email: metadata.email,
+    confidentialCode: metadata.confidentialCode,
+    confidential_code: metadata.confidential_code,
+    participant,
+  });
 };
 
 export const toHdiRecord = (row = {}) => {
@@ -35,7 +32,7 @@ export const toHdiRecord = (row = {}) => {
     userId: row.user_id,
     organizationId: row.organization_id,
     completedAt: row.completed_at ?? row.created_at ?? null,
-    administrationType: String(hdi.administrationType ?? metadata.administrationType ?? 'single').toLowerCase(),
+  administrationType: normalizeHdiAdministrationType(hdi.administrationType ?? metadata.administrationType ?? 'single'),
     linkedAssessmentId: hdi.linkedAssessmentId ?? metadata.linkedAssessmentId ?? null,
     participantKeys: stableKeyCandidates(row),
     scoring,

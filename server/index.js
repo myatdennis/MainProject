@@ -162,6 +162,14 @@ import {
   buildHdiComparison,
   toHdiRecord,
 } from './lib/hdiAnalytics.js';
+import {
+  HDI_METADATA_CONTRACT_VERSION,
+  normalizeHdiAdministrationType,
+  normalizeHdiLinkedAssessmentId,
+  buildParticipantIdentity,
+  validateHdiSubmissionContract,
+} from './lib/hdiContracts.js';
+import { createHdiResponseEnvelope, HDI_RESPONSE_SHAPES } from './lib/hdiResponseContracts.js';
 // ...existing code...
 
 // Helper to resolve non-UUID course identifiers (e.g., slug) to UUID
@@ -353,6 +361,56 @@ class ExplicitOrgSelectionRequiredError extends Error {
   }
 }
 const STRICT_STARTUP_GUARDS = isProduction || parseFlag(process.env.STRICT_STARTUP_GUARDS);
+const ALLOW_NON_PERSISTENT_ASSIGNMENTS =
+  !isProduction && parseFlag(
+    process.env.ALLOW_NON_PERSISTENT_ASSIGNMENTS,
+    isDemoMode || isTestMode || E2E_TEST_MODE,
+  );
+const assignmentPersistenceSimulated =
+  isFallbackMode && ALLOW_NON_PERSISTENT_ASSIGNMENTS;
+const fallbackTriggerReasons = [
+  isDemoMode ? `isDemoMode=true(source=${initialDemoModeMetadata.source || 'unknown'})` : null,
+  E2E_TEST_MODE ? 'E2E_TEST_MODE=true' : null,
+  TEST_IDEMPOTENCY_FALLBACK_MODE ? 'TEST_IDEMPOTENCY_FALLBACK_MODE=true' : null,
+].filter(Boolean);
+const startupExecutionMode = isFallbackMode ? 'in-memory-fallback' : 'db-backed';
+const ASSIGNMENT_INFRASTRUCTURE_ERROR_CODES = new Set([
+  '08000',
+  '08001',
+  '08003',
+  '08004',
+  '08006',
+  '08007',
+  '57P01',
+  '57P02',
+  '57P03',
+  '53300',
+  '53400',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+]);
+
+const isInfrastructureUnavailableError = (error) => {
+  if (!error) return false;
+  const code = String(error?.code || '').trim();
+  if (code && ASSIGNMENT_INFRASTRUCTURE_ERROR_CODES.has(code)) {
+    return true;
+  }
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('connection terminated') ||
+    message.includes('connection refused') ||
+    message.includes('could not connect') ||
+    message.includes('failed to fetch') ||
+    message.includes('network') ||
+    message.includes('self-signed certificate')
+  );
+};
 
 function validateCriticalStartupEnv() {
   if (!STRICT_STARTUP_GUARDS) {
@@ -368,6 +426,10 @@ function validateCriticalStartupEnv() {
   const missing = requiredEnv
     .filter((group) => group.every((key) => !String(process.env[key] || '').trim()))
     .map((group) => group.join(' | '));
+
+  if (!databaseConnectionInfo.connectionStringDefined) {
+    missing.push('DATABASE_POOLER_URL | SUPABASE_DB_POOLER_URL | SUPABASE_DB_URL | DATABASE_URL');
+  }
 
   if (missing.length > 0) {
     throw new Error(`critical_env_missing:${missing.join(',')}`);
@@ -629,6 +691,26 @@ logger.info('startup_supabase_config', {
   projectAlignment: supabaseProjectAlignment,
   serviceRoleKeyPresent: Boolean(supabaseEnv.serviceRoleKey),
 });
+logger.info('startup_runtime_mode', {
+  mode: startupExecutionMode,
+  surveyAssignmentPersistence: assignmentPersistenceSimulated ? 'simulated' : 'real',
+  fallbackTriggers: fallbackTriggerReasons,
+  // Explicitly expose the decision path so test-mode startup is auditable.
+  decisionPath: {
+    nodeEnv: NODE_ENV || process.env.NODE_ENV || 'development',
+    isDemoMode,
+    e2eTestMode: E2E_TEST_MODE,
+    testIdempotencyFallbackMode: TEST_IDEMPOTENCY_FALLBACK_MODE,
+    allowNonPersistentAssignments: ALLOW_NON_PERSISTENT_ASSIGNMENTS,
+  },
+});
+if (isFallbackMode) {
+  console.log(
+    `[startup] in-memory fallback mode | survey assignment persistence: ${assignmentPersistenceSimulated ? 'simulated' : 'real-db'}`,
+  );
+} else {
+  console.log('[startup] DB-backed mode | survey assignment persistence: real-db');
+}
 if (supabaseEnv.configured && isDemoMode) {
   logger.warn('dev_fallback_overrides_supabase', {
     message: 'Supabase credentials detected but isDemoMode=true forces in-memory demo mode.',
@@ -1343,6 +1425,11 @@ const buildHealthPayload = async (overrides = {}) => {
       // If this is false after you set the env var in Railway, you need to REDEPLOY.
       supabaseJwtSecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
     },
+    runtime: {
+      mode: startupExecutionMode,
+      fallbackTriggers: fallbackTriggerReasons,
+      surveyAssignmentPersistence: assignmentPersistenceSimulated ? 'simulated' : 'real',
+    },
     orgEnforcement: {
       enforced: Boolean(FORCE_ORG_ENFORCEMENT),
       devFallback: Boolean(isDemoMode),
@@ -1366,7 +1453,7 @@ const resolveAppVersion = () =>
   process.env.HEROKU_RELEASE_VERSION ||
   'dev';
 
-const probeDatabaseHealth = async () => {
+const probeDatabaseHealth = async ({ requireWritable = true } = {}) => {
   if (!databaseConnectionInfo.connectionStringDefined) {
     return {
       ok: false,
@@ -1378,12 +1465,29 @@ const probeDatabaseHealth = async () => {
     };
   }
   const startedAt = Date.now();
+  let client = null;
   try {
-    await pool.query('select 1');
+    client = await pool.connect();
+    await client.query('select 1');
+
+    let writable = true;
+    if (requireWritable) {
+      await client.query('begin');
+      try {
+        await client.query('create temp table if not exists health_write_probe (id integer) on commit drop');
+        await client.query('insert into health_write_probe(id) values (1)');
+      } finally {
+        await client.query('rollback');
+      }
+    } else {
+      writable = false;
+    }
+
     return {
       ok: true,
       status: 'ok',
       latencyMs: Date.now() - startedAt,
+      writable,
       host: databaseHost,
       sourceEnv: databaseConnectionInfo.sourceEnv ?? null,
     };
@@ -1400,11 +1504,12 @@ const probeDatabaseHealth = async () => {
   if (import.meta?.env?.DEV || process.env.NODE_ENV !== 'production') {
     console.warn('[health] probeDatabaseHealth caught DB error', { code, message, allowSelfSigned: databaseConnectionInfo?.allowSelfSigned });
   }
-    if (sslSelfSigned && databaseConnectionInfo?.allowSelfSigned) {
+  if (sslSelfSigned && !isProduction && databaseConnectionInfo?.allowSelfSigned) {
       return {
         ok: true,
         status: 'ok',
         latencyMs: Date.now() - startedAt,
+        writable: false,
         host: databaseHost,
         sourceEnv: databaseConnectionInfo.sourceEnv ?? null,
         toleratedSelfSigned: true,
@@ -1418,9 +1523,16 @@ const probeDatabaseHealth = async () => {
       status: 'error',
       code: code ?? 'db_unavailable',
       message: message ?? 'Database connection unavailable.',
+      writable: false,
       host: databaseHost,
       sourceEnv: databaseConnectionInfo.sourceEnv ?? null,
     };
+  } finally {
+    try {
+      client?.release();
+    } catch {
+      // no-op
+    }
   }
 };
 
@@ -1479,6 +1591,7 @@ const respondWithHealthPayload = async (_req, res) => {
 
 app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
+  const assignmentFallbackEnabled = shouldUseAssignmentWriteFallback();
   const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
   if (!resolvedCourseId) {
@@ -1725,6 +1838,10 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     invalidTargetIds,
     requestId: req.requestId ?? null,
   };
+  logger.info('course_assignment_attempted', {
+    ...assignmentLogBase,
+    fallbackEnabled: assignmentFallbackEnabled,
+  });
   let assignmentInsertedCount = 0;
   let assignmentUpdatedCount = 0;
   let assignmentSkippedCount = 0;
@@ -1910,7 +2027,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
 
   try {
     if (targetUserIds.length === 0) {
-      if (isFallbackMode) {
+      if (assignmentFallbackEnabled) {
         const fallbackResolved = (Array.isArray(e2eStore.users) ? e2eStore.users : [])
           .filter((member) => {
             const memberOrg = normalizeOrgIdValue(member?.organization_id ?? member?.org_id ?? member?.organizationId ?? member?.orgId ?? null);
@@ -1962,7 +2079,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       });
     }
 
-    if (isFallbackMode) {
+    if (assignmentFallbackEnabled) {
       const updated = [];
       const inserted = [];
       for (const userId of targetUserIds) {
@@ -2086,6 +2203,14 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         },
       });
       return;
+    }
+
+    if (!supabase) {
+      const unavailableError = new Error('database_unavailable');
+      unavailableError.code = 'database_unavailable';
+      unavailableError.statusCode = 503;
+      unavailableError.meta = { fallbackEnabled: assignmentFallbackEnabled };
+      throw unavailableError;
     }
 
     if (assignmentIdempotencyKey) {
@@ -2325,6 +2450,13 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         targets: targetUserIds.length,
       },
     });
+    logger.info('course_assignment_persisted', {
+      ...assignmentLogBase,
+      insertedRowCount: assignmentInsertedCount,
+      updatedRowCount: assignmentUpdatedCount,
+      skippedRowCount: assignmentSkippedCount,
+      persistedRowCount: responseRows.length,
+    });
   } catch (error) {
     logger.error('course_assignment_failed', {
       ...assignmentLogBase,
@@ -2336,6 +2468,37 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     logAdminCoursesError(req, error, `Failed to assign course ${id}`);
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'assignment_failed';
+    if (error?.statusCode === 400 || error?.code === 'invalid_organization_id' || error?.code === 'invalid_user_ids') {
+      res.status(400).json({
+        error: error?.code || 'invalid_assignment_payload',
+        message: error?.message || 'Assignment payload contains invalid identifiers.',
+      });
+      return;
+    }
+    if (error?.statusCode === 403 || error?.code === 'org_access_denied') {
+      res.status(403).json({
+        error: 'org_access_denied',
+        message: 'You do not have admin access to assign for this organization.',
+      });
+      return;
+    }
+    if (
+      error?.statusCode === 503 ||
+      error?.code === 'assignment_persistence_verification_failed' ||
+      error?.code === 'database_unavailable' ||
+      isInfrastructureUnavailableError(error)
+    ) {
+      res.status(503).json({
+        error: error?.code === 'assignment_persistence_verification_failed'
+          ? 'assignment_persistence_verification_failed'
+          : 'database_unavailable',
+        message:
+          error?.code === 'assignment_persistence_verification_failed'
+            ? 'Assignment write could not be verified. No success was returned.'
+            : 'Assignment write failed because the database is unavailable.',
+      });
+      return;
+    }
     res.status(500).json({ error: 'Unable to assign course' });
   }
 });
@@ -2414,11 +2577,12 @@ app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => 
     }
 
     if (!ensureSupabase(res)) return;
+    const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     let query = supabase
       .from('assignments')
       .select('*')
       .eq('course_id', courseId)
-      .eq('organization_id', organizationId)
+      .eq(assignmentsOrgColumn, organizationId)
       .order('created_at', { ascending: false });
     if (activeOnly) {
       query = query.eq('active', true);
@@ -2525,13 +2689,15 @@ app.get(['/api/health', '/health'], respondWithHealthPayload);
 
 app.get('/api/health/db', async (_req, res) => {
   try {
-    const result = await checkSupabaseHealth();
-    const ok = result.status === 'ok';
-    const statusCode = ok ? 200 : result.status === 'disabled' ? 503 : 502;
+    const result = await probeDatabaseHealth({ requireWritable: true });
+    const ok = Boolean(result.ok && result.writable !== false);
+    const statusCode = ok ? 200 : 503;
     res.status(statusCode).json({
       ok,
       status: result.status,
       latencyMs: result.latencyMs ?? null,
+      writable: result.writable ?? null,
+      code: result.code ?? null,
       message: result.message ?? null,
       demoFallback: Boolean(isDemoMode),
     });
@@ -3386,7 +3552,10 @@ configureEmailLogging({
 let surveyAssignmentAggregateRpcMissingLogged = false;
 const shouldUseInMemoryFallback = isDemoMode || E2E_TEST_MODE || TEST_IDEMPOTENCY_FALLBACK_MODE;
 if (isFallbackMode) {
-  console.log('[server] Running in in-memory fallback mode - ignoring Supabase credentials');
+  console.log('[server] Running in in-memory fallback mode - ignoring Supabase credentials', {
+    triggers: fallbackTriggerReasons,
+    surveyAssignmentPersistence: assignmentPersistenceSimulated ? 'simulated' : 'real-db',
+  });
   supabase = null;
   supabaseAuthClient = null;
 }
@@ -6699,6 +6868,9 @@ const ensureSupabase = (res) => {
   }
   return true;
 };
+
+const shouldUseAssignmentWriteFallback = () =>
+  isFallbackMode && ALLOW_NON_PERSISTENT_ASSIGNMENTS;
 
 const writableMembershipRoles = new Set(['owner', 'admin', 'editor', 'manager']);
 const inviteAssignableRoles = new Set(['owner', 'admin', 'manager', 'editor', 'instructor', 'member', 'viewer']);
@@ -14111,7 +14283,10 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
       res.json({ data: rows.map((assignment) => ({ assignment, survey: e2eStore.surveys.get(assignment.survey_id) ?? null })) });
       return;
     }
-    res.json({ data: [] });
+    res.status(503).json({
+      error: 'database_unavailable',
+      message: 'Assigned surveys are unavailable because the database is not configured.',
+    });
     return;
   }
 
@@ -14134,6 +14309,13 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
     const { data: assignmentRows, error: assignmentError } = await assignmentQuery;
     if (assignmentError) throw assignmentError;
     const assignments = assignmentRows || [];
+    logger.info('client_assigned_surveys_fetched', {
+      requestId: req.requestId ?? null,
+      userId: context.userId,
+      orgIdCount: Array.isArray(context.organizationIds) ? context.organizationIds.length : 0,
+      includeCompleted,
+      fetchedCount: assignments.length,
+    });
 
     const surveyIds = Array.from(new Set(assignments.map((row) => row?.survey_id).filter(Boolean)));
     let surveys = [];
@@ -14154,6 +14336,12 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
       survey: assignment.survey_id ? surveyMap.get(assignment.survey_id) ?? null : null,
     }));
 
+    logger.info('client_assigned_surveys_render_ready', {
+      requestId: req.requestId ?? null,
+      userId: context.userId,
+      renderedCount: shaped.length,
+    });
+
     res.json({ data: shaped });
   } catch (error) {
     logger.error('client_assigned_surveys_failed', {
@@ -14168,9 +14356,11 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
 
 app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
+  let submitStage = 'init';
   const context = requireUserContext(req, res);
   if (!context) return;
   const { id } = req.params;
+  let surveyIdForLogs = id;
 
   const responses = req.body?.responses;
   if (!responses || typeof responses !== 'object') {
@@ -14179,6 +14369,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   }
 
   try {
+    submitStage = 'load_survey';
     const surveyRecord = await loadSurveyWithAssignments(id);
     if (!surveyRecord) {
       res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
@@ -14186,14 +14377,66 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
     }
 
     const surveyId = surveyRecord.id ?? id;
-    const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
+  surveyIdForLogs = surveyId;
+  submitStage = 'load_assignment';
+  const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
       assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
     });
 
+    let resolvedAssignment = assignment;
+    if (!supabase && isDemoOrTestMode) {
+      e2eStore.assignments = Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [];
+
+      const contextOrgIds = Array.isArray(context.organizationIds)
+        ? context.organizationIds.map((value) => String(value))
+        : [];
+
+      const findMatchingAssignment = () =>
+        e2eStore.assignments.find((row) => {
+          if (!row) return false;
+          const assignmentType = row.assignment_type ?? row.assignmentType ?? null;
+          if (assignmentType && assignmentType !== SURVEY_ASSIGNMENT_TYPE) return false;
+          const assignmentSurveyId = row.survey_id ?? row.surveyId ?? null;
+          if (String(assignmentSurveyId) !== String(surveyId)) return false;
+          if (row.active === false) return false;
+          const rowUserId = row.user_id ?? row.userId ?? null;
+          if (rowUserId && String(rowUserId).toLowerCase() === String(context.userId).toLowerCase()) {
+            return true;
+          }
+          if (rowUserId !== null) return false;
+          const rowOrgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+          if (!rowOrgId) return true;
+          return contextOrgIds.includes(String(rowOrgId));
+        }) || null;
+
+      resolvedAssignment = findMatchingAssignment();
+
+      if (resolvedAssignment && (resolvedAssignment.user_id ?? resolvedAssignment.userId ?? null) === null) {
+        const now = new Date().toISOString();
+        const userScopedAssignment = {
+          ...resolvedAssignment,
+          id: `survey-asn-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          user_id: context.userId,
+          status: resolvedAssignment.status ?? 'assigned',
+          active: true,
+          metadata: {
+            ...(resolvedAssignment.metadata && typeof resolvedAssignment.metadata === 'object'
+              ? resolvedAssignment.metadata
+              : {}),
+            assigned_via: 'org_rollup',
+          },
+          created_at: now,
+          updated_at: now,
+        };
+        e2eStore.assignments.push(userScopedAssignment);
+        resolvedAssignment = userScopedAssignment;
+      }
+    }
+
     const metadataInput = typeof req.body?.metadata === 'object' && req.body.metadata !== null ? req.body.metadata : {};
     const assignmentMetadata =
-      assignment?.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {};
+      resolvedAssignment?.metadata && typeof resolvedAssignment.metadata === 'object' ? resolvedAssignment.metadata : {};
 
     let enrichedMetadata = { ...metadataInput };
     const isHdiSubmission =
@@ -14207,11 +14450,12 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
           metadataInput.administrationType ??
           assignmentMetadata.administrationType,
       );
-      const linkedAssessmentId =
+      const linkedAssessmentId = normalizeHdiLinkedAssessmentId(
         req.body?.linkedAssessmentId ??
-        metadataInput.linkedAssessmentId ??
-        assignmentMetadata.linkedAssessmentId ??
-        null;
+          metadataInput.linkedAssessmentId ??
+          assignmentMetadata.linkedAssessmentId ??
+          null,
+      );
 
       const scoring = scoreHdiSubmission({
         survey: surveyRecord,
@@ -14227,16 +14471,32 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         return;
       }
 
-      const participantKeys = extractStableParticipantKeys({
-        ...assignmentMetadata,
-        ...metadataInput,
+      const participantIdentity = buildParticipantIdentity({
+        userId: context.userId,
+        userEmail: context.userEmail ?? null,
+        metadata: metadataInput,
+        assignmentMetadata,
       });
+      const participantKeys = participantIdentity.participantKeys;
+
+      const contractValidation = validateHdiSubmissionContract({
+        administrationType,
+        linkedAssessmentId,
+        participantKeys,
+      });
+      if (!contractValidation.ok) {
+        res.status(400).json({
+          error: contractValidation.code,
+          message: contractValidation.message,
+        });
+        return;
+      }
 
       const participant = {
         userId: context.userId,
-        participantKey: metadataInput.participantKey ?? assignmentMetadata.participantKey ?? null,
+        participantKey: participantIdentity.participantKey,
         participantKeys,
-        organizationId: assignment?.organization_id ?? context.activeOrganizationId ?? null,
+        organizationId: resolvedAssignment?.organization_id ?? context.activeOrganizationId ?? null,
       };
 
       const profile = buildHdiProfile({ scoring });
@@ -14248,13 +14508,19 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
 
       let prePostComparison = null;
       if (administrationType === 'post' || administrationType === 'pulse') {
-        const { data: historicalRows, error: historyError } = await supabase
-          .from('survey_responses')
-          .select('*')
-          .eq('survey_id', surveyId)
-          .eq('user_id', context.userId)
-          .order('completed_at', { ascending: false, nullsFirst: false })
-          .limit(50);
+        let historicalRows = [];
+        let historyError = null;
+        if (supabase) {
+          const historyResponse = await supabase
+            .from('survey_responses')
+            .select('*')
+            .eq('survey_id', surveyId)
+            .eq('user_id', context.userId)
+            .order('completed_at', { ascending: false, nullsFirst: false })
+            .limit(50);
+          historicalRows = historyResponse.data || [];
+          historyError = historyResponse.error || null;
+        }
         if (!historyError && Array.isArray(historicalRows) && historicalRows.length > 0) {
           const currentRecord = {
             id: null,
@@ -14266,6 +14532,20 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
             report,
           };
           const preRecord = findLatestHdiPreRecord(historicalRows, currentRecord);
+          if (linkedAssessmentId && !preRecord) {
+            res.status(400).json({
+              error: 'invalid_hdi_linked_assessment',
+              message: 'linkedAssessmentId does not resolve to a valid pre assessment for this participant.',
+            });
+            return;
+          }
+          if (administrationType === 'post' && !preRecord) {
+            res.status(409).json({
+              error: 'missing_hdi_pre_assessment',
+              message: 'Post assessment requires a matching pre assessment record.',
+            });
+            return;
+          }
           if (preRecord?.report) {
             prePostComparison = compareHdiReports({
               preReport: preRecord.report,
@@ -14285,6 +14565,12 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
               },
             });
           }
+        } else if (administrationType === 'post') {
+          res.status(409).json({
+            error: 'missing_hdi_pre_assessment',
+            message: 'Post assessment requires a matching pre assessment record.',
+          });
+          return;
         }
       }
 
@@ -14293,7 +14579,9 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         assessmentType: 'hdi',
         administrationType,
         linkedAssessmentId,
-        participantKey: metadataInput.participantKey ?? assignmentMetadata.participantKey ?? null,
+        participantKey: participantIdentity.participantKey,
+        participantKeys,
+        hdiContractVersion: HDI_METADATA_CONTRACT_VERSION,
         participant: {
           ...(assignmentMetadata.participant && typeof assignmentMetadata.participant === 'object'
             ? assignmentMetadata.participant
@@ -14308,6 +14596,8 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
           report,
           administrationType,
           linkedAssessmentId,
+          participantKeys,
+          contractVersion: HDI_METADATA_CONTRACT_VERSION,
           computedAt: new Date().toISOString(),
           prePostComparison,
         },
@@ -14318,22 +14608,115 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
     const responsePayload = {
       survey_id: surveyId,
       user_id: context.userId,
-      organization_id: assignment?.organization_id ?? context.activeOrganizationId ?? null,
+      organization_id: resolvedAssignment?.organization_id ?? context.activeOrganizationId ?? null,
       response: responses,
       response_text: null,
       question_id: null,
       rating: null,
       metadata: enrichedMetadata,
       status: 'completed',
-      assignment_id: assignment?.id ?? null,
+      assignment_id: resolvedAssignment?.id ?? null,
       completed_at: nowIso,
     };
+    delete responsePayload.org_id;
 
-    const _surveyResp = await supabase
-      .from('survey_responses')
-      .insert(responsePayload)
-      .select('*');
+    if (!supabase && isDemoOrTestMode) {
+      const inserted = {
+        id: `survey-response-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        ...responsePayload,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+
+      e2eStore.surveyResponses = Array.isArray(e2eStore.surveyResponses) ? e2eStore.surveyResponses : [];
+      e2eStore.surveyResponses.push(inserted);
+
+      if (resolvedAssignment?.id) {
+        const assignmentRow = (e2eStore.assignments || []).find((row) => row?.id === resolvedAssignment.id);
+        if (assignmentRow) {
+          assignmentRow.status = 'completed';
+          assignmentRow.active = true;
+          assignmentRow.metadata = {
+            ...(assignmentRow.metadata && typeof assignmentRow.metadata === 'object' ? assignmentRow.metadata : {}),
+            last_completed_at: nowIso,
+            completion_audit: {
+              completed_by: context.userId,
+              completed_at: nowIso,
+            },
+          };
+          assignmentRow.updated_at = nowIso;
+        }
+        logSurveyAssignmentEvent('survey_assignment_completed', {
+          requestId: req.requestId ?? null,
+          surveyId: surveyId,
+          organizationCount: resolvedAssignment.organization_id ? 1 : 0,
+          userCount: 1,
+          insertedRowCount: 0,
+          skippedRowCount: 0,
+          invalidTargetIds: [],
+          metadata: { assignmentId: resolvedAssignment.id },
+        });
+      }
+
+      const assignedTo = createEmptyAssignedTo();
+      const orgSet = new Set();
+      const userSet = new Set();
+      for (const assignmentRow of e2eStore.assignments || []) {
+        if (!assignmentRow) continue;
+        const assignmentType = assignmentRow.assignment_type ?? assignmentRow.assignmentType ?? null;
+        if (assignmentType && assignmentType !== SURVEY_ASSIGNMENT_TYPE) continue;
+        const assignmentSurveyId = assignmentRow.survey_id ?? assignmentRow.surveyId ?? null;
+        if (String(assignmentSurveyId) !== String(surveyId)) continue;
+        const orgId = assignmentRow.organization_id ?? assignmentRow.organizationId ?? assignmentRow.org_id ?? assignmentRow.orgId;
+        if (orgId) orgSet.add(String(orgId));
+        const userId = assignmentRow.user_id ?? assignmentRow.userId ?? null;
+        if (userId) userSet.add(String(userId));
+      }
+      assignedTo.organizationIds = Array.from(orgSet);
+      assignedTo.userIds = Array.from(userSet);
+      updateDemoSurveyAssignments(surveyId, assignedTo);
+      persistE2EStore();
+
+      res.status(201).json({ data: inserted });
+      return;
+    }
+
+    submitStage = 'insert_response_primary';
+    let _surveyResp = null;
+    let surveyResponseInsertPayload = { ...responsePayload };
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      _surveyResp = await supabase
+        .from('survey_responses')
+        .insert(surveyResponseInsertPayload)
+        .select('*');
+
+      if (!_surveyResp?.error) {
+        break;
+      }
+
+      const extractedMissingColumn = normalizeColumnIdentifier(extractMissingColumnName(_surveyResp.error));
+      const parsedMissingColumn = (() => {
+        const message = String(_surveyResp?.error?.message || '');
+        const match = message.match(/'([a-zA-Z0-9_]+)'/);
+        return match?.[1] ? normalizeColumnIdentifier(match[1]) : null;
+      })();
+      const missingColumn = extractedMissingColumn || parsedMissingColumn;
+
+      if (!isMissingColumnError(_surveyResp.error) || !missingColumn) {
+        break;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(surveyResponseInsertPayload, missingColumn)) {
+        break;
+      }
+
+      submitStage = `insert_response_retry_drop_${missingColumn}`;
+      delete surveyResponseInsertPayload[missingColumn];
+    }
+
     if (_surveyResp.error) throw _surveyResp.error;
+  submitStage = 'insert_response_success';
     const inserted = firstRow(_surveyResp);
 
     if (isHdiSubmission && inserted?.id && enrichedMetadata?.hdi) {
@@ -14342,12 +14725,13 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       const scoring = hdiPayload.scoring ?? null;
       const profile = hdiPayload.profile ?? report?.profile ?? null;
       try {
+        submitStage = 'persist_hdi_results';
         await supabase.from('hdi_assessment_results').upsert(
           {
             survey_response_id: inserted.id,
             survey_id: surveyId,
             user_id: context.userId,
-            organization_id: assignment?.organization_id ?? context.activeOrganizationId ?? null,
+            organization_id: resolvedAssignment?.organization_id ?? context.activeOrganizationId ?? null,
             stage_scores: report?.stageScores ?? scoring?.stageScores ?? {},
             normalized_scores: report?.normalizedScores ?? scoring?.normalizedScores ?? {},
             do_score: scoring?.developmentalOrientation?.score ?? scoring?.doScore ?? null,
@@ -14373,39 +14757,78 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       }
     }
 
-    if (assignment?.id) {
+    if (resolvedAssignment?.id) {
+      submitStage = 'update_assignment';
       const mergedMetadata = {
-        ...(assignment.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {}),
+        ...(resolvedAssignment.metadata && typeof resolvedAssignment.metadata === 'object' ? resolvedAssignment.metadata : {}),
         last_completed_at: nowIso,
+        completion_audit: {
+          completed_by: context.userId,
+          completed_at: nowIso,
+        },
       };
-      await supabase
+      const assignmentUpdateResult = await supabase
         .from('assignments')
         .update({ status: 'completed', active: true, metadata: mergedMetadata })
-        .eq('id', assignment.id);
+        .eq('id', resolvedAssignment.id)
+        .select('id,status,active,metadata')
+        .maybeSingle();
+      if (assignmentUpdateResult.error) {
+        throw assignmentUpdateResult.error;
+      }
+      const updatedAssignment = assignmentUpdateResult.data;
+      const completionAuditAt = updatedAssignment?.metadata?.completion_audit?.completed_at ?? null;
+      if (
+        !updatedAssignment ||
+        updatedAssignment.status !== 'completed' ||
+        updatedAssignment.active !== true ||
+        !completionAuditAt
+      ) {
+        const assignmentUpdateVerificationError = new Error('survey_assignment_completion_verification_failed');
+        assignmentUpdateVerificationError.code = 'survey_assignment_completion_verification_failed';
+        assignmentUpdateVerificationError.statusCode = 503;
+        assignmentUpdateVerificationError.meta = {
+          assignmentId: resolvedAssignment.id,
+          surveyId,
+        };
+        throw assignmentUpdateVerificationError;
+      }
       logSurveyAssignmentEvent('survey_assignment_completed', {
         requestId: req.requestId ?? null,
         surveyId: surveyId,
-        organizationCount: assignment.organization_id ? 1 : 0,
+        organizationCount: resolvedAssignment.organization_id ? 1 : 0,
         userCount: 1,
         insertedRowCount: 0,
         skippedRowCount: 0,
         invalidTargetIds: [],
-        metadata: { assignmentId: assignment.id },
+        metadata: { assignmentId: resolvedAssignment.id },
       });
+      try {
+        submitStage = 'refresh_aggregates';
+        await refreshSurveyAssignmentAggregates(surveyId);
+      } catch (aggregateError) {
+        logger.warn('survey_assignment_aggregate_refresh_skipped_after_submit', {
+          surveyId,
+          assignmentId: resolvedAssignment.id,
+          code: aggregateError?.code ?? null,
+          message: aggregateError?.message ?? String(aggregateError),
+        });
+      }
     }
 
+    submitStage = 'complete_success';
     res.status(201).json({ data: inserted });
   } catch (error) {
-    console.error('[client.surveys.submit] failed', error);
+    console.error('[client.surveys.submit] failed', { stage: submitStage, error });
     logSurveyAssignmentEvent('survey_assignment_failed', {
       requestId: req.requestId ?? null,
-      surveyId: surveyId,
+      surveyId: surveyIdForLogs,
       organizationCount: 0,
       userCount: 1,
       insertedRowCount: 0,
       skippedRowCount: 0,
       invalidTargetIds: [],
-      metadata: { error: error?.message ?? String(error) },
+      metadata: { stage: submitStage, error: error?.message ?? String(error) },
     });
     res.status(500).json({ error: 'Unable to submit survey response' });
   }
@@ -22236,36 +22659,6 @@ const SURVEY_ASSIGNMENT_TYPE = 'survey';
 const SURVEY_ASSIGNMENT_SELECT =
   'id,survey_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at';
 
-const normalizeHdiAdministrationType = (value) => {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'pre') return 'pre';
-  if (normalized === 'post') return 'post';
-  if (normalized === 'pulse' || normalized === 'follow-up' || normalized === 'followup') return 'pulse';
-  return 'single';
-};
-
-const extractStableParticipantKeys = (metadata = {}) => {
-  if (!metadata || typeof metadata !== 'object') return [];
-  const participant = metadata.participant && typeof metadata.participant === 'object' ? metadata.participant : {};
-  const keys = [
-    metadata.participantKey,
-    metadata.participant_key,
-    participant.key,
-    metadata.email,
-    participant.email,
-    metadata.confidentialCode,
-    metadata.confidential_code,
-    participant.confidentialCode,
-  ];
-  return Array.from(
-    new Set(
-      keys
-        .filter((candidate) => typeof candidate === 'string' && candidate.trim().length > 0)
-        .map((candidate) => candidate.trim().toLowerCase()),
-    ),
-  );
-};
-
 const findLatestHdiPreRecord = (records = [], currentRecord = null) => {
   if (!Array.isArray(records) || records.length === 0 || !currentRecord) return null;
   const currentKeys = new Set(currentRecord.participantKeys || []);
@@ -22511,6 +22904,7 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
 
 app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  const assignmentFallbackEnabled = shouldUseAssignmentWriteFallback();
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assign'))) return;
   const { id } = req.params;
   let surveyRecord;
@@ -22594,6 +22988,11 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     request_user: context.userId,
     request_ip: req.ip,
     surface: 'admin.surveys.assign',
+    assignment_audit: {
+      created_by: context.userId,
+      created_at: new Date().toISOString(),
+      source: 'admin.surveys.assign',
+    },
   };
 
   const aggregateResponse = [];
@@ -22601,38 +23000,121 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   let updatedTotal = 0;
   let skippedTotal = 0;
   const insertedAssignments = [];
+  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+
+  logSurveyAssignmentEvent('survey_assignment_attempted', {
+    requestId: req.requestId ?? null,
+    surveyId,
+    organizationCount: organizationIds.length,
+    userCount: normalizedUserIds.length,
+    invalidTargetIds,
+    metadata: {
+      fallbackEnabled: assignmentFallbackEnabled,
+    },
+  });
 
   const assignForOrg = async (organizationId) => {
     if (!organizationId) return;
-    const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
-    if (!access) {
-      throw new Error('org_access_denied');
+    let canonicalOrganizationId = organizationId;
+    if (!isDemoOrTestMode) {
+      try {
+        const resolvedOrgId = await coerceOrgIdentifierToUuid(req, organizationId);
+        if (resolvedOrgId) {
+          canonicalOrganizationId = resolvedOrgId;
+        }
+      } catch (error) {
+        if (error instanceof InvalidOrgIdentifierError) {
+          const invalidOrgError = new Error('invalid_organization_id');
+          invalidOrgError.statusCode = 400;
+          invalidOrgError.code = 'invalid_organization_id';
+          invalidOrgError.meta = { organizationId };
+          throw invalidOrgError;
+        }
+        throw error;
+      }
     }
 
-    if (isDemoOrTestMode) {
+    const access = await requireOrgAccess(req, res, canonicalOrganizationId, { write: true, requireOrgAdmin: true });
+    if (!access) {
+      const deniedError = new Error('org_access_denied');
+      deniedError.statusCode = res.headersSent ? null : 403;
+      deniedError.code = 'org_access_denied';
+      deniedError.meta = { organizationId: canonicalOrganizationId };
+      throw deniedError;
+    }
+
+    if (assignmentFallbackEnabled) {
       const now = new Date().toISOString();
       const rows = normalizedUserIds.length ? normalizedUserIds : [null];
-      const inserted = rows.map((userId) => ({
-        id: `survey-asn-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        survey_id: surveyId,
-        organization_id: organizationId,
-        user_id: userId,
-        due_at: dueAtValue ?? null,
-        note: noteValue ?? null,
-        status: statusValue,
-        assigned_by: assignedBy ?? null,
-        metadata,
-        assignment_type: SURVEY_ASSIGNMENT_TYPE,
-        active: true,
-        created_at: now,
-        updated_at: now,
-      }));
+      const updated = [];
+      const inserted = [];
+
       e2eStore.assignments = e2eStore.assignments || [];
-      e2eStore.assignments.push(...inserted);
-      aggregateResponse.push(...inserted);
+
+      rows.forEach((userId) => {
+        const existing = e2eStore.assignments.find((record) => {
+          if (!record) return false;
+          const assignmentType = record.assignment_type ?? record.assignmentType ?? null;
+          if (assignmentType && assignmentType !== SURVEY_ASSIGNMENT_TYPE) return false;
+          if (String(record.survey_id ?? record.surveyId ?? '') !== String(surveyId)) return false;
+          if (String(record.organization_id ?? record.organizationId ?? record.org_id ?? record.orgId ?? '') !== String(canonicalOrganizationId)) {
+            return false;
+          }
+          if (record.active === false) return false;
+          const existingUserId = record.user_id ?? record.userId ?? null;
+          if (existingUserId === null && userId === null) return true;
+          if (existingUserId === null || userId === null) return false;
+          return String(existingUserId).toLowerCase() === String(userId).toLowerCase();
+        });
+
+        if (existing) {
+          if (dueProvided) existing.due_at = dueAtValue ?? null;
+          if (noteProvided) existing.note = noteValue ?? null;
+          if (statusProvided) existing.status = statusValue;
+          if (assignedBy) existing.assigned_by = assignedBy;
+          existing.metadata = {
+            ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+            ...metadata,
+          };
+          existing.active = true;
+          existing.updated_at = now;
+          updated.push(existing);
+          return;
+        }
+
+        const created = {
+          id: `survey-asn-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          survey_id: surveyId,
+          organization_id: canonicalOrganizationId,
+          user_id: userId,
+          due_at: dueAtValue ?? null,
+          note: noteValue ?? null,
+          status: statusValue,
+          assigned_by: assignedBy ?? null,
+          metadata,
+          assignment_type: SURVEY_ASSIGNMENT_TYPE,
+          active: true,
+          created_at: now,
+          updated_at: now,
+        };
+        e2eStore.assignments.push(created);
+        inserted.push(created);
+      });
+
+      aggregateResponse.push(...updated, ...inserted);
       insertedTotal += inserted.length;
+      updatedTotal += updated.length;
+      skippedTotal += Math.max(rows.length - inserted.length - updated.length, 0);
       insertedAssignments.push(...inserted);
       return;
+    }
+
+    if (!supabase) {
+      const unavailableError = new Error('database_unavailable');
+      unavailableError.code = 'database_unavailable';
+      unavailableError.statusCode = 503;
+      unavailableError.meta = { organizationId: canonicalOrganizationId, fallbackEnabled: assignmentFallbackEnabled };
+      throw unavailableError;
     }
 
     const targetUserIds = normalizedUserIds.length > 0 ? normalizedUserIds : [null];
@@ -22641,41 +23123,52 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       const expectedKeys = new Set(targetUserIds.map((value) => buildSurveyAssignmentKey(value)));
       if (expectedKeys.size === 0) return [];
 
-      let persistedRows = [];
-      if (normalizedUserIds.length > 0) {
+      const runVerificationRead = async () => {
+        if (normalizedUserIds.length > 0) {
+          const { data, error } = await supabase
+            .from('assignments')
+            .select(SURVEY_ASSIGNMENT_SELECT)
+            .eq('survey_id', surveyId)
+            .eq(assignmentsOrgColumn, canonicalOrganizationId)
+            .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+            .eq('active', true)
+            .in('user_id', normalizedUserIds);
+          if (error) throw error;
+          return data || [];
+        }
+
         const { data, error } = await supabase
           .from('assignments')
           .select(SURVEY_ASSIGNMENT_SELECT)
           .eq('survey_id', surveyId)
-          .eq('organization_id', organizationId)
-          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-          .eq('active', true)
-          .in('user_id', normalizedUserIds);
-        if (error) throw error;
-        persistedRows = data || [];
-      } else {
-        const { data, error } = await supabase
-          .from('assignments')
-          .select(SURVEY_ASSIGNMENT_SELECT)
-          .eq('survey_id', surveyId)
-          .eq('organization_id', organizationId)
+          .eq(assignmentsOrgColumn, canonicalOrganizationId)
           .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
           .eq('active', true)
           .is('user_id', null);
         if (error) throw error;
-        persistedRows = data || [];
-      }
+        return data || [];
+      };
+
+      let persistedRows = await runVerificationRead();
 
       const persistedKeys = new Set(
         persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_id ?? null)),
       );
-      const missingKeys = Array.from(expectedKeys).filter((key) => !persistedKeys.has(key));
+      let missingKeys = Array.from(expectedKeys).filter((key) => !persistedKeys.has(key));
+      if (missingKeys.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        persistedRows = await runVerificationRead();
+        const retryKeys = new Set(
+          persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_id ?? null)),
+        );
+        missingKeys = Array.from(expectedKeys).filter((key) => !retryKeys.has(key));
+      }
       if (missingKeys.length > 0) {
         const verificationError = new Error('survey_assignment_persistence_verification_failed');
         verificationError.code = 'survey_assignment_persistence_verification_failed';
         verificationError.meta = {
           surveyId,
-          organizationId,
+          organizationId: canonicalOrganizationId,
           missingKeys,
           expectedCount: expectedKeys.size,
           persistedCount: persistedRows.length,
@@ -22685,35 +23178,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
 
       return persistedRows;
     };
-    const existingMap = new Map();
-    if (normalizedUserIds.length > 0) {
-      const { data, error } = await supabase
-        .from('assignments')
-        .select(SURVEY_ASSIGNMENT_SELECT)
-        .eq('survey_id', surveyId)
-        .eq('organization_id', organizationId)
-        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-        .eq('active', true)
-        .in('user_id', normalizedUserIds);
-      if (error) throw error;
-      (data || []).forEach((row) => {
-        if (!row) return;
-        existingMap.set(String(row.user_id).toLowerCase(), row);
-      });
-    } else {
-      const { data, error } = await supabase
-        .from('assignments')
-        .select(SURVEY_ASSIGNMENT_SELECT)
-        .eq('survey_id', surveyId)
-        .eq('organization_id', organizationId)
-        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-        .eq('active', true)
-        .is('user_id', null);
-      if (error) throw error;
-      (data || []).forEach((row) => {
-        existingMap.set('__org__', row);
-      });
-    }
+    const orgColumnName = assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id';
 
     const mergeMetadata = (existingMeta) => {
       if (!existingMeta || typeof existingMeta !== 'object') {
@@ -22725,8 +23190,6 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     const buildRecord = (userId) => ({
       survey_id: surveyId,
       course_id: null,
-      organization_id: organizationId,
-      organizationId,
       user_id: userId,
       assignment_type: SURVEY_ASSIGNMENT_TYPE,
       status: statusValue,
@@ -22737,51 +23200,140 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       active: true,
     });
 
+    const withCanonicalOrg = (record) => ({
+      ...record,
+      organization_id: canonicalOrganizationId,
+      organizationId: canonicalOrganizationId,
+      [assignmentsOrgColumn]: canonicalOrganizationId,
+    });
+
     const buildKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
     const updates = [];
     const inserts = [];
-    targetUserIds.forEach((userId) => {
-      const key = buildKey(userId);
-      const existing = existingMap.get(key);
-      if (existing) {
-        const patch = {
-          id: existing.id,
-          metadata: mergeMetadata(existing.metadata),
-          active: true,
-        };
-        if (dueProvided) patch.due_at = dueAtValue ?? null;
-        if (noteProvided) patch.note = noteValue ?? null;
-        if (statusProvided) patch.status = statusValue;
-        if (assignedBy) patch.assigned_by = assignedBy;
-        updates.push(patch);
-      } else {
-        inserts.push(buildRecord(userId));
+
+    const sqlResult = await sql.begin(async (tx) => {
+      const existingRows = normalizedUserIds.length > 0
+        ? await tx.unsafe(
+          `
+            select id, user_id, metadata, assigned_by
+            from public.assignments
+            where survey_id::text = $1::text
+              and ${orgColumnName}::text = $2::text
+              and assignment_type = $3
+              and active = true
+              and user_id::text = any($4::text[])
+            for update
+          `,
+          [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, normalizedUserIds],
+        )
+        : await tx.unsafe(
+          `
+            select id, user_id, metadata, assigned_by
+            from public.assignments
+            where survey_id::text = $1::text
+              and ${orgColumnName}::text = $2::text
+              and assignment_type = $3
+              and active = true
+              and user_id is null
+            for update
+          `,
+          [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE],
+        );
+
+      const existingMap = new Map();
+      (existingRows || []).forEach((row) => {
+        if (!row) return;
+        existingMap.set(buildKey(row.user_id ?? null), row);
+      });
+
+      targetUserIds.forEach((userId) => {
+        const key = buildKey(userId);
+        const existing = existingMap.get(key);
+        if (existing) {
+          const patch = {
+            id: existing.id,
+            metadata: mergeMetadata(existing.metadata),
+            active: true,
+          };
+          if (dueProvided) patch.due_at = dueAtValue ?? null;
+          if (noteProvided) patch.note = noteValue ?? null;
+          if (statusProvided) patch.status = statusValue;
+          if (assignedBy) patch.assigned_by = assignedBy;
+          updates.push(patch);
+        } else {
+          inserts.push(withCanonicalOrg(buildRecord(userId)));
+        }
+      });
+
+      for (const patch of updates) {
+        const setSegments = [
+          'metadata = coalesce(metadata, \'{}\'::jsonb) || $1::jsonb',
+          'active = true',
+          'updated_at = now()',
+        ];
+        const params = [JSON.stringify(patch.metadata ?? {})];
+        if (Object.prototype.hasOwnProperty.call(patch, 'due_at')) {
+          params.push(patch.due_at ?? null);
+          setSegments.push(`due_at = $${params.length}`);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'note')) {
+          params.push(patch.note ?? null);
+          setSegments.push(`note = $${params.length}`);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'status')) {
+          params.push(patch.status);
+          setSegments.push(`status = $${params.length}`);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'assigned_by')) {
+          params.push(patch.assigned_by ?? null);
+          setSegments.push(`assigned_by = $${params.length}`);
+        }
+        params.push(patch.id);
+        await tx.unsafe(
+          `
+            update public.assignments
+            set ${setSegments.join(', ')}
+            where id::text = $${params.length}::text
+          `,
+          params,
+        );
       }
+
+      const insertedRows = [];
+      for (const insertRow of inserts) {
+        const inserted = await tx.unsafe(
+          `
+            insert into public.assignments
+              (survey_id, course_id, user_id, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
+            values
+              ($1, null, $2, $3, $4, $5, $6, $7, $8::jsonb, true, $9, now(), now())
+            returning id
+          `,
+          [
+            insertRow.survey_id,
+            insertRow.user_id,
+            insertRow.assignment_type,
+            insertRow.status,
+            insertRow.due_at ?? null,
+            insertRow.note ?? null,
+            insertRow.assigned_by ?? null,
+            JSON.stringify(insertRow.metadata ?? {}),
+            canonicalOrganizationId,
+          ],
+        );
+        if (Array.isArray(inserted) && inserted[0]?.id) {
+          insertedRows.push(inserted[0]);
+        }
+      }
+
+      return {
+        insertedRows,
+        updatedRows: updates,
+      };
     });
 
-    const updatedRows = [];
-    for (const patch of updates) {
-      const patchId = patch.id;
-      const { id: _ignore, ...changes } = patch;
-      const { data, error } = await supabase
-        .from('assignments')
-        .update(changes)
-        .eq('id', patchId)
-        .select(SURVEY_ASSIGNMENT_SELECT)
-        .maybeSingle();
-      if (error) throw error;
-      if (data) updatedRows.push(data);
-    }
-
-    let insertedRows = [];
-    if (inserts.length > 0) {
-      const { data, error } = await supabase
-        .from('assignments')
-        .insert(inserts)
-        .select(SURVEY_ASSIGNMENT_SELECT);
-      if (error) throw error;
-      insertedRows = data || [];
-    }
+    const insertedRows = sqlResult.insertedRows || [];
+    const updatedRows = sqlResult.updatedRows || [];
 
   const persistedRows = await verifyPersistedSurveyAssignments();
   aggregateResponse.push(...persistedRows);
@@ -22796,7 +23348,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       await assignForOrg(orgId);
     }
 
-    if (isDemoOrTestMode) {
+    if (assignmentFallbackEnabled) {
       const assignedTo = createEmptyAssignedTo();
       const orgSet = new Set();
       const userSet = new Set();
@@ -22872,6 +23424,19 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
         invalidTargetIds,
       },
     });
+    logSurveyAssignmentEvent('survey_assignment_persisted', {
+      requestId: req.requestId ?? null,
+      surveyId,
+      organizationCount: organizationIds.length,
+      userCount: normalizedUserIds.length,
+      insertedRowCount: insertedTotal,
+      skippedRowCount: skippedTotal,
+      invalidTargetIds,
+      metadata: {
+        updatedRowCount: updatedTotal,
+        persistedRowCount: aggregateResponse.length,
+      },
+    });
   } catch (error) {
     logSurveyAssignmentEvent('survey_assignment_failed', {
       requestId: req.requestId ?? null,
@@ -22881,8 +23446,44 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       insertedRowCount: insertedTotal,
       skippedRowCount: skippedTotal,
       invalidTargetIds,
-      metadata: { error: error?.message ?? String(error) },
+      metadata: {
+        error: error?.message ?? String(error),
+        code: error?.code ?? null,
+        statusCode: error?.statusCode ?? null,
+        orgId: error?.meta?.organizationId ?? null,
+      },
     });
+    if (res.headersSent) {
+      return;
+    }
+    if (error?.statusCode === 400 || error?.code === 'invalid_organization_id') {
+      res.status(400).json({
+        error: 'invalid_organization_id',
+        message: 'One or more organization identifiers are invalid.',
+      });
+      return;
+    }
+    if (error?.statusCode === 403 || error?.code === 'org_access_denied') {
+      res.status(403).json({
+        error: 'org_access_denied',
+        message: 'You do not have admin access to one or more requested organizations.',
+      });
+      return;
+    }
+    if (error?.code === 'survey_assignment_persistence_verification_failed') {
+      res.status(503).json({
+        error: 'assignment_persistence_verification_failed',
+        message: 'Survey assignment write could not be verified. Please retry.',
+      });
+      return;
+    }
+    if (error?.statusCode === 503 || error?.code === 'database_unavailable' || isInfrastructureUnavailableError(error)) {
+      res.status(503).json({
+        error: 'database_unavailable',
+        message: 'Survey assignment write failed because the database is unavailable.',
+      });
+      return;
+    }
     res.status(500).json({ error: 'Unable to assign survey' });
   }
 });
@@ -22927,6 +23528,33 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
   }
 
   try {
+    if (!supabase && isDemoOrTestMode) {
+      const rows = Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [];
+      const filtered = rows
+        .filter((row) => {
+          if (!row) return false;
+          const assignmentType = row.assignment_type ?? row.assignmentType ?? null;
+          if (assignmentType && assignmentType !== SURVEY_ASSIGNMENT_TYPE) return false;
+          const assignmentSurveyId = row.survey_id ?? row.surveyId ?? null;
+          if (String(assignmentSurveyId) !== String(surveyId)) return false;
+          const rowOrgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+          if (organizationId && String(rowOrgId ?? '') !== String(organizationId)) return false;
+          const rowUserId = row.user_id ?? row.userId ?? null;
+          if (userIdFilter && String(rowUserId ?? '').toLowerCase() !== userIdFilter) return false;
+          if (!includeInactive && row.active === false) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          const left = Date.parse(a?.updated_at ?? a?.created_at ?? '') || 0;
+          const right = Date.parse(b?.updated_at ?? b?.created_at ?? '') || 0;
+          return right - left;
+        });
+
+      const paged = filtered.slice(offset, offset + limit);
+      res.json({ data: paged, count: filtered.length });
+      return;
+    }
+
     let query = supabase
       .from('assignments')
       .select(SURVEY_ASSIGNMENT_SELECT, { count: 'exact' })
@@ -23073,7 +23701,13 @@ app.get('/api/admin/surveys/:id/hdi/participant-report', async (req, res) => {
       rows = rows.filter((row) => String(row.participantIdentifier || '').toLowerCase() === participantFilter);
     }
 
-    res.json({ data: rows });
+    res.json(
+      createHdiResponseEnvelope(HDI_RESPONSE_SHAPES.PARTICIPANT_REPORT, rows, {
+        count: rows.length,
+        surveyId: surveyRecord.id,
+        organizationId: organizationId ?? null,
+      }),
+    );
   } catch (error) {
     logger.error('admin_hdi_participant_report_failed', {
       surveyId: surveyRecord.id,
@@ -23126,7 +23760,12 @@ app.get('/api/admin/surveys/:id/hdi/cohort-analytics', async (req, res) => {
     if (error) throw error;
 
     const analytics = buildHdiCohortAnalytics(data || []);
-    res.json({ data: analytics });
+    res.json(
+      createHdiResponseEnvelope(HDI_RESPONSE_SHAPES.COHORT_ANALYTICS, analytics, {
+        surveyId: surveyRecord.id,
+        organizationId: organizationId ?? null,
+      }),
+    );
   } catch (error) {
     logger.error('admin_hdi_cohort_analytics_failed', {
       surveyId: surveyRecord.id,
@@ -23201,7 +23840,13 @@ app.get('/api/admin/surveys/:id/hdi/pre-post-comparison', async (req, res) => {
       .sort((a, b) => (Date.parse(b.completedAt ?? '') || 0) - (Date.parse(a.completedAt ?? '') || 0))[0];
 
     const comparison = latestPost && preRecord ? buildHdiComparison({ pre: preRecord, post: latestPost }) : null;
-    res.json({ data: comparison });
+    res.json(
+      createHdiResponseEnvelope(HDI_RESPONSE_SHAPES.PRE_POST_COMPARISON, comparison, {
+        surveyId: surveyRecord.id,
+        organizationId: organizationId ?? null,
+        participant: participantFilter,
+      }),
+    );
   } catch (error) {
     logger.error('admin_hdi_pre_post_comparison_failed', {
       surveyId: surveyRecord.id,
@@ -23262,14 +23907,20 @@ app.get('/api/client/surveys/:id/results', authenticate, async (req, res) => {
       ? buildHdiComparison({ pre: preRecord, post: latest })
       : null;
 
-    res.json({
-      data: {
-        surveyId: surveyRecord.id,
-        assignmentId: assignment?.id ?? null,
-        latest,
-        comparison,
-      },
-    });
+    res.json(
+      createHdiResponseEnvelope(
+        HDI_RESPONSE_SHAPES.LEARNER_RESULTS,
+        {
+          surveyId: surveyRecord.id,
+          assignmentId: assignment?.id ?? null,
+          latest,
+          comparison,
+        },
+        {
+          userId: context.userId,
+        },
+      ),
+    );
   } catch (error) {
     logger.error('client_hdi_results_failed', {
       surveyId: surveyRecord.id,

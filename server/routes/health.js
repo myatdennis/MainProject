@@ -2,11 +2,12 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import supabase, {
+import {
   supabaseAuthClient,
   isSupabaseConfigured,
   isSupabaseAuthConfigured,
 } from '../lib/supabaseClient.js';
+import { pool, getDatabaseConnectionInfo } from '../db.js';
 
 const router = express.Router();
 
@@ -39,42 +40,49 @@ const buildHealthPayload = (overrides = {}) => {
 };
 
 const HEALTH_PROBE_TABLE = process.env.HEALTH_PROBE_TABLE || 'user_profiles';
+const databaseConnectionInfo = getDatabaseConnectionInfo();
 
 const probeDatabase = async () => {
-  if (!supabase) {
+  if (!databaseConnectionInfo.connectionStringDefined) {
     return {
       ok: false,
-      code: 'SUPABASE_NOT_CONFIGURED',
-      message: 'Supabase client is not configured on the server',
-      configured: isSupabaseConfigured(),
+      code: 'DATABASE_URL_MISSING',
+      message: 'Database connection string is not configured on the server',
+      configured: false,
     };
   }
 
+  let client = null;
   try {
-    const { error } = await supabase
-      .from(HEALTH_PROBE_TABLE)
-      .select('id', { count: 'exact', head: true })
-      .limit(1);
-
-    if (error) {
-      return {
-        ok: false,
-        code: 'SUPABASE_QUERY_FAILED',
-        message: error.message || 'Database query failed',
-      };
+    client = await pool.connect();
+    await client.query('select 1');
+    await client.query('begin');
+    try {
+      await client.query('create temp table if not exists health_write_probe (id integer) on commit drop');
+      await client.query('insert into health_write_probe(id) values (1)');
+    } finally {
+      await client.query('rollback');
     }
 
     return {
       ok: true,
       code: 'OK',
       table: HEALTH_PROBE_TABLE,
+      writable: true,
     };
   } catch (error) {
     return {
       ok: false,
-      code: 'SUPABASE_ERROR',
+      code: error?.code || 'DATABASE_ERROR',
       message: error instanceof Error ? error.message : String(error),
+      writable: false,
     };
+  } finally {
+    try {
+      client?.release();
+    } catch {
+      // no-op
+    }
   }
 };
 

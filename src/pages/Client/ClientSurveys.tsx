@@ -12,6 +12,7 @@ import {
   type LearnerSurveyAssignment,
 } from '../../dal/surveys';
 import type { CourseAssignmentStatus } from '../../types/assignment';
+import { subscribeSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
 
 const deriveStatusTone = (status: CourseAssignmentStatus, overdue: boolean) => {
   const statusValue = String(status);
@@ -71,6 +72,9 @@ const ClientSurveys = () => {
     setError(null);
     try {
       const rows = await fetchAssignedSurveysForLearner();
+      console.info('[ClientSurveys] assignments fetched', {
+        fetchedCount: rows.length,
+      });
       setAssignments(rows);
     } catch (err) {
       console.error('Failed to load surveys:', err);
@@ -83,6 +87,14 @@ const ClientSurveys = () => {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeSurveyAssignmentsChanged((event) => {
+      console.info('[ClientSurveys] assignments invalidated', event);
+      void refresh();
+    });
+    return unsubscribe;
   }, [refresh]);
 
   useEffect(() => {
@@ -107,6 +119,14 @@ const ClientSurveys = () => {
     () => assignments.filter((entry) => entry.assignment.status === 'completed'),
     [assignments],
   );
+
+  useEffect(() => {
+    console.info('[ClientSurveys] assignments rendered', {
+      renderedTotal: assignments.length,
+      renderedActive: pendingAssignments.length,
+      renderedCompleted: completedAssignments.length,
+    });
+  }, [assignments.length, pendingAssignments.length, completedAssignments.length]);
 
   const totalOverdue = assignments.filter((entry) => {
     const due = describeDueDate(entry.assignment.dueDate);

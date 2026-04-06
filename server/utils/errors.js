@@ -12,6 +12,7 @@ const missingRelationPatterns = [
 const missingFunctionPatterns = [
   /function\s+"?([\w.]+)"?\s+does not exist/i,
   /the function ["']?([\w.]+)["']?\s+does not exist/i,
+  /could not find the function ["']?([\w.(),\s]+)["']? in the schema cache/i,
 ];
 
 export const normalizeColumnIdentifier = (identifier) => {
@@ -63,6 +64,7 @@ export const isMissingFunctionError = (error) =>
   Boolean(
     error &&
       (error.code === '42883' ||
+        error.code === 'PGRST202' ||
         missingFunctionPatterns.some((pattern) =>
           typeof error.message === 'string' && pattern.test(error.message)
             ? true

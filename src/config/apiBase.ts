@@ -72,14 +72,41 @@ const logMissingEnv = (() => {
   };
 })();
 
+const isSupabaseFunctionsApiBase = (value: string): boolean => {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    const host = String(parsed.hostname || '').toLowerCase();
+    const path = String(parsed.pathname || '').toLowerCase();
+    return host.endsWith('.supabase.co') && path.startsWith('/functions/v1');
+  } catch {
+    return /\.supabase\.co\/functions\/v1/i.test(value);
+  }
+};
+
 const getRawApiBase = (): string => {
   const override = getRuntimeApiBaseOverride();
   if (typeof override === 'string') {
+    const trimmedOverride = override.trim();
+    if (trimmedOverride && isSupabaseFunctionsApiBase(trimmedOverride)) {
+      const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
+      console.error(
+        `[apiBase] Refusing Supabase Functions URL as API base (${trimmedOverride}). Falling back to ${fallback}.`,
+      );
+      return fallback;
+    }
     return override;
   }
   const value = getMetaEnv().VITE_API_BASE_URL;
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (trimmed) {
+    if (isSupabaseFunctionsApiBase(trimmed)) {
+      const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
+      console.error(
+        `[apiBase] Invalid VITE_API_BASE_URL points to Supabase Functions (${trimmed}). Falling back to ${fallback}.`,
+      );
+      return fallback;
+    }
     return trimmed;
   }
   const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;

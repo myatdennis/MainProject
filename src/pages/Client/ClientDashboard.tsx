@@ -31,6 +31,7 @@ import {
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import { syncService } from '../../dal/sync';
 import { fetchAssignedSurveysForLearner, type LearnerSurveyAssignment } from '../../dal/surveys';
+import { subscribeSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
 import type { CourseAssignment } from '../../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
@@ -332,6 +333,10 @@ const ClientDashboard = () => {
       }
       try {
         const rows = await fetchAssignedSurveysForLearner();
+        console.info('[ClientDashboard] survey assignments fetched', {
+          reason,
+          fetchedCount: rows.length,
+        });
         if (!cancelled) {
           setSurveyAssignments(rows);
           setSurveyAssignmentsError(null);
@@ -350,6 +355,10 @@ const ClientDashboard = () => {
     };
 
     void refreshSurveyAssignments('boot');
+    const unsubscribeSurveyAssignments = subscribeSurveyAssignmentsChanged((event) => {
+      console.info('[ClientDashboard] survey assignments invalidated', event);
+      void refreshSurveyAssignments('poll');
+    });
     pollHandle = window.setInterval(() => {
       void refreshSurveyAssignments();
     }, 15000);
@@ -359,8 +368,17 @@ const ClientDashboard = () => {
       if (pollHandle) {
         window.clearInterval(pollHandle);
       }
+      unsubscribeSurveyAssignments();
     };
   }, []);
+
+  useEffect(() => {
+    console.info('[ClientDashboard] survey assignments rendered', {
+      renderedCount: surveyAssignments.length,
+      loading: surveyAssignmentsLoading,
+      hasError: Boolean(surveyAssignmentsError),
+    });
+  }, [surveyAssignments.length, surveyAssignmentsLoading, surveyAssignmentsError]);
 
   const handleRetryBoot = () => {
     setCatalogError(null);

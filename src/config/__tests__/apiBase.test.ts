@@ -16,6 +16,13 @@ describe('resolveApiUrl', () => {
     __setApiBaseUrlOverride('https://api.example.com/api');
     expect(resolveApiUrl('https://api.other.com/api/health')).toBe('https://api.other.com/api/health');
   });
+
+  it('rejects Supabase Functions API base overrides and falls back to non-functions API paths', () => {
+    __setApiBaseUrlOverride('https://eprsgmfzqjptfywoecuy.supabase.co/functions/v1');
+    const loginUrl = resolveApiUrl('/api/auth/login');
+    expect(loginUrl).not.toContain('supabase.co/functions/v1');
+    expect(loginUrl).toContain('/api/auth/login');
+  });
 });
 
 describe('getApiBaseUrl logging contract', () => {
