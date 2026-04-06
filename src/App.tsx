@@ -306,7 +306,7 @@ function AppContent() {
       } else if (eventType === 'assignment_scope_empty') {
         message = 'No assignments were returned for this workspace. Cached courses are still available.';
       } else if (eventType === 'default_catalog_loaded') {
-        message = 'Showing the demo course catalog while we reconnect. Please refresh soon.';
+        message = 'Catalog data is reconnecting. Showing available content while we retry.';
       }
       showCatalogToast(message, eventType === 'assignment_scope_failed' ? 'error' : 'warning', 6000);
     };

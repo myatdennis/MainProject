@@ -2020,25 +2020,34 @@ export const courseStore = {
             }
             console.info('[courseStore.init] admin_courses_loaded', { count: dbCourses.length });
           }
-          // Production safety: strip any E2E / test courses from the server
-          // response before they can enter the store.  In production the server
-          // should not return these, but this is a belt-and-suspenders guard.
-          // Applied in ALL environments (not just PROD) since demo-data.json
-          // can accumulate Integration Test entries during E2E runs.
-          const beforeTestFilter = dbCourses.length;
-          dbCourses = dbCourses.filter((c) => {
-            if (isTestOrE2ECourse(c)) {
-              console.warn('[courseStore.init] server_course_rejected_test_data', { courseId: c.id, title: c.title, source: 'server' });
-              return false;
-            }
-            return true;
-          });
-          if (beforeTestFilter !== dbCourses.length) {
-            console.warn('[courseStore.init] test_courses_stripped_from_server_response', {
-              before: beforeTestFilter,
-              after: dbCourses.length,
-              source: 'server',
+          // Production safety: strip E2E/test-like courses from server responses
+          // only in production (or when explicitly enabled).  Applying this in
+          // all environments can hide legitimate assigned courses whose titles
+          // happen to include words like "integration test".
+          const shouldStripTestCourses =
+            import.meta.env.PROD || import.meta.env.VITE_STRIP_TEST_COURSES === 'true';
+          if (shouldStripTestCourses) {
+            const beforeTestFilter = dbCourses.length;
+            dbCourses = dbCourses.filter((c) => {
+              if (isTestOrE2ECourse(c)) {
+                console.warn('[courseStore.init] server_course_rejected_test_data', {
+                  courseId: c.id,
+                  title: c.title,
+                  source: 'server',
+                  mode: import.meta.env.PROD ? 'prod' : 'explicit',
+                });
+                return false;
+              }
+              return true;
             });
+            if (beforeTestFilter !== dbCourses.length) {
+              console.warn('[courseStore.init] test_courses_stripped_from_server_response', {
+                before: beforeTestFilter,
+                after: dbCourses.length,
+                source: 'server',
+                mode: import.meta.env.PROD ? 'prod' : 'explicit',
+              });
+            }
           }
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
           if (adminLoadStatus === 'empty') {
@@ -2352,7 +2361,7 @@ export const courseStore = {
         courses = {};
         console.warn('[courseStore.init] Admin course load unauthorized; leaving local catalog empty.');
       } else {
-        if (DEFAULT_CATALOG_ALLOWED) {
+        if (DEFAULT_CATALOG_ALLOWED && !restrictToOrg) {
           if (import.meta.env?.DEV) {
             console.info('[courseStore.init] No courses returned; loading local default catalog for demo use.');
           }
@@ -2372,11 +2381,13 @@ export const courseStore = {
         } else {
           console.debug('[COURSE RESET]', { caller: 'courseStore.init/default_catalog_disabled', beforeCount: Object.keys(courses).length });
           courses = {};
-          emitCatalogDiagnostic('default_catalog_loaded', {
-            reason: 'admin_catalog_unavailable',
-            scope: restrictToOrg ? 'learner' : 'admin',
-            disabled: true,
-          });
+          if (!restrictToOrg) {
+            emitCatalogDiagnostic('default_catalog_loaded', {
+              reason: 'admin_catalog_unavailable',
+              scope: restrictToOrg ? 'learner' : 'admin',
+              disabled: true,
+            });
+          }
           console.warn('[courseStore.init] No courses returned and default catalog disabled.');
           if (restrictToOrg) {
             setLearnerCatalogState({
@@ -2398,28 +2409,22 @@ export const courseStore = {
       console.error('Error initializing course store:', error);
       adminLoadStatus = 'error';
       adminLoadError = error instanceof Error ? error.message : 'course_store_init_failed';
-      if (DEFAULT_CATALOG_ALLOWED) {
+      if (DEFAULT_CATALOG_ALLOWED && !restrictToOrg) {
         courses = getDefaultCourses();
         emitCatalogDiagnostic('default_catalog_loaded', {
           reason: 'init_failure',
           error: adminLoadError,
         });
-        if (restrictToOrg) {
-          setLearnerCatalogState({
-            status: 'ok',
-            lastUpdatedAt: Date.now(),
-            lastError: null,
-            detail: 'default_catalog',
-          });
-        }
       } else {
         console.debug('[COURSE RESET]', { caller: 'courseStore.init/catch/default_catalog_disabled', beforeCount: Object.keys(courses).length });
         courses = {};
-        emitCatalogDiagnostic('default_catalog_loaded', {
-          reason: 'init_failure',
-          error: adminLoadError,
-          disabled: true,
-        });
+        if (!restrictToOrg) {
+          emitCatalogDiagnostic('default_catalog_loaded', {
+            reason: 'init_failure',
+            error: adminLoadError,
+            disabled: true,
+          });
+        }
         if (restrictToOrg) {
           setLearnerCatalogState({
             status: 'error',

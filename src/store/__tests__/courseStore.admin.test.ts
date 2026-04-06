@@ -224,6 +224,22 @@ describe('courseStore admin catalog phase transitions', () => {
     expect(finalState.phase).toBe('ready');
   });
 
+  it('keeps legitimate courses in non-production even when title matches test-like patterns', async () => {
+    const integrationNamedCourse = createCourse({
+      id: 'course-qa-visibility',
+      title: 'Integration Test Readiness Course',
+      slug: 'integration-test-readiness-course',
+    });
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([integrationNamedCourse]);
+    const courseStore = await importCourseStore();
+
+    await courseStore.init();
+
+    const finalState = courseStore.getAdminCatalogState();
+    expect(finalState.adminLoadStatus).toBe('success');
+    expect(courseStore.getCourse('course-qa-visibility')?.title).toBe('Integration Test Readiness Course');
+  });
+
   it('reports empty when admin API returns no courses', async () => {
     adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([]);
     const courseStore = await importCourseStore();

@@ -1843,6 +1843,70 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     const candidate = row.user_id ?? row.user_id_uuid ?? null;
     return buildAssignmentKey(candidate);
   };
+  const verifyPersistedCourseAssignments = async () => {
+    if (targetUserIds.length === 0) {
+      return [];
+    }
+
+    const expectedKeys = new Set(targetUserIds.map((value) => buildAssignmentKey(value)));
+    const persistedById = new Map();
+    const userScopedTargetIds = targetUserIds.filter((value) => value !== null);
+    const includesOrgLevelTarget = targetUserIds.some((value) => value === null);
+
+    const collectRowsByColumn = async (column) => {
+      if (userScopedTargetIds.length === 0) return;
+      const { data, error } = await supabase
+        .from('assignments')
+        .select('*')
+        .eq('course_id', courseId)
+        .eq(assignmentsOrgColumn, finalOrganizationId)
+        .eq('active', true)
+        .in(column, userScopedTargetIds);
+      if (error) throw error;
+      for (const row of data || []) {
+        if (!row || persistedById.has(row.id)) continue;
+        persistedById.set(row.id, row);
+      }
+    };
+
+    await collectRowsByColumn('user_id');
+    if (assignmentsSupportUserIdUuid) {
+      await collectRowsByColumn('user_id_uuid');
+    }
+
+    if (includesOrgLevelTarget) {
+      const { data: orgRows, error: orgError } = await supabase
+        .from('assignments')
+        .select('*')
+        .eq('course_id', courseId)
+        .eq(assignmentsOrgColumn, finalOrganizationId)
+        .eq('active', true)
+        .is('user_id', null);
+      if (orgError) throw orgError;
+      for (const row of orgRows || []) {
+        if (!row || persistedById.has(row.id)) continue;
+        persistedById.set(row.id, row);
+      }
+    }
+
+    const persistedRows = Array.from(persistedById.values());
+    const persistedKeys = new Set(persistedRows.map((row) => resolveRowKey(row)));
+    const missingKeys = Array.from(expectedKeys).filter((key) => !persistedKeys.has(key));
+    if (missingKeys.length > 0) {
+      const verificationError = new Error('assignment_persistence_verification_failed');
+      verificationError.code = 'assignment_persistence_verification_failed';
+      verificationError.meta = {
+        courseId,
+        organizationId: finalOrganizationId,
+        missingKeys,
+        expectedCount: expectedKeys.size,
+        persistedCount: persistedRows.length,
+      };
+      throw verificationError;
+    }
+
+    return persistedRows;
+  };
 
   try {
     if (targetUserIds.length === 0) {
@@ -1957,6 +2021,23 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       }
 
       const responseRows = [...updated, ...inserted];
+      const persistedKeys = new Set(responseRows.map((row) => resolveRowKey(row)));
+      const expectedKeys = new Set(targetUserIds.map((value) => buildAssignmentKey(value)));
+      const missingKeys = Array.from(expectedKeys).filter((key) => !persistedKeys.has(key));
+      if (missingKeys.length > 0) {
+        const verificationError = new Error('assignment_persistence_verification_failed');
+        verificationError.code = 'assignment_persistence_verification_failed';
+        verificationError.meta = {
+          courseId,
+          organizationId: finalOrganizationId,
+          missingKeys,
+          expectedCount: expectedKeys.size,
+          persistedCount: responseRows.length,
+          fallbackMode: true,
+        };
+        throw verificationError;
+      }
+
       assignmentInsertedCount = inserted.length;
       assignmentUpdatedCount = updated.length;
       assignmentSkippedCount = Math.max(targetUserIds.length - assignmentInsertedCount - assignmentUpdatedCount, 0);
@@ -2194,7 +2275,8 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       console.warn('Failed to broadcast assignment events', broadcastErr);
     }
 
-    const responseRows = [...updatedRows, ...insertedRows];
+  const verifiedRows = await verifyPersistedCourseAssignments();
+  const responseRows = verifiedRows.length > 0 ? verifiedRows : [...updatedRows, ...insertedRows];
     assignmentInsertedCount = insertedRows.length;
     assignmentUpdatedCount = updatedRows.length;
     assignmentSkippedCount = Math.max(targetUserIds.length - assignmentInsertedCount - assignmentUpdatedCount, 0);
@@ -5652,7 +5734,11 @@ const ensureCourseAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
   }
 };
 
-const loadSurveyAssignmentForUser = async (surveyId, userId, { assignmentId = null, orgIds = [] } = {}) => {
+const loadSurveyAssignmentForUser = async (
+  surveyId,
+  userId,
+  { assignmentId = null, orgIds = [], allowSelfEnroll = true } = {},
+) => {
   if (!supabase || !surveyId || !userId) return null;
   try {
     if (assignmentId) {
@@ -5688,6 +5774,10 @@ const loadSurveyAssignmentForUser = async (surveyId, userId, { assignmentId = nu
         .maybeSingle();
       if (hydratedError) throw hydratedError;
       if (hydrated) return hydrated;
+    }
+
+    if (!allowSelfEnroll) {
+      return null;
     }
 
     const _assignInsert = await supabase
@@ -14226,7 +14316,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
 
     const nowIso = new Date().toISOString();
     const responsePayload = {
-      survey_id: id,
+      survey_id: surveyId,
       user_id: context.userId,
       organization_id: assignment?.organization_id ?? context.activeOrganizationId ?? null,
       response: responses,
@@ -14255,7 +14345,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         await supabase.from('hdi_assessment_results').upsert(
           {
             survey_response_id: inserted.id,
-            survey_id: id,
+            survey_id: surveyId,
             user_id: context.userId,
             organization_id: assignment?.organization_id ?? context.activeOrganizationId ?? null,
             stage_scores: report?.stageScores ?? scoring?.stageScores ?? {},
@@ -14275,7 +14365,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         );
       } catch (persistError) {
         logger.warn('hdi_result_persist_skipped', {
-          surveyId: id,
+          surveyId: surveyId,
           responseId: inserted.id,
           message: persistError?.message ?? String(persistError),
           code: persistError?.code ?? null,
@@ -14294,7 +14384,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         .eq('id', assignment.id);
       logSurveyAssignmentEvent('survey_assignment_completed', {
         requestId: req.requestId ?? null,
-        surveyId: id,
+        surveyId: surveyId,
         organizationCount: assignment.organization_id ? 1 : 0,
         userCount: 1,
         insertedRowCount: 0,
@@ -14309,7 +14399,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
     console.error('[client.surveys.submit] failed', error);
     logSurveyAssignmentEvent('survey_assignment_failed', {
       requestId: req.requestId ?? null,
-      surveyId: id,
+      surveyId: surveyId,
       organizationCount: 0,
       userCount: 1,
       insertedRowCount: 0,
@@ -22546,6 +22636,55 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     }
 
     const targetUserIds = normalizedUserIds.length > 0 ? normalizedUserIds : [null];
+    const buildSurveyAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
+    const verifyPersistedSurveyAssignments = async () => {
+      const expectedKeys = new Set(targetUserIds.map((value) => buildSurveyAssignmentKey(value)));
+      if (expectedKeys.size === 0) return [];
+
+      let persistedRows = [];
+      if (normalizedUserIds.length > 0) {
+        const { data, error } = await supabase
+          .from('assignments')
+          .select(SURVEY_ASSIGNMENT_SELECT)
+          .eq('survey_id', surveyId)
+          .eq('organization_id', organizationId)
+          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+          .eq('active', true)
+          .in('user_id', normalizedUserIds);
+        if (error) throw error;
+        persistedRows = data || [];
+      } else {
+        const { data, error } = await supabase
+          .from('assignments')
+          .select(SURVEY_ASSIGNMENT_SELECT)
+          .eq('survey_id', surveyId)
+          .eq('organization_id', organizationId)
+          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+          .eq('active', true)
+          .is('user_id', null);
+        if (error) throw error;
+        persistedRows = data || [];
+      }
+
+      const persistedKeys = new Set(
+        persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_id ?? null)),
+      );
+      const missingKeys = Array.from(expectedKeys).filter((key) => !persistedKeys.has(key));
+      if (missingKeys.length > 0) {
+        const verificationError = new Error('survey_assignment_persistence_verification_failed');
+        verificationError.code = 'survey_assignment_persistence_verification_failed';
+        verificationError.meta = {
+          surveyId,
+          organizationId,
+          missingKeys,
+          expectedCount: expectedKeys.size,
+          persistedCount: persistedRows.length,
+        };
+        throw verificationError;
+      }
+
+      return persistedRows;
+    };
     const existingMap = new Map();
     if (normalizedUserIds.length > 0) {
       const { data, error } = await supabase
@@ -22644,7 +22783,8 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       insertedRows = data || [];
     }
 
-    aggregateResponse.push(...updatedRows, ...insertedRows);
+  const persistedRows = await verifyPersistedSurveyAssignments();
+  aggregateResponse.push(...persistedRows);
     insertedTotal += insertedRows.length;
     updatedTotal += updatedRows.length;
     skippedTotal += Math.max(targetUserIds.length - insertedRows.length - updatedRows.length, 0);
@@ -23089,15 +23229,30 @@ app.get('/api/client/surveys/:id/results', authenticate, async (req, res) => {
     const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
       assignmentId: req.query.assignmentId ?? req.query.assignment_id ?? null,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+      allowSelfEnroll: false,
     });
 
-    const { data, error } = await supabase
+    if ((req.query.assignmentId || req.query.assignment_id) && !assignment) {
+      res.status(404).json({
+        error: 'assignment_not_found',
+        message: 'Assignment not found for this survey and learner.',
+      });
+      return;
+    }
+
+    let responseQuery = supabase
       .from('survey_responses')
       .select('*')
       .eq('survey_id', surveyRecord.id)
       .eq('user_id', context.userId)
       .order('completed_at', { ascending: false, nullsFirst: false })
       .limit(100);
+
+    if (assignment?.id) {
+      responseQuery = responseQuery.eq('assignment_id', assignment.id);
+    }
+
+    const { data, error } = await responseQuery;
     if (error) throw error;
 
     const records = (data || []).map((row) => toHdiRecord(row)).filter(Boolean);

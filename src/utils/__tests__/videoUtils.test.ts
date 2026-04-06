@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveExternalVideoCommitMetadata } from '../../utils/videoUtils';
+import { deriveExternalVideoCommitMetadata, resolveLessonVideoPlayback } from '../../utils/videoUtils';
 
 describe('videoUtils', () => {
   describe('deriveExternalVideoCommitMetadata', () => {
@@ -29,6 +29,30 @@ describe('videoUtils', () => {
       expect(result.isValid).toBe(false);
       expect(result.sourceType).toBe('external');
       expect(result.normalizedUrl).toBe('notaurl');
+    });
+  });
+
+  describe('resolveLessonVideoPlayback', () => {
+    it('resolves TED talk links to embed playback', () => {
+      const result = resolveLessonVideoPlayback({
+        videoUrl: 'https://www.ted.com/talks/brene_brown_the_power_of_vulnerability',
+      } as any);
+
+      expect(result.provider).toBe('ted');
+      expect(result.mode).toBe('embed');
+      expect(result.embedUrl).toContain('embed.ted.com/talks');
+    });
+
+    it('keeps generic external mp4 links as native playback', () => {
+      const result = resolveLessonVideoPlayback({
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+        videoSourceType: 'external',
+      } as any);
+
+      expect(result.provider).toBe('external');
+      expect(result.mode).toBe('native');
+      expect(result.embedUrl).toBeNull();
+      expect(result.src).toContain('BigBuckBunny.mp4');
     });
   });
 });
