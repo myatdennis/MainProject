@@ -207,6 +207,31 @@ describe('course importer normalization', () => {
     expect(normalized.content?.questions?.[0]?.options?.find((option: ItemLike) => option['correct'])?.['id']).toBe('b');
   });
 
+  it('derives quiz questions from content.body.quizQuestions', () => {
+    const lesson = {
+      type: 'quiz',
+      content: {
+        body: {
+          quizQuestions: [
+            {
+              prompt: 'Nested body quiz question?',
+              options: [
+                { id: 'opt-a', text: 'No', isCorrect: false },
+                { id: 'opt-b', text: 'Yes', isCorrect: true },
+              ],
+            },
+          ],
+        },
+      },
+      content_json: {},
+    };
+
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 }) as NormalizedLesson;
+    expect(normalized.content?.questions?.length).toBe(1);
+    expect(normalized.content?.questions?.[0]?.prompt).toBe('Nested body quiz question?');
+    expect(normalized.content?.questions?.[0]?.options?.find((option: ItemLike) => option['correct'])?.['id']).toBe('opt-b');
+  });
+
   it('normalizes module lessons consistently', () => {
     const module = {
       title: 'Module 1',

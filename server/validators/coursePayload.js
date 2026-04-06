@@ -117,6 +117,10 @@ const describeValueType = (value) => {
 const lessonTypeRequiresQuestions = new Set(['quiz']);
 const lessonTypeRequiresScenario = new Set(['interactive', 'scenario']);
 
+const hasObjectContent = (value) => {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+};
+
 const coerceOrder = (value, fallback) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -126,16 +130,20 @@ const coerceOrder = (value, fallback) => {
 
 const getLessonContentBody = (lesson) => {
   if (lesson?.content_json && typeof lesson.content_json === 'object') {
-    if (lesson.content_json.body && typeof lesson.content_json.body === 'object') {
+    if (lesson.content_json.body && typeof lesson.content_json.body === 'object' && hasObjectContent(lesson.content_json.body)) {
       return lesson.content_json.body;
     }
-    return lesson.content_json;
+    if (hasObjectContent(lesson.content_json)) {
+      return lesson.content_json;
+    }
   }
   if (lesson?.content && typeof lesson.content === 'object') {
-    if (lesson.content.body && typeof lesson.content.body === 'object') {
+    if (lesson.content.body && typeof lesson.content.body === 'object' && hasObjectContent(lesson.content.body)) {
       return lesson.content.body;
     }
-    return lesson.content;
+    if (hasObjectContent(lesson.content)) {
+      return lesson.content;
+    }
   }
   return {};
 };
@@ -175,7 +183,10 @@ const extractLessonQuestions = (lesson) => {
     extractQuestionsFromPath(lesson, ['content', 'quizQuestions']) ||
     extractQuestionsFromPath(lesson, ['content', 'quiz_questions']) ||
     extractQuestionsFromPath(lesson, ['content', 'body', 'questions']) ||
+  extractQuestionsFromPath(lesson, ['content', 'body', 'quizQuestions']) ||
+  extractQuestionsFromPath(lesson, ['content', 'body', 'quiz_questions']) ||
     extractQuestionsFromPath(lesson, ['content', 'quiz', 'questions']) ||
+  extractQuestionsFromPath(lesson, ['content', 'body', 'quiz', 'questions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'questions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'quizQuestions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'quiz_questions']) ||
@@ -183,6 +194,7 @@ const extractLessonQuestions = (lesson) => {
     extractQuestionsFromPath(lesson, ['content_json', 'quiz', 'questions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'body', 'quizQuestions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'body', 'quiz_questions']) ||
+  extractQuestionsFromPath(lesson, ['content_json', 'body', 'quiz', 'questions']) ||
     (Array.isArray(lesson?.quizQuestions) && lesson.quizQuestions.length > 0 ? lesson.quizQuestions : null) ||
     (Array.isArray(lesson?.quiz_questions) && lesson.quiz_questions.length > 0 ? lesson.quiz_questions : null) ||
     (Array.isArray(lesson?.questions) && lesson.questions.length > 0 ? lesson.questions : null) ||

@@ -231,11 +231,17 @@ export const deriveQuizQuestions = (lesson) => {
   mergeQuestions(lesson?.content?.quiz?.questions);
   mergeQuestions(lesson?.content?.items);
   mergeQuestions(lesson?.content?.body?.questions);
+  mergeQuestions(lesson?.content?.body?.quizQuestions);
+  mergeQuestions(lesson?.content?.body?.quiz_questions);
+  mergeQuestions(lesson?.content?.body?.quiz?.questions);
   mergeQuestions(lesson?.content?.body?.blocks);
   mergeQuestions(lesson?.content_json?.questions);
   mergeQuestions(lesson?.content_json?.quiz?.questions);
   mergeQuestions(lesson?.content_json?.items);
   mergeQuestions(lesson?.content_json?.body?.questions);
+  mergeQuestions(lesson?.content_json?.body?.quizQuestions);
+  mergeQuestions(lesson?.content_json?.body?.quiz_questions);
+  mergeQuestions(lesson?.content_json?.body?.quiz?.questions);
   mergeQuestions(lesson?.content_json?.body?.blocks);
   mergeQuestions(collectLessonItems(lesson));
   const blockDerived = collectQuizQuestionsFromBlocks(lesson);
