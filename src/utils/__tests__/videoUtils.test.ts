@@ -54,5 +54,21 @@ describe('videoUtils', () => {
       expect(result.embedUrl).toBeNull();
       expect(result.src).toContain('BigBuckBunny.mp4');
     });
+
+    it('resolves internal signed assets to native playback without embed mode', () => {
+      const result = resolveLessonVideoPlayback({
+        videoSourceType: 'internal',
+        videoAsset: {
+          bucket: 'course-videos',
+          storagePath: 'courses/c1/m1/l1/video.mp4',
+          signedUrl: 'https://signed.example.com/courses/c1/m1/l1/video.mp4',
+        },
+      } as any);
+
+      expect(result.provider).toBe('internal');
+      expect(result.mode).toBe('native');
+      expect(result.embedUrl).toBeNull();
+      expect(result.src).toBe('https://signed.example.com/courses/c1/m1/l1/video.mp4');
+    });
   });
 });

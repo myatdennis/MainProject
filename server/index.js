@@ -87,6 +87,7 @@ import { validateCourse as validatePublishableCourse } from './lib/courseValidat
 import { getSupabaseConfig } from './config/supabaseConfig.js';
 import { normalizeModuleLessonPayloads, shouldLogModuleNormalization, coerceTextId } from './lib/moduleLessonNormalizer.js';
 import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from './utils/authHelpers.js';
+import { deriveSurveyAssignmentOrgScope } from './utils/surveyAssignmentOrgScope.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -1551,7 +1552,7 @@ const respondWithHealthPayload = async (_req, res) => {
   try {
     const dbHealth = await probeDatabaseHealth();
     const overrides = { database: dbHealth };
-    if (!dbHealth.ok) {
+    if (!dbHealth.ok || dbHealth.writable === false) {
       const dbStatus = normalizeHealthStatus(dbHealth.status);
       overrides.status = dbStatus === 'error' || dbStatus === 'disabled' ? 'error' : 'degraded';
     }
@@ -2703,13 +2704,17 @@ app.get('/api/health/db', async (_req, res) => {
     const result = await probeDatabaseHealth({ requireWritable: true });
     const ok = Boolean(result.ok && result.writable !== false);
     const statusCode = ok ? 200 : 503;
+    const code = result.code ?? (result.ok && result.writable === false ? 'db_not_writable' : null);
+    const message = result.message ?? (result.ok && result.writable === false
+      ? 'Database reachable but write probe failed.'
+      : null);
     res.status(statusCode).json({
       ok,
       status: result.status,
       latencyMs: result.latencyMs ?? null,
       writable: result.writable ?? null,
-      code: result.code ?? null,
-      message: result.message ?? null,
+      code,
+      message,
       demoFallback: Boolean(isDemoMode),
     });
   } catch (error) {
@@ -23076,14 +23081,6 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   const hasBodyKey = (key) => Object.prototype.hasOwnProperty.call(body, key);
   const rawOrgInput = body.organization_ids ?? body.organizationIds ?? body.organizations ?? body.orgIds;
   const organizationIds = coerceIdArray(rawOrgInput);
-  if (!organizationIds.length) {
-    const singleOrg = body.organization_id ?? body.organizationId ?? null;
-    if (singleOrg) organizationIds.push(String(singleOrg).trim());
-  }
-  if (!organizationIds.length) {
-    res.status(400).json({ error: 'organization_id_required', message: 'Provide at least one organization id.' });
-    return;
-  }
 
   const rawUserIds = Array.isArray(body.user_ids)
     ? body.user_ids
@@ -23091,6 +23088,59 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       ? body.userIds
       : [];
   const { normalizedUserIds, invalidTargetIds } = normalizeAssignmentUserIds(rawUserIds);
+
+  if (!organizationIds.length) {
+    const singleOrg = body.organization_id ?? body.organizationId ?? null;
+    if (singleOrg) organizationIds.push(String(singleOrg).trim());
+  }
+
+  if (!organizationIds.length && normalizedUserIds.length > 0 && supabase && !assignmentFallbackEnabled) {
+    try {
+      const { data: membershipRows, error: membershipError } = await supabase
+        .from('organization_memberships')
+        .select('user_id, organization_id, status, is_active, accepted_at')
+        .in('user_id', normalizedUserIds)
+        .eq('status', 'active');
+
+      if (membershipError) {
+        throw membershipError;
+      }
+
+      const derivedScope = deriveSurveyAssignmentOrgScope({
+        normalizedUserIds,
+        membershipRows,
+      });
+
+      if (!derivedScope?.ok) {
+        res.status(400).json({
+          error: derivedScope?.code || 'organization_scope_required',
+          message:
+            derivedScope?.message ||
+            'Unable to resolve organization scope from user memberships. Provide organizationIds explicitly.',
+          meta: derivedScope?.meta || null,
+        });
+        return;
+      }
+
+      organizationIds.push(...(derivedScope.organizationIds || []));
+    } catch (deriveOrgError) {
+      logger.warn('survey_assignment_org_derivation_failed', {
+        requestId: req.requestId ?? null,
+        surveyId,
+        message: deriveOrgError?.message ?? String(deriveOrgError),
+      });
+      res.status(503).json({
+        error: 'organization_scope_resolution_failed',
+        message: 'Unable to resolve organization scope for user-targeted assignment. Please retry or pass organizationIds.',
+      });
+      return;
+    }
+  }
+
+  if (!organizationIds.length) {
+    res.status(400).json({ error: 'organization_id_required', message: 'Provide at least one organization id.' });
+    return;
+  }
 
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -23503,7 +23553,8 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
                 (survey_id, course_id, user_id, user_id_uuid, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
               values
                 ($1, null, $2, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb, true, $10, now(), now())
-              on conflict on constraint assignments_unique_user_per_survey
+              on conflict (survey_id, user_id)
+              where assignment_type = 'survey' and user_id is not null
               do update
                 set ${orgColumnName} = excluded.${orgColumnName},
                     status = excluded.status,
@@ -23534,7 +23585,8 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
                 (survey_id, course_id, user_id, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
               values
                 ($1, null, $2, $3, $4, $5, $6, $7, $8::jsonb, true, $9, now(), now())
-              on conflict on constraint assignments_unique_user_per_survey
+              on conflict (survey_id, user_id)
+              where assignment_type = 'survey' and user_id is not null
               do update
                 set ${orgColumnName} = excluded.${orgColumnName},
                     status = excluded.status,

@@ -27,7 +27,7 @@ import {
   AlertTriangle,
   Subtitles,
 } from 'lucide-react';
-import { Course, Lesson, LearnerProgress, UserBookmark, UserNote } from '../../types/courseTypes';
+import { Course, Lesson, LearnerProgress, UserBookmark, UserNote, LessonVideoAsset } from '../../types/courseTypes';
 import type { NormalizedCourse, NormalizedLesson } from '../../utils/courseNormalization';
 import { loadCourse } from '../../dal/courseData';
 import {
@@ -52,6 +52,7 @@ import {
 } from '../../utils/assignmentStorage';
 import { trackCourseCompletion as dalTrackCourseCompletion, trackEvent as dalTrackEvent } from '../../dal/analytics';
 import { useUserProfile } from '../../hooks/useUserProfile';
+import useSignedMediaUrl from '../../hooks/useSignedMediaUrl';
 import { batchService } from '../../dal/batchService';
 import { progressService } from '../../dal/progress';
 
@@ -184,6 +185,39 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const currentLessonIndex = currentLesson
     ? courseLessons.findIndex((lesson) => lesson.id === currentLesson.id)
     : -1;
+  const currentLessonPlayback = useMemo(
+    () => resolveLessonVideoPlayback((currentLesson as any)?.content || {}),
+    [currentLesson],
+  );
+  const currentLessonVideoAsset = useMemo<LessonVideoAsset | null>(() => {
+    if (!currentLesson || currentLesson.type !== 'video') {
+      return null;
+    }
+    const sourceType = String((currentLesson as any)?.content?.videoSourceType || '').toLowerCase();
+    const isExternal =
+      sourceType === 'external' ||
+      sourceType === 'youtube' ||
+      sourceType === 'vimeo' ||
+      currentLessonPlayback.provider === 'youtube' ||
+      currentLessonPlayback.provider === 'vimeo' ||
+      currentLessonPlayback.provider === 'ted' ||
+      currentLessonPlayback.provider === 'loom';
+    if (isExternal) {
+      return null;
+    }
+    const asset = (currentLesson as any)?.content?.videoAsset as LessonVideoAsset | null | undefined;
+    return asset ?? null;
+  }, [currentLesson, currentLessonPlayback.provider]);
+  const {
+    url: securedVideoUrl,
+    isLoading: securingVideo,
+    error: secureVideoError,
+    refresh: refreshVideoSource,
+    hasAsset: hasSecuredVideoAsset,
+  } = useSignedMediaUrl({
+    asset: currentLessonVideoAsset,
+    fallbackUrl: currentLessonPlayback.src,
+  });
   const canGoPrevious = currentLessonIndex > 0;
   const canGoNext = currentLessonIndex !== -1 && currentLessonIndex < courseLessons.length - 1;
 
@@ -1287,8 +1321,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
           <Card padding="none" className="overflow-hidden">
             {currentLesson.type === 'video' && (() => {
-              const playback = resolveLessonVideoPlayback((currentLesson as any).content || {});
-              const videoUrl = playback.src;
+              const playback = currentLessonPlayback;
+              const videoUrl = playback.mode === 'embed' ? playback.src : securedVideoUrl || playback.src;
               const isNativeVideo = playback.mode !== 'embed';
 
               const resumeLabel = canResumePlayback
@@ -1309,10 +1343,20 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
               );
 
               const renderVideo = () => {
+                if (securingVideo && !videoUrl) {
+                  return (
+                    <Card tone="muted" className="h-full w-full rounded-none border-none">
+                      <p className="text-sm text-slate/80">Securing video stream…</p>
+                    </Card>
+                  );
+                }
+
                 if (!videoUrl) {
                   return (
                     <Card tone="muted" className="h-full w-full rounded-none border-none">
-                      <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
+                      <p className="text-sm text-slate/80">
+                        {secureVideoError || 'Video source unavailable. Please contact your facilitator.'}
+                      </p>
                     </Card>
                   );
                 }
@@ -1366,6 +1410,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                       const message = 'We are having trouble loading this lesson video. Please try again.';
                       setVideoStatus('error');
                       setVideoError(message);
+                      if (hasSecuredVideoAsset) {
+                        void refreshVideoSource(true);
+                      }
                       showToast(message, 'error', 5000);
                     }}
                     playsInline
@@ -1377,6 +1424,11 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
               return (
                 <div className="relative bg-ink">
+                  {secureVideoError && hasSecuredVideoAsset && (
+                    <div className="absolute left-4 top-4 z-20 rounded-md bg-amber-50/95 px-3 py-2 text-xs font-medium text-amber-800 shadow">
+                      Secure stream refresh failed. Retrying playback…
+                    </div>
+                  )}
                   {renderVideo()}
 
                   {isNativeVideo && captionsEnabled && currentCaption && (
