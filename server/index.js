@@ -12484,7 +12484,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
   const payloadValidation = validateCoursePayload(
     { course: courseLocal, modules: modulesLocal },
-    { enforceLessonContent: true },
+    { enforceLessonContent: false },
   );
   if (!payloadValidation.ok && !isDemoMode) {
     const details = (payloadValidation.issues || []).map((issue) => {

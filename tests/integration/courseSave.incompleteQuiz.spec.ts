@@ -89,4 +89,42 @@ describe('Admin course save validation', () => {
     expect(body?.code).not.toBe('validation_failed');
     expect(body?.data?.id).toBeTruthy();
   }, 60000);
+
+  it('allows draft autosave payloads with incomplete quiz content without returning validation_failed', async () => {
+    const slug = `autosave-incomplete-quiz-${randomUUID()}`;
+
+    const response = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({
+        action: 'course.auto-save',
+        course: {
+          title: `Autosave Incomplete Quiz ${slug}`,
+          slug,
+          description: 'Regression test for autosave payload tolerance.',
+          status: 'draft',
+          organization_id: TEST_ORG_ID,
+        },
+        modules: [
+          {
+            title: 'Draft Module',
+            order_index: 1,
+            lessons: [
+              {
+                title: 'Quiz Lesson Draft',
+                type: 'quiz',
+                order_index: 1,
+                content_json: {},
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const body = await response.json();
+    expect([200, 201]).toContain(response.status);
+    expect(body?.code).not.toBe('validation_failed');
+    expect(body?.data?.id).toBeTruthy();
+  }, 60000);
 });
