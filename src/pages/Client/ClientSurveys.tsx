@@ -136,6 +136,16 @@ const ClientSurveys = () => {
   }).length;
 
   const handleOpenSurvey = (entry: LearnerSurveyAssignment) => {
+    if (entry.survey?.id && entry.assignment.status === 'completed') {
+      navigate(`${portalPath}/surveys/${entry.survey.id}/results?assignmentId=${entry.assignment.id}`);
+      return;
+    }
+
+    if (entry.survey?.id) {
+      navigate(`${portalPath}/surveys/${entry.survey.id}/take?assignmentId=${entry.assignment.id}`);
+      return;
+    }
+
     const surveyUrl = extractSurveyLink(entry.assignment);
     if (surveyUrl) {
       window.open(surveyUrl, '_blank', 'noopener,noreferrer');

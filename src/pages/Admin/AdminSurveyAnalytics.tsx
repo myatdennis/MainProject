@@ -23,7 +23,12 @@ import {
   SurveyAnalyticsDashboardView,
   buildSurveySummary,
 } from '../../components/Survey/SurveyAnalyticsDashboard';
-import { getSurveyById, fetchHdiCohortAnalytics, fetchHdiParticipantReport } from '../../dal/surveys';
+import {
+  getSurveyById,
+  fetchHdiCohortAnalytics,
+  fetchHdiParticipantReport,
+  fetchAdminSurveyResults,
+} from '../../dal/surveys';
 
 const RANGE_OPTIONS: { label: string; value: AnalyticsDateRange }[] = [
   { label: '7 days', value: 'last-7-days' },
@@ -52,6 +57,9 @@ const AdminSurveyAnalytics = () => {
   const [hdiError, setHdiError] = useState<string | null>(null);
   const [hdiParticipants, setHdiParticipants] = useState<any[]>([]);
   const [hdiCohort, setHdiCohort] = useState<any | null>(null);
+  const [submissionRows, setSubmissionRows] = useState<any[]>([]);
+  const [submissionLoading, setSubmissionLoading] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!surveyId) return;
@@ -75,6 +83,34 @@ const AdminSurveyAnalytics = () => {
     surveyType === 'hdi-assessment' ||
     surveyType === 'hdi-huddle-development-inventory' ||
     surveyType === 'hdi-intercultural-development-index';
+
+  useEffect(() => {
+    if (!surveyId) {
+      setSubmissionRows([]);
+      setSubmissionError(null);
+      return;
+    }
+    let active = true;
+    setSubmissionLoading(true);
+    setSubmissionError(null);
+    fetchAdminSurveyResults(surveyId, { limit: 100 })
+      .then((rows) => {
+        if (!active) return;
+        setSubmissionRows(Array.isArray(rows) ? rows : []);
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('[AdminSurveyAnalytics] failed to load survey submissions', error);
+        setSubmissionError('Unable to load submission records right now.');
+      })
+      .finally(() => {
+        if (active) setSubmissionLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [surveyId]);
 
   useEffect(() => {
     if (!surveyId || !isHdiSurvey) {
@@ -288,6 +324,49 @@ const AdminSurveyAnalytics = () => {
         data={data}
         onRefresh={refresh}
       />
+
+      <div className="card-lg space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-gray-900">Recent survey submissions</h2>
+          <span className="text-sm text-gray-500">{submissionRows.length} records</span>
+        </div>
+        {submissionError ? (
+          <p className="text-sm text-red-600">{submissionError}</p>
+        ) : submissionLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : submissionRows.length === 0 ? (
+          <p className="text-sm text-gray-500">No submissions have been recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-gray-200">
+                  <th className="py-2 pr-3">Submitted</th>
+                  <th className="py-2 pr-3">User</th>
+                  <th className="py-2 pr-3">Assignment</th>
+                  <th className="py-2 pr-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissionRows.slice(0, 100).map((row, index) => (
+                  <tr key={`${row.id ?? row.assignment_id ?? index}`} className="border-b border-gray-100">
+                    <td className="py-2 pr-3 text-gray-700">
+                      {row.submitted_at ? new Date(row.submitted_at).toLocaleString() : row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                    </td>
+                    <td className="py-2 pr-3 text-gray-700 font-mono text-xs">{row.user_id ?? '—'}</td>
+                    <td className="py-2 pr-3 text-gray-700 font-mono text-xs">{row.assignment_id ?? '—'}</td>
+                    <td className="py-2 pr-3 text-gray-700">{row.status ?? 'submitted'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {isHdiSurvey && (
         <div className="space-y-6">

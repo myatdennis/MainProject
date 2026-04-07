@@ -24,6 +24,7 @@ import ClientCourseDetail from './pages/Client/ClientCourseDetail';
 import ClientLessonView from './pages/Client/ClientLessonView';
 import ClientCourseCompletion from './pages/Client/ClientCourseCompletion';
 import ClientSurveys from './pages/Client/ClientSurveys';
+import ClientSurveyTake from './pages/Client/ClientSurveyTake';
 import ClientSurveyResults from './pages/Client/ClientSurveyResults';
 import ClientSurveyProgress from './pages/Client/ClientSurveyProgress';
 import ClientDocuments from './pages/Client/DocumentsPage';
@@ -423,6 +424,7 @@ function AppContent() {
             <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
             <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
             <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="surveys/:surveyId/take" element={<ClientSurveyTake />} />
             <Route path="surveys/:surveyId/results" element={<ClientSurveyResults />} />
             <Route path="surveys/:surveyId/progress" element={<ClientSurveyProgress />} />
             <Route path="documents" element={<ClientDocuments />} />
@@ -461,6 +463,7 @@ function AppContent() {
             <Route path="course/:courseId" element={<LMSModule />} />
             <Route path="module/:moduleId" element={<LMSModule />} />
             <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="surveys/:surveyId/take" element={<ClientSurveyTake />} />
             <Route path="surveys/:surveyId/results" element={<ClientSurveyResults />} />
             <Route path="surveys/:surveyId/progress" element={<ClientSurveyProgress />} />
             {/* Canonical lesson URL — always use the plural "courses" form */}

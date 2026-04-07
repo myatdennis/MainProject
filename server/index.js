@@ -3581,6 +3581,7 @@ if (isFallbackMode) {
 let loggedMissingSupabaseConfig = false;
 let assignmentsUserIdUuidColumnAvailable = null;
 let assignmentsOrganizationIdColumnAvailable = null;
+let userCourseProgressUserIdUuidColumnAvailable = null;
 
 await runStorageDoctor();
 
@@ -3607,6 +3608,33 @@ const isUserCourseProgressUuidColumnMissing = (error) => {
   if (!isMissingColumnError(error)) return false;
   const missing = normalizeColumnIdentifier(extractMissingColumnName(error));
   return missing === 'user_id_uuid';
+};
+
+const detectUserCourseProgressUserIdUuidColumnAvailability = async () => {
+  if (!supabase) return false;
+  if (typeof userCourseProgressUserIdUuidColumnAvailable === 'boolean') {
+    return userCourseProgressUserIdUuidColumnAvailable;
+  }
+
+  try {
+    const { error } = await supabase
+      .from('user_course_progress')
+      .select('id', { head: true, count: 'exact' })
+      .is('user_id_uuid', null);
+    if (error) throw error;
+    userCourseProgressUserIdUuidColumnAvailable = true;
+  } catch (error) {
+    if (isUserCourseProgressUuidColumnMissing(error)) {
+      userCourseProgressUserIdUuidColumnAvailable = false;
+      logger.warn('user_course_progress_uuid_column_missing', {
+        message: 'user_id_uuid column does not exist on user_course_progress — using user_id conflict target',
+      });
+      return false;
+    }
+    throw error;
+  }
+
+  return userCourseProgressUserIdUuidColumnAvailable;
 };
 
 const isConflictConstraintMissing = (error) => {
@@ -3674,6 +3702,10 @@ const getAssignmentsOrgColumnName = async () =>
 const auditUserCourseProgressUuid = async () => {
   if (!supabase) return;
   try {
+    const hasUserIdUuid = await detectUserCourseProgressUserIdUuidColumnAvailability();
+    if (!hasUserIdUuid) {
+      return;
+    }
     const { count, error } = await supabase
       .from('user_course_progress')
       .select('id', { head: true, count: 'exact' })
@@ -3689,9 +3721,7 @@ const auditUserCourseProgressUuid = async () => {
     // If the column doesn't exist at all, treat as non-fatal schema drift — the
     // progress write path already has a per-request fallback for this case.
     if (isUserCourseProgressUuidColumnMissing(error)) {
-      logger.warn('user_course_progress_uuid_column_missing', {
-        message: 'user_id_uuid column does not exist on user_course_progress — progress writes will use legacy conflict target',
-      });
+      userCourseProgressUserIdUuidColumnAvailable = false;
       return;
     }
     logger.warn('user_course_progress_uuid_audit_failed', {
@@ -17678,20 +17708,25 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       }
     }
 
+    const supportsCourseProgressUserIdUuid = await detectUserCourseProgressUserIdUuidColumnAvailability();
+
     const upsertCourseProgressModern = async () => {
       const payload = {
-        user_id_uuid: userId,
         user_id: userId,
         course_id: courseId,
         progress: clampPercent(courseProgress.percent),
         completed: (courseProgress.percent ?? 0) >= 100,
         organization_id: resolvedOrgId ?? null,
       };
+      if (supportsCourseProgressUserIdUuid) {
+        payload.user_id_uuid = userId;
+      }
       try {
+        const conflictTarget = supportsCourseProgressUserIdUuid ? 'user_id_uuid,course_id' : 'user_id,course_id';
         // Use array + firstRow() — .single() throws PGRST116 when duplicate progress rows exist.
         const _r = await supabase
           .from('user_course_progress')
-          .upsert(payload, { onConflict: 'user_id_uuid,course_id' })
+          .upsert(payload, { onConflict: conflictTarget })
           .select('*');
         if (_r.error) throw _r.error;
         return firstRow(_r);
@@ -17718,12 +17753,14 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       const includePercent = schemaSupportFlags.courseProgressPercentColumn !== 'missing';
       const includeTime = schemaSupportFlags.courseProgressTimeColumn !== 'missing';
       const payload = {
-        user_id_uuid: userId,
         user_id: userId,
         course_id: courseId,
         status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
         organization_id: resolvedOrgId ?? null,
       };
+      if (supportsCourseProgressUserIdUuid) {
+        payload.user_id_uuid = userId;
+      }
       if (includePercent) {
         payload.percent = clampPercent(courseProgress.percent);
       }
@@ -17731,10 +17768,11 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         payload.time_spent_s = Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0));
       }
       try {
+        const conflictTarget = supportsCourseProgressUserIdUuid ? 'user_id_uuid,course_id' : 'user_id,course_id';
         // Use array + firstRow() — .single() throws PGRST116 on duplicate rows.
         const _r = await supabase
           .from('user_course_progress')
-          .upsert(payload, { onConflict: 'user_id_uuid,course_id' })
+          .upsert(payload, { onConflict: conflictTarget })
           .select('*');
         if (_r.error) throw _r.error;
         return firstRow(_r);
@@ -23833,13 +23871,20 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     const insertedRows = sqlResult.insertedRows || [];
     const updatedRows = sqlResult.updatedRows || [];
 
-  const persistedRows = await verifyPersistedSurveyAssignments();
-  aggregateResponse.push(...persistedRows);
+    const persistedRows = await verifyPersistedSurveyAssignments();
+    aggregateResponse.push(...persistedRows);
     insertedTotal += insertedRows.length;
     updatedTotal += updatedRows.length;
     skippedTotal += Math.max(effectiveTargetUserIds.length - insertedRows.length - updatedRows.length, 0);
     skippedTotal += requestScopedDuplicateSkipCount;
-    insertedAssignments.push(...insertedRows);
+    const insertedIdSet = new Set(
+      insertedRows
+        .map((row) => (row?.id ? String(row.id) : null))
+        .filter(Boolean),
+    );
+    insertedAssignments.push(
+      ...persistedRows.filter((row) => row?.id && insertedIdSet.has(String(row.id))),
+    );
   };
 
   try {
@@ -24445,6 +24490,77 @@ app.get('/api/client/surveys/:id/results', authenticate, async (req, res) => {
     logger.error('client_hdi_results_failed', {
       surveyId: surveyRecord.id,
       userId: context.userId,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    res.status(500).json({ error: 'Unable to load survey results' });
+  }
+});
+
+app.get('/api/admin/surveys/:id/results', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.results'))) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const { id } = req.params;
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
+    return;
+  }
+
+  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+  const userIdFilter =
+    typeof req.query.userId === 'string'
+      ? req.query.userId.trim().toLowerCase()
+      : typeof req.query.user_id === 'string'
+        ? req.query.user_id.trim().toLowerCase()
+        : null;
+  const limit = clampNumber(parseInt(req.query.limit, 10) || 200, 1, 1000);
+
+  if (organizationId) {
+    const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: false });
+    if (!access) {
+      return res.status(403).json({ error: 'forbidden', code: 'org_access_denied' });
+    }
+  } else if (!context.isPlatformAdmin) {
+    res.status(403).json({
+      error: 'org_required',
+      message: 'Organization filter is required unless you are a platform administrator.',
+    });
+    return;
+  }
+
+  try {
+    let query = supabase
+      .from('survey_responses')
+      .select('id,survey_id,user_id,organization_id,assignment_id,response,status,metadata,completed_at,created_at')
+      .eq('survey_id', surveyRecord.id)
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .limit(limit);
+
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+    if (userIdFilter) {
+      query = query.eq('user_id', userIdFilter);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json({
+      data: data || [],
+      meta: {
+        surveyId: surveyRecord.id,
+        count: Array.isArray(data) ? data.length : 0,
+        organizationId: organizationId ?? null,
+      },
+    });
+  } catch (error) {
+    logger.error('admin_survey_results_failed', {
+      surveyId: surveyRecord.id,
       message: error?.message ?? String(error),
       code: error?.code ?? null,
     });

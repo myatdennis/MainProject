@@ -356,3 +356,40 @@ export async function fetchLearnerSurveyResults(surveyId: string, assignmentId?:
   const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/results${suffix}`);
   return json.data ?? null;
 }
+
+export async function submitLearnerSurveyResponse(
+  surveyId: string,
+  payload: {
+    assignmentId?: string | null;
+    responses: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const body: Record<string, unknown> = {
+    responses: payload.responses,
+  };
+  if (payload.assignmentId) {
+    body.assignmentId = payload.assignmentId;
+  }
+  if (payload.metadata) {
+    body.metadata = payload.metadata;
+  }
+  const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/submit`, {
+    method: 'POST',
+    body,
+  });
+  return json.data ?? null;
+}
+
+export async function fetchAdminSurveyResults(
+  surveyId: string,
+  options: { organizationId?: string; userId?: string; limit?: number } = {},
+) {
+  const query = new URLSearchParams();
+  if (options.organizationId) query.set('orgId', options.organizationId);
+  if (options.userId) query.set('userId', options.userId);
+  if (typeof options.limit === 'number') query.set('limit', String(options.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const json = await request<{ data: any[] }>(`/api/admin/surveys/${surveyId}/results${suffix}`);
+  return Array.isArray(json?.data) ? json.data : [];
+}
