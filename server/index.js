@@ -901,7 +901,7 @@ function loadPersistedData() {
               const stat = fs.statSync(STORAGE_FILE);
               if (stat.size > MAX_DEMO_FILE_BYTES) {
                 logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
-                return { courses: [], surveys: [], surveyAssignments: [] };
+                return { courses: [], surveys: [], surveyAssignments: [], lessonReflections: [] };
               }
             } catch {}
             const data = fs.readFileSync(STORAGE_FILE, 'utf8');
@@ -910,7 +910,14 @@ function loadPersistedData() {
   } catch (error) {
     logger.error('demo_data_load_failed', { error: error instanceof Error ? error.message : error });
   }
-        return { courses: new Map(), modules: new Map(), lessons: new Map(), surveys: new Map(), surveyAssignments: new Map() };
+        return {
+          courses: new Map(),
+          modules: new Map(),
+          lessons: new Map(),
+          surveys: new Map(),
+          surveyAssignments: new Map(),
+          lessonReflections: new Map(),
+        };
 }
 
 function savePersistedData(data) {
@@ -941,6 +948,7 @@ function savePersistedData(data) {
       courses: filteredCourseEntries,
       surveys: Array.from((data.surveys || new Map()).entries()),
       surveyAssignments: Array.from((data.surveyAssignments || new Map()).entries()),
+      lessonReflections: Array.from((data.lessonReflections || new Map()).entries()),
     };
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
     const strippedCount = data.courses.size - filteredCourseEntries.length;
@@ -3859,7 +3867,7 @@ const checkSupabaseHealth = async () => {
 const _loadCoursesFromDisk = Boolean(isDemoMode);
 const persistedData = _loadCoursesFromDisk
   ? loadPersistedData()
-  : { courses: [], surveys: [], surveyAssignments: [] };
+  : { courses: [], surveys: [], surveyAssignments: [], lessonReflections: [] };
 if (supabaseServerConfigured && !_loadCoursesFromDisk && (persistedData.courses || []).length > 0) {
   logger.warn('persistent_storage_courses_ignored', {
     message: 'demo-data.json contains courses but Supabase is configured — disk courses will NOT be loaded. Supabase is the sole source of truth.',
@@ -3884,6 +3892,7 @@ const e2eStore = {
   learnerJourneys: new Map(), // key `${user_id}:${course_id}` -> snapshot for demo mode
   surveys: new Map(persistedData.surveys || []),
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
+  lessonReflections: new Map(persistedData.lessonReflections || []), // key `${org_id}:${course_id}:${lesson_id}:${user_id}`
   auditLogs: [],
 };
 
@@ -18285,6 +18294,244 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     });
   }
 });
+
+const normalizeReflectionText = (value) => {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  return '';
+};
+
+const buildReflectionStoreKey = ({ orgId, courseId, lessonId, userId }) =>
+  `${String(orgId || 'no-org').toLowerCase()}:${String(courseId).toLowerCase()}:${String(lessonId).toLowerCase()}:${String(userId).toLowerCase()}`;
+
+const shapeReflectionRecord = (row) => ({
+  id: row.id,
+  organizationId: row.organization_id ?? row.organizationId ?? null,
+  courseId: row.course_id ?? row.courseId ?? null,
+  lessonId: row.lesson_id ?? row.lessonId ?? null,
+  userId: row.user_id ?? row.userId ?? null,
+  responseText: row.response_text ?? row.responseText ?? '',
+  createdAt: row.created_at ?? row.createdAt ?? null,
+  updatedAt: row.updated_at ?? row.updatedAt ?? null,
+  learnerEmail: row.learner_email ?? row.learnerEmail ?? null,
+  learnerName: row.learner_name ?? row.learnerName ?? null,
+});
+
+app.get('/api/learner/reflections', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    res.status(403).json({ error: 'org_selection_required', message: 'Select an organization before loading reflections.' });
+    return;
+  }
+
+  const courseId = coerceString(req.query.courseId, req.query.course_id);
+  const lessonId = coerceString(req.query.lessonId, req.query.lesson_id);
+  if (!courseId || !lessonId) {
+    res.status(400).json({ error: 'validation_failed', message: 'courseId and lessonId are required.' });
+    return;
+  }
+
+  const userId = context.userId;
+  const orgId = orgScope.orgId ?? resolveOrgIdFromRequest(req, context) ?? DEFAULT_SANDBOX_ORG_ID;
+
+  if (isDemoOrTestMode) {
+    const record = e2eStore.lessonReflections.get(
+      buildReflectionStoreKey({ orgId, courseId, lessonId, userId }),
+    ) || null;
+    res.json({ data: record ? shapeReflectionRecord(record) : null, meta: { mode: 'demo' } });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  const { data, error } = await supabase
+    .from('lesson_reflections')
+    .select('*')
+    .eq('organization_id', orgId)
+    .eq('course_id', courseId)
+    .eq('lesson_id', lessonId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      res.json({ data: null, meta: { degraded: true, reason: 'reflection_storage_unavailable' } });
+      return;
+    }
+    throw error;
+  }
+
+  res.json({ data: data ? shapeReflectionRecord(data) : null });
+}));
+
+app.post('/api/learner/reflections', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    res.status(403).json({ error: 'org_selection_required', message: 'Select an organization before saving reflections.' });
+    return;
+  }
+
+  const courseId = coerceString(req.body?.courseId, req.body?.course_id);
+  const lessonId = coerceString(req.body?.lessonId, req.body?.lesson_id);
+  const responseText = normalizeReflectionText(req.body?.responseText ?? req.body?.response_text);
+
+  if (!courseId || !lessonId) {
+    res.status(400).json({ error: 'validation_failed', message: 'courseId and lessonId are required.' });
+    return;
+  }
+
+  const orgId = orgScope.orgId ?? resolveOrgIdFromRequest(req, context) ?? DEFAULT_SANDBOX_ORG_ID;
+  const userId = context.userId;
+  const nowIso = new Date().toISOString();
+
+  if (isDemoOrTestMode) {
+    const key = buildReflectionStoreKey({ orgId, courseId, lessonId, userId });
+    const existing = e2eStore.lessonReflections.get(key);
+    const record = {
+      id: existing?.id ?? `reflection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      organization_id: orgId,
+      course_id: courseId,
+      lesson_id: lessonId,
+      user_id: userId,
+      response_text: responseText,
+      created_at: existing?.created_at ?? nowIso,
+      updated_at: nowIso,
+    };
+    e2eStore.lessonReflections.set(key, record);
+    persistE2EStore();
+    res.status(202).json({ data: shapeReflectionRecord(record), meta: { mode: 'demo' } });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  const payload = {
+    organization_id: orgId,
+    course_id: courseId,
+    lesson_id: lessonId,
+    user_id: userId,
+    response_text: responseText,
+    updated_at: nowIso,
+  };
+
+  const { data, error } = await supabase
+    .from('lesson_reflections')
+    .upsert(payload, { onConflict: 'organization_id,course_id,lesson_id,user_id' })
+    .select('*')
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      res.status(202).json({
+        data: {
+          id: `reflection-local-${Date.now()}`,
+          organizationId: orgId,
+          courseId,
+          lessonId,
+          userId,
+          responseText,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        meta: { degraded: true, reason: 'reflection_storage_unavailable' },
+      });
+      return;
+    }
+    throw error;
+  }
+
+  res.status(202).json({ data: shapeReflectionRecord(data ?? payload) });
+}));
+
+app.get('/api/admin/reflections', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const orgId = coerceString(req.query.orgId, req.query.organizationId, req.query.organization_id);
+  const courseId = coerceString(req.query.courseId, req.query.course_id);
+  const lessonId = coerceString(req.query.lessonId, req.query.lesson_id);
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit ?? 20) || 20));
+  const offset = Math.max(0, Number(req.query.offset ?? 0) || 0);
+
+  if (!orgId || !courseId || !lessonId) {
+    res.status(400).json({ error: 'validation_failed', message: 'orgId, courseId, and lessonId are required.' });
+    return;
+  }
+
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  if (isDemoOrTestMode) {
+    const rows = Array.from(e2eStore.lessonReflections.values())
+      .filter((row) =>
+        String(row.organization_id || '').toLowerCase() === String(orgId).toLowerCase() &&
+        String(row.course_id || '').toLowerCase() === String(courseId).toLowerCase() &&
+        String(row.lesson_id || '').toLowerCase() === String(lessonId).toLowerCase(),
+      )
+      .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')));
+
+    const userLookup = new Map(
+      (Array.isArray(e2eStore.users) ? e2eStore.users : []).map((user) => [String(user.id).toLowerCase(), user]),
+    );
+
+    const paged = rows.slice(offset, offset + limit).map((row) => {
+      const user = userLookup.get(String(row.user_id || '').toLowerCase());
+      return shapeReflectionRecord({
+        ...row,
+        learner_email: user?.email ?? null,
+        learner_name: user?.full_name ?? user?.name ?? null,
+      });
+    });
+
+    res.json({ data: { rows: paged, total: rows.length }, meta: { mode: 'demo' } });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  const { data, count, error } = await supabase
+    .from('lesson_reflections')
+    .select('*', { count: 'exact' })
+    .eq('organization_id', orgId)
+    .eq('course_id', courseId)
+    .eq('lesson_id', lessonId)
+    .order('updated_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      res.json({ data: { rows: [], total: 0 }, meta: { degraded: true, reason: 'reflection_storage_unavailable' } });
+      return;
+    }
+    throw error;
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const userIds = Array.from(new Set(rows.map((row) => coerceString(row.user_id)).filter(Boolean)));
+  let profileLookup = new Map();
+  if (userIds.length > 0) {
+    const profileResult = await supabase.from('user_profiles').select('id,email,full_name').in('id', userIds);
+    if (!profileResult.error && Array.isArray(profileResult.data)) {
+      profileLookup = new Map(profileResult.data.map((profile) => [String(profile.id).toLowerCase(), profile]));
+    }
+  }
+
+  const shaped = rows.map((row) => {
+    const profile = profileLookup.get(String(row.user_id || '').toLowerCase());
+    return shapeReflectionRecord({
+      ...row,
+      learner_email: profile?.email ?? null,
+      learner_name: profile?.full_name ?? null,
+    });
+  });
+
+  res.json({ data: { rows: shaped, total: count ?? shaped.length } });
+}));
 
 // ─── GET /api/client/progress/summary ──────────────────────────────────────
 // Returns real per-learner stats: modulesCompleted/total, overall % progress,

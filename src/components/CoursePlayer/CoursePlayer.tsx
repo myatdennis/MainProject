@@ -55,6 +55,7 @@ import { useUserProfile } from '../../hooks/useUserProfile';
 import useSignedMediaUrl from '../../hooks/useSignedMediaUrl';
 import { batchService } from '../../dal/batchService';
 import { progressService } from '../../dal/progress';
+import { reflectionService } from '../../services/reflectionService';
 
 const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
 const AUTOPLAY_NEXT_PREF_KEY = 'courseplayer:autoplay-next-enabled';
@@ -1617,6 +1618,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
                 <LessonContent
                   lesson={currentLesson}
+                  courseId={course.id}
                   onComplete={markLessonComplete}
                   onShowQuizModal={setShowQuizModal}
                 />
@@ -2191,9 +2193,89 @@ const VideoControls: React.FC<{
 // Lesson Content Component
 const LessonContent: React.FC<{
   lesson: Lesson;
+  courseId: string;
   onComplete: () => void;
   onShowQuizModal: (show: boolean) => void;
-}> = ({ lesson, onComplete, onShowQuizModal }) => {
+}> = ({ lesson, courseId, onComplete, onShowQuizModal }) => {
+  const lessonType = (lesson as any).type as string;
+  const reflectionEnabled =
+    lessonType === 'reflection' ||
+    Boolean(lesson.content?.allowReflection) ||
+    Boolean(lesson.content?.reflectionPrompt);
+  const reflectionRequired = lessonType === 'reflection' || Boolean(lesson.content?.requireReflection);
+  const [reflectionText, setReflectionText] = useState('');
+  const [reflectionLoading, setReflectionLoading] = useState(false);
+  const [reflectionSaveState, setReflectionSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [reflectionError, setReflectionError] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const hydratedReflectionRef = useRef(false);
+
+  useEffect(() => {
+    hydratedReflectionRef.current = false;
+    setReflectionText('');
+    setReflectionSaveState('idle');
+    setReflectionError(null);
+    setLastSavedAt(null);
+
+    if (!reflectionEnabled || !courseId || !lesson?.id) {
+      hydratedReflectionRef.current = true;
+      return;
+    }
+
+    let isMounted = true;
+    setReflectionLoading(true);
+    reflectionService
+      .fetchLearnerReflection(courseId, lesson.id)
+      .then((record) => {
+        if (!isMounted) return;
+        setReflectionText(record?.responseText ?? '');
+        setLastSavedAt(record?.updatedAt ?? null);
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        console.warn('[CoursePlayer] Failed to load learner reflection', error);
+      })
+      .finally(() => {
+        if (!isMounted) return;
+        setReflectionLoading(false);
+        hydratedReflectionRef.current = true;
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [courseId, lesson?.id, reflectionEnabled]);
+
+  useEffect(() => {
+    if (!reflectionEnabled || !hydratedReflectionRef.current || !courseId || !lesson?.id) {
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      setReflectionSaveState('saving');
+      setReflectionError(null);
+      try {
+        const saved = await reflectionService.saveLearnerReflection({
+          courseId,
+          lessonId: lesson.id,
+          responseText: reflectionText,
+        });
+        setLastSavedAt(saved?.updatedAt ?? new Date().toISOString());
+        setReflectionSaveState('saved');
+      } catch (error) {
+        console.warn('[CoursePlayer] Failed to save learner reflection', error);
+        setReflectionSaveState('error');
+        setReflectionError('Unable to save right now. We’ll retry when you keep typing.');
+      }
+    }, 800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [courseId, lesson?.id, reflectionEnabled, reflectionText]);
+
+  const canCompleteReflection = !reflectionRequired || reflectionText.trim().length > 0;
+
   const documentUrlCandidates = [
     (lesson.content as any)?.downloadUrl,
     (lesson.content as any)?.url,
@@ -2215,8 +2297,6 @@ const LessonContent: React.FC<{
       </Button>
     </Card>
   );
-
-  const lessonType = (lesson as any).type as string;
 
   if (!lesson.content || (typeof lesson.content === 'object' && Object.keys(lesson.content).length === 0)) {
     return renderFallback('Lesson content unavailable. Please check back later.');
@@ -2245,8 +2325,37 @@ const LessonContent: React.FC<{
           </Badge>
         )}
         <div dangerouslySetInnerHTML={{ __html: html }} />
+        {reflectionEnabled && (
+          <Card tone="muted" className="mt-6 space-y-3 border border-skyblue/20 bg-skyblue/5">
+            <div>
+              <p className="text-sm font-semibold text-charcoal">Your reflection</p>
+              <p className="text-xs text-slate/70">
+                {reflectionRequired
+                  ? 'This reflection is required before completing the lesson.'
+                  : 'Share your notes for this lesson. Your response saves automatically.'}
+              </p>
+            </div>
+            <textarea
+              value={reflectionText}
+              onChange={(event) => setReflectionText(event.target.value)}
+              rows={5}
+              placeholder="Write your reflection here…"
+              className="w-full rounded-lg border border-slate/20 bg-white px-3 py-2 text-sm text-charcoal focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
+              disabled={reflectionLoading}
+            />
+            <div className="text-xs text-slate/70">
+              {reflectionLoading
+                ? 'Loading your last response…'
+                : reflectionSaveState === 'saving'
+                ? 'Saving…'
+                : reflectionSaveState === 'saved'
+                ? `Saved${lastSavedAt ? ` at ${new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
+                : reflectionError || 'Autosave is ready.'}
+            </div>
+          </Card>
+        )}
         <div className="mt-8 flex justify-end border-t border-mist/60 pt-6">
-          <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
+          <Button onClick={onComplete} disabled={!canCompleteReflection} trailingIcon={<CheckCircle className="h-4 w-4" />}>
             {lessonType === 'reflection' ? 'Complete reflection' : 'Mark as complete'}
           </Button>
         </div>

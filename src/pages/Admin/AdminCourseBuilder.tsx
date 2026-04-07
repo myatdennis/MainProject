@@ -20,6 +20,7 @@ import { type CourseValidationIntent, type CourseValidationIssue } from '../../v
 import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
+import { reflectionService, type AdminReflectionRow } from '../../services/reflectionService';
 import { deriveExternalVideoCommitMetadata, resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import {
   shouldBypassMediaSigning,
@@ -552,6 +553,7 @@ const AdminCourseBuilder = () => {
   const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
   const [draftSnapshotPrompt, setDraftSnapshotPrompt] = useState<DraftSnapshot | null>(null);
   const [assignmentPanelRefreshToken, setAssignmentPanelRefreshToken] = useState(0);
+  const [lessonReflections, setLessonReflections] = useState<Record<string, { loading: boolean; rows: AdminReflectionRow[]; total: number; error: string | null }>>({});
   const [reloadNonce, setReloadNonce] = useState(0);
   const [validationIssues, setValidationIssues] = useState<CourseValidationIssue[]>([]);
   const [isValidationModalOpen, setValidationModalOpen] = useState(false);
@@ -732,6 +734,7 @@ const AdminCourseBuilder = () => {
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
   const modules = course.modules || [];
+
   const hasModules = modules.length > 0;
   const canDiscardChanges = hasPendingChanges || Boolean(lastPersistedRef.current);
   const modulesToRender = isMobile && mobileFocusMode && activeMobileModuleId
@@ -1204,6 +1207,73 @@ const AdminCourseBuilder = () => {
     },
     [activeOrgId, lastPersistedRef],
   );
+
+  useEffect(() => {
+    if (!editingLesson) return;
+    const module = course.modules?.find((item) => item.id === editingLesson.moduleId);
+    const lesson = module?.lessons?.find((item) => item.id === editingLesson.lessonId);
+    if (!lesson) return;
+
+    const lessonType = String(lesson.type || '').toLowerCase();
+    const reflectionEnabled =
+      lessonType === 'reflection' ||
+      Boolean(lesson.content?.allowReflection) ||
+      Boolean(lesson.content?.reflectionPrompt);
+
+    if (!reflectionEnabled) return;
+
+    const resolvedOrgId = resolveOrganizationId(course);
+    if (!resolvedOrgId || !course.id) return;
+
+    const key = `${editingLesson.moduleId}:${editingLesson.lessonId}`;
+    setLessonReflections((prev) => ({
+      ...prev,
+      [key]: {
+        loading: true,
+        rows: prev[key]?.rows ?? [],
+        total: prev[key]?.total ?? 0,
+        error: null,
+      },
+    }));
+
+    let isMounted = true;
+    reflectionService
+      .fetchAdminReflections({
+        orgId: resolvedOrgId,
+        courseId: course.id,
+        lessonId: lesson.id,
+        limit: 5,
+      })
+      .then((payload) => {
+        if (!isMounted) return;
+        setLessonReflections((prev) => ({
+          ...prev,
+          [key]: {
+            loading: false,
+            rows: payload.rows,
+            total: payload.total,
+            error: null,
+          },
+        }));
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        console.warn('[AdminCourseBuilder] Failed to fetch lesson reflections', error);
+        setLessonReflections((prev) => ({
+          ...prev,
+          [key]: {
+            loading: false,
+            rows: prev[key]?.rows ?? [],
+            total: prev[key]?.total ?? 0,
+            error: 'Unable to load learner reflections right now.',
+          },
+        }));
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [course, editingLesson, resolveOrganizationId]);
 
 
   const refreshCourseFromServer = useCallback(
@@ -4689,6 +4759,48 @@ const scheduleAutosave = useCallback(
                   </button>
                 </div>
               </div>
+
+              {(lesson.content.allowReflection || lesson.content.reflectionPrompt) && (() => {
+                const reflectionKey = `${moduleId}:${lesson.id}`;
+                const reflectionState = lessonReflections[reflectionKey] ?? {
+                  loading: false,
+                  rows: [] as AdminReflectionRow[],
+                  total: 0,
+                  error: null,
+                };
+
+                return (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-sm font-semibold text-blue-900">Learner reflections</h5>
+                      {reflectionState.total > 0 && (
+                        <span className="text-xs text-blue-700">{reflectionState.total} total</span>
+                      )}
+                    </div>
+                    {reflectionState.loading && (
+                      <p className="text-xs text-blue-700">Loading latest responses…</p>
+                    )}
+                    {!reflectionState.loading && reflectionState.error && (
+                      <p className="text-xs text-red-600">{reflectionState.error}</p>
+                    )}
+                    {!reflectionState.loading && !reflectionState.error && reflectionState.rows.length === 0 && (
+                      <p className="text-xs text-blue-700">No learner submissions yet.</p>
+                    )}
+                    {!reflectionState.loading && !reflectionState.error && reflectionState.rows.length > 0 && (
+                      <div className="space-y-2">
+                        {reflectionState.rows.map((row) => (
+                          <div key={row.id} className="rounded border border-blue-100 bg-white p-3">
+                            <p className="text-xs text-slate-600">
+                              {(row.learnerName || row.learnerEmail || row.userId) ?? 'Learner'} · {new Date(row.updatedAt).toLocaleString()}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-800 whitespace-pre-wrap">{row.responseText}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
