@@ -8,6 +8,55 @@ export const coerceTextId = (...candidates) => {
   return null;
 };
 
+const coerceOrderNumber = (...candidates) => {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+export function normalizeLessonOrder(modulesInput) {
+  const modulesArray = Array.isArray(modulesInput) ? modulesInput : [];
+
+  for (const module of modulesArray) {
+    if (!module || typeof module !== 'object') continue;
+    const lessons = Array.isArray(module.lessons) ? module.lessons : [];
+    const decorated = lessons
+      .map((lesson, index) => {
+        const explicitOrder =
+          lesson && typeof lesson === 'object'
+            ? coerceOrderNumber(lesson.order_index, lesson.orderIndex)
+            : null;
+        return {
+          lesson,
+          sourceIndex: index,
+          sortOrder: explicitOrder ?? index,
+        };
+      })
+      .sort((left, right) => {
+        if (left.sortOrder !== right.sortOrder) {
+          return left.sortOrder - right.sortOrder;
+        }
+        return left.sourceIndex - right.sourceIndex;
+      });
+
+    module.lessons = decorated.map(({ lesson }, index) => {
+      if (!lesson || typeof lesson !== 'object') return lesson;
+      const normalizedOrder = index + 1;
+      return {
+        ...lesson,
+        order: normalizedOrder,
+        order_index: normalizedOrder,
+        orderIndex: normalizedOrder,
+      };
+    });
+  }
+
+  return modulesArray;
+}
+
 export function normalizeModuleLessonPayloads(modulesInput, options = {}) {
   const {
     courseId = null,
@@ -22,6 +71,7 @@ export function normalizeModuleLessonPayloads(modulesInput, options = {}) {
     lessonsMissingModuleId: 0,
     lessonsMissingCourseId: 0,
     lessonsMissingOrgId: 0,
+    lessonsOrderNormalized: 0,
   };
 
   const modulesArray = Array.isArray(modulesInput) ? modulesInput : [];
@@ -114,6 +164,27 @@ export function normalizeModuleLessonPayloads(modulesInput, options = {}) {
     normalizedModules.push(moduleClone);
   }
 
+  const beforeOrderSignatures = normalizedModules.map((module) =>
+    (Array.isArray(module.lessons) ? module.lessons : []).map((lesson) =>
+      coerceOrderNumber(lesson?.order_index, lesson?.orderIndex),
+    ),
+  );
+
+  normalizeLessonOrder(normalizedModules);
+
+  diagnostics.lessonsOrderNormalized = normalizedModules.reduce((count, module, moduleIndex) => {
+    const before = beforeOrderSignatures[moduleIndex] || [];
+    const afterLessons = Array.isArray(module.lessons) ? module.lessons : [];
+    return (
+      count +
+      afterLessons.reduce((lessonCount, lesson, lessonIndex) => {
+        const beforeValue = before[lessonIndex] ?? null;
+        const afterValue = coerceOrderNumber(lesson?.order_index, lesson?.orderIndex);
+        return lessonCount + (beforeValue === afterValue ? 0 : 1);
+      }, 0)
+    );
+  }, 0);
+
   return { modules: normalizedModules, diagnostics };
 }
 
@@ -124,6 +195,7 @@ export function shouldLogModuleNormalization(diagnostics) {
     diagnostics.modulesMissingOrgId > 0 ||
     diagnostics.lessonsMissingModuleId > 0 ||
     diagnostics.lessonsMissingCourseId > 0 ||
-    diagnostics.lessonsMissingOrgId > 0
+    diagnostics.lessonsMissingOrgId > 0 ||
+    diagnostics.lessonsOrderNormalized > 0
   );
 }

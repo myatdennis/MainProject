@@ -1958,6 +1958,15 @@ const scheduleAutosave = useCallback(
     console.log('Dismissed suggestion:', suggestionId);
   };
 
+  const reindexLessons = useCallback((lessons: Lesson[] = []) => {
+    return lessons.map((lesson, index) => ({
+      ...lesson,
+      order: index + 1,
+      order_index: index + 1,
+      orderIndex: index + 1,
+    }));
+  }, []);
+
   const reorderModules = useCallback((dragIndex: number, hoverIndex: number) => {
     setCourse((prev) => {
       const existingModules = [...(prev.modules || [])];
@@ -2010,16 +2019,13 @@ const scheduleAutosave = useCallback(
             const [draggedLesson] = lessons.splice(dragIndex, 1);
             lessons.splice(hoverIndex, 0, draggedLesson);
 
-            const reorderedLessons = lessons.map((lesson, index) => ({
-              ...lesson,
-              order: index + 1,
-            }));
+            const reorderedLessons = reindexLessons(lessons);
 
             return { ...module, lessons: reorderedLessons };
           }) || [],
       };
     });
-  }, []);
+  }, [reindexLessons]);
 
   const handleModuleDragEnd = useCallback((event: DragEndEvent) => {
     if (!event.over || event.active.id === event.over.id) return;
@@ -2942,7 +2948,15 @@ const scheduleAutosave = useCallback(
       const updatedCourse = {
         ...prev,
         modules: (prev.modules || []).map(module =>
-          module.id === moduleId ? { ...module, ...updates } : module
+          module.id === moduleId
+            ? {
+                ...module,
+                ...updates,
+                lessons: Array.isArray((updates as any)?.lessons)
+                  ? reindexLessons((updates as any).lessons)
+                  : module.lessons,
+              }
+            : module
         )
       };
       
@@ -2978,7 +2992,7 @@ const scheduleAutosave = useCallback(
     };
 
     updateModule(moduleId, {
-      lessons: [...module.lessons, newLesson]
+      lessons: reindexLessons([...(module.lessons || []), newLesson])
     });
   };
 
@@ -3166,7 +3180,7 @@ const scheduleAutosave = useCallback(
     if (!module) return;
 
     updateModule(moduleId, {
-      lessons: module.lessons.filter(lesson => lesson.id !== lessonId)
+      lessons: reindexLessons((module.lessons || []).filter(lesson => lesson.id !== lessonId))
     });
   };
 

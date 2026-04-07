@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeLessonOrder } from '../lib/moduleLessonNormalizer.js';
 
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const allowedLessonTypes = [
@@ -521,7 +522,7 @@ export function validateCoursePayload(payload, options = {}) {
       ...module,
       order_index: resolvedOrder,
       lessons: (module.lessons || []).map((lesson, lessonIndex) => {
-        const resolvedLessonOrder = coerceOrder(lesson.order_index ?? lesson.orderIndex, lessonIndex + 1);
+        const resolvedLessonOrder = coerceOrder(lesson.order_index ?? lesson.orderIndex, lessonIndex);
         return {
           ...lesson,
           order_index: resolvedLessonOrder,
@@ -529,6 +530,8 @@ export function validateCoursePayload(payload, options = {}) {
       }),
     };
   });
+
+  normalizeLessonOrder(normalizedModules);
 
   const canonicalCourse = {
     ...parsed.data.course,
@@ -568,7 +571,6 @@ export function validateCoursePayload(payload, options = {}) {
       moduleOrders.add(module.order_index);
     }
 
-    const lessonOrders = new Set();
     module.lessons.forEach((lesson, lessonIndex) => {
       const originalLesson = originalModule?.lessons?.[lessonIndex] ?? lesson;
       if (typeof lesson.order_index !== 'number' || lesson.order_index < 1) {
@@ -580,17 +582,6 @@ export function validateCoursePayload(payload, options = {}) {
             originalLesson?.order_index ?? originalLesson?.orderIndex ?? lesson.order_index,
           ),
         });
-      } else if (lessonOrders.has(lesson.order_index)) {
-        issues.push({
-          path: `modules[${moduleIndex}].lessons[${lessonIndex}].order_index`,
-          message: 'Lesson order values must be unique within a module',
-          code: 'lesson.order.duplicate',
-          receivedValueType: describeValueType(
-            originalLesson?.order_index ?? originalLesson?.orderIndex ?? lesson.order_index,
-          ),
-        });
-      } else {
-        lessonOrders.add(lesson.order_index);
       }
 
       if (!allowedLessonTypes.includes(lesson.type)) {

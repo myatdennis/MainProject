@@ -4,6 +4,7 @@ export type ModuleNormalizationDiagnostics = {
   lessonsMissingModuleId: number;
   lessonsMissingCourseId: number;
   lessonsMissingOrgId: number;
+  lessonsOrderNormalized: number;
 };
 
 export type NormalizeDiagnostics = ModuleNormalizationDiagnostics;
@@ -25,6 +26,8 @@ export declare function normalizeModuleLessonPayloads(
   modules: any[];
   diagnostics: ModuleNormalizationDiagnostics;
 };
+
+export declare function normalizeLessonOrder(modulesInput: unknown): any[];
 
 export declare function shouldLogModuleNormalization(
   diagnostics?: ModuleNormalizationDiagnostics | null,

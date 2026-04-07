@@ -127,4 +127,40 @@ describe('Admin course save validation', () => {
     expect(body?.code).not.toBe('validation_failed');
     expect(body?.data?.id).toBeTruthy();
   }, 60000);
+
+  it('auto-normalizes duplicate/missing/random lesson order_index values and never returns lesson.order.duplicate', async () => {
+    const slug = `lesson-order-normalize-${randomUUID()}`;
+
+    const response = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({
+        action: 'course.save',
+        course: {
+          title: `Lesson Order Normalize ${slug}`,
+          slug,
+          description: 'Regression test for deterministic lesson order normalization.',
+          status: 'draft',
+          organization_id: TEST_ORG_ID,
+        },
+        modules: [
+          {
+            title: 'Ordering Module',
+            order_index: 1,
+            lessons: [
+              { title: 'Lesson A', type: 'text', order_index: 10, content_json: { body: { textContent: 'A' } } },
+              { title: 'Lesson B', type: 'text', order_index: 10, content_json: { body: { textContent: 'B' } } },
+              { title: 'Lesson C', type: 'text', content_json: { body: { textContent: 'C' } } },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const body = await response.json();
+    expect([200, 201]).toContain(response.status);
+    expect(body?.code).not.toBe('validation_failed');
+    expect(JSON.stringify(body)).not.toContain('lesson.order.duplicate');
+    expect(body?.data?.id).toBeTruthy();
+  }, 60000);
 });

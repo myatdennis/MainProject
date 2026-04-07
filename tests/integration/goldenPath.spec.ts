@@ -151,6 +151,9 @@ describe('Admin/learner golden path', () => {
     });
     // 200 (sync) or 202 (accepted/async) are both valid success responses
     expect([200, 202]).toContain(progressRes.status);
+    const progressBody = await progressRes.json();
+    expect(progressBody?.ok).toBe(true);
+    expect(progressBody?.code).not.toBe('progress_sync_failed');
 
     // Retrieve the lesson-level progress that was just submitted.
     // The GET /api/learner/progress endpoint requires lessonIds query param.

@@ -85,7 +85,17 @@ import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQu
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
 import { getSupabaseConfig } from './config/supabaseConfig.js';
-import { normalizeModuleLessonPayloads, shouldLogModuleNormalization, coerceTextId } from './lib/moduleLessonNormalizer.js';
+import {
+  normalizeModuleLessonPayloads,
+  normalizeLessonOrder,
+  shouldLogModuleNormalization,
+  coerceTextId,
+} from './lib/moduleLessonNormalizer.js';
+import {
+  buildCourseProgressConflictTargets,
+  buildLessonProgressConflictTargets,
+  upsertWithConflictFallback,
+} from './lib/progressConflictResolver.js';
 import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from './utils/authHelpers.js';
 import { deriveSurveyAssignmentOrgScope } from './utils/surveyAssignmentOrgScope.js';
 
@@ -12571,6 +12581,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   modulesLocal = Array.isArray(modulesLocal)
     ? modulesLocal.map((module, moduleIndex) => normalizeModuleForImport(module, { moduleIndex }))
     : [];
+  modulesLocal = normalizeLessonOrder(modulesLocal);
   req.body.modules = modulesLocal;
   if (!courseLocal) {
     sendApiError(res, 400, 'course_required', 'Missing course object in request body.', {
@@ -13578,6 +13589,7 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
           return normalizedModule;
         })
       : [];
+    normalizeLessonOrder(normalizedModules);
     const payload = {
       course: rawEntry?.course ?? rawEntry ?? {},
       modules: normalizedModules,
@@ -17414,6 +17426,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     lessonCount: lessonList.length,
     payloadBytes,
   };
+  let failingFunction = 'learner_progress_snapshot.init';
 
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -17440,11 +17453,26 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     if (error) {
       logger.error('learner_progress_snapshot_failed', {
         ...baseLogMeta,
-        errorMessage: error instanceof Error ? error.message : error,
+        route: '/api/learner/progress',
+        failingFunction,
+        dbErrorCode: error?.code ?? null,
+        dbErrorMessage: error?.message ?? (error instanceof Error ? error.message : String(error)),
+        dbErrorDetails: error?.details ?? null,
+        dbErrorHint: error?.hint ?? null,
+        errorMessage: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
       writeErrorDiagnostics(req, error instanceof Error ? error : new Error(String(error)), {
-        meta: { surface: 'learner_progress_snapshot' },
+        meta: {
+          surface: 'learner_progress_snapshot',
+          route: '/api/learner/progress',
+          requestId,
+          userId,
+          orgId: baseLogMeta.orgId ?? null,
+          failingFunction,
+          dbErrorCode: error?.code ?? null,
+          dbErrorMessage: error?.message ?? null,
+        },
       });
     }
     res.status(status).json({
@@ -17554,6 +17582,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       };
 
       try {
+        failingFunction = 'learner_progress_snapshot.seedLessons.fromModules';
         const moduleQuery = await supabase
           .from('modules')
           .select('id,lessons:lessons(id,order_index)')
@@ -17571,6 +17600,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       }
 
       try {
+        failingFunction = 'learner_progress_snapshot.seedLessons.fromCourses';
         const courseQuery = await supabase
           .from('courses')
           .select('id,modules:modules(id,lessons:lessons(id,order_index))')
@@ -17653,12 +17683,29 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     };
 
     const upsertLessonProgressModern = async () => {
+      failingFunction = 'learner_progress_snapshot.upsertLessonProgressModern';
       const payload = lessonList.map((lesson) => buildLessonPayload(lesson, { legacy: false }));
-      const { data, error } = await supabase
-        .from('user_lesson_progress')
-        .upsert(payload, { onConflict: 'user_id,lesson_id' })
-        .select('*');
-      if (error) {
+      const conflictTargets = buildLessonProgressConflictTargets({
+        includeCourseId: Boolean(courseId),
+        orgColumn: getLessonProgressOrgColumn(),
+        includeOrgScope: Boolean(resolvedOrgId),
+      });
+      try {
+        const { data } = await upsertWithConflictFallback({
+          supabase,
+          table: 'user_lesson_progress',
+          payload,
+          conflictTargets,
+          logger,
+          context: {
+            requestId,
+            userId,
+            orgId: resolvedOrgId ?? null,
+            failingFunction,
+          },
+        });
+        return (data || []).map((row) => normalizeLessonRecord(row));
+      } catch (error) {
         if (isMissingColumnError(error)) {
           const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
           if (handleLessonOrgColumnMissing(missingColumn)) {
@@ -17667,16 +17714,32 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         }
         throw error;
       }
-      return (data || []).map((row) => normalizeLessonRecord(row));
     };
 
     const upsertLessonProgressLegacy = async () => {
+      failingFunction = 'learner_progress_snapshot.upsertLessonProgressLegacy';
       const payload = lessonList.map((lesson) => buildLessonPayload(lesson, { legacy: true }));
-      const { data, error } = await supabase
-        .from('user_lesson_progress')
-        .upsert(payload, { onConflict: 'user_id,lesson_id' })
-        .select('*');
-      if (error) {
+      const conflictTargets = buildLessonProgressConflictTargets({
+        includeCourseId: Boolean(courseId),
+        orgColumn: getLessonProgressOrgColumn(),
+        includeOrgScope: Boolean(resolvedOrgId),
+      });
+      try {
+        const { data } = await upsertWithConflictFallback({
+          supabase,
+          table: 'user_lesson_progress',
+          payload,
+          conflictTargets,
+          logger,
+          context: {
+            requestId,
+            userId,
+            orgId: resolvedOrgId ?? null,
+            failingFunction,
+          },
+        });
+        return (data || []).map((row) => normalizeLessonRecord(row));
+      } catch (error) {
         if (isMissingColumnError(error)) {
           const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
           if (handleLessonOrgColumnMissing(missingColumn)) {
@@ -17685,7 +17748,6 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         }
         throw error;
       }
-      return (data || []).map((row) => normalizeLessonRecord(row));
     };
 
     let lessonRows = [];
@@ -17708,9 +17770,11 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       }
     }
 
+    failingFunction = 'learner_progress_snapshot.detectCourseUuidSupport';
     const supportsCourseProgressUserIdUuid = await detectUserCourseProgressUserIdUuidColumnAvailability();
 
     const upsertCourseProgressModern = async () => {
+      failingFunction = 'learner_progress_snapshot.upsertCourseProgressModern';
       const payload = {
         user_id: userId,
         course_id: courseId,
@@ -17722,14 +17786,24 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         payload.user_id_uuid = userId;
       }
       try {
-        const conflictTarget = supportsCourseProgressUserIdUuid ? 'user_id_uuid,course_id' : 'user_id,course_id';
-        // Use array + firstRow() — .single() throws PGRST116 when duplicate progress rows exist.
-        const _r = await supabase
-          .from('user_course_progress')
-          .upsert(payload, { onConflict: conflictTarget })
-          .select('*');
-        if (_r.error) throw _r.error;
-        return firstRow(_r);
+        const { data } = await upsertWithConflictFallback({
+          supabase,
+          table: 'user_course_progress',
+          payload,
+          conflictTargets: buildCourseProgressConflictTargets({
+            includeUserIdUuid: supportsCourseProgressUserIdUuid,
+            includeOrgScope: Boolean(resolvedOrgId),
+            orgColumn: 'organization_id',
+          }),
+          logger,
+          context: {
+            requestId,
+            userId,
+            orgId: resolvedOrgId ?? null,
+            failingFunction,
+          },
+        });
+        return firstRow({ data });
       } catch (error) {
         if (isUserCourseProgressUuidColumnMissing(error) || isConflictConstraintMissing(error)) {
           logger.warn('user_course_progress_uuid_modern_fallback', {
@@ -17738,18 +17812,31 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           });
           const fallbackPayload = { ...payload };
           delete fallbackPayload.user_id_uuid;
-          const _fr = await supabase
-            .from('user_course_progress')
-            .upsert(fallbackPayload, { onConflict: 'user_id,course_id' })
-            .select('*');
-          if (_fr.error) throw _fr.error;
-          return firstRow(_fr);
+          const { data } = await upsertWithConflictFallback({
+            supabase,
+            table: 'user_course_progress',
+            payload: fallbackPayload,
+            conflictTargets: buildCourseProgressConflictTargets({
+              includeUserIdUuid: false,
+              includeOrgScope: Boolean(resolvedOrgId),
+              orgColumn: 'organization_id',
+            }),
+            logger,
+            context: {
+              requestId,
+              userId,
+              orgId: resolvedOrgId ?? null,
+              failingFunction,
+            },
+          });
+          return firstRow({ data });
         }
         throw error;
       }
     };
 
     const upsertCourseProgressLegacy = async () => {
+      failingFunction = 'learner_progress_snapshot.upsertCourseProgressLegacy';
       const includePercent = schemaSupportFlags.courseProgressPercentColumn !== 'missing';
       const includeTime = schemaSupportFlags.courseProgressTimeColumn !== 'missing';
       const payload = {
@@ -17768,14 +17855,24 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         payload.time_spent_s = Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0));
       }
       try {
-        const conflictTarget = supportsCourseProgressUserIdUuid ? 'user_id_uuid,course_id' : 'user_id,course_id';
-        // Use array + firstRow() — .single() throws PGRST116 on duplicate rows.
-        const _r = await supabase
-          .from('user_course_progress')
-          .upsert(payload, { onConflict: conflictTarget })
-          .select('*');
-        if (_r.error) throw _r.error;
-        return firstRow(_r);
+        const { data } = await upsertWithConflictFallback({
+          supabase,
+          table: 'user_course_progress',
+          payload,
+          conflictTargets: buildCourseProgressConflictTargets({
+            includeUserIdUuid: supportsCourseProgressUserIdUuid,
+            includeOrgScope: Boolean(resolvedOrgId),
+            orgColumn: 'organization_id',
+          }),
+          logger,
+          context: {
+            requestId,
+            userId,
+            orgId: resolvedOrgId ?? null,
+            failingFunction,
+          },
+        });
+        return firstRow({ data });
       } catch (error) {
         if (isMissingColumnError(error)) {
           const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
@@ -17805,12 +17902,24 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           });
           const fallbackPayload = { ...payload };
           delete fallbackPayload.user_id_uuid;
-          const _fr = await supabase
-            .from('user_course_progress')
-            .upsert(fallbackPayload, { onConflict: 'user_id,course_id' })
-            .select('*');
-          if (_fr.error) throw _fr.error;
-          return firstRow(_fr);
+          const { data } = await upsertWithConflictFallback({
+            supabase,
+            table: 'user_course_progress',
+            payload: fallbackPayload,
+            conflictTargets: buildCourseProgressConflictTargets({
+              includeUserIdUuid: false,
+              includeOrgScope: Boolean(resolvedOrgId),
+              orgColumn: 'organization_id',
+            }),
+            logger,
+            context: {
+              requestId,
+              userId,
+              orgId: resolvedOrgId ?? null,
+              failingFunction,
+            },
+          });
+          return firstRow({ data });
         }
         throw error;
       }
