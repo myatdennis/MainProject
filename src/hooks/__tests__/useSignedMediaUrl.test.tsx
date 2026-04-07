@@ -118,4 +118,32 @@ describe('useSignedMediaUrl', () => {
     expect(signMediaAssetMock).toHaveBeenNthCalledWith(1, 'asset-retry-1');
     expect(signMediaAssetMock).toHaveBeenNthCalledWith(2, 'asset-retry-1');
   });
+
+  it('preserves previous playable URL when refresh fails', async () => {
+    const asset = {
+      assetId: 'asset-preserve-1',
+      bucket: 'course-videos',
+      storagePath: 'courses/c-1/m-1/l-1/video.mp4',
+      bytes: 123,
+      mimeType: 'video/mp4',
+      signedUrl: 'https://signed.example.com/video-existing.mp4',
+      urlExpiresAt: 'expired',
+    };
+
+    signMediaAssetMock.mockRejectedValueOnce(new Error('Network timeout while signing media'));
+
+    const { result } = renderHook(() =>
+      useSignedMediaUrl({
+        asset,
+        autoRefresh: false,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toContain('Network timeout');
+    });
+
+    expect(result.current.url).toBe('https://signed.example.com/video-existing.mp4');
+  });
 });

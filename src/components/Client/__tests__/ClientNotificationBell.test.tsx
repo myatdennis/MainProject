@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import ClientNotificationBell from '../ClientNotificationBell';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -12,6 +13,7 @@ const {
   wsOnMock,
   wsOffMock,
   wsConnectMock,
+  navigateMock,
 } = vi.hoisted(() => {
   const syncSubscribers = new Map<string, Array<() => void>>();
   const wsHandlers = new Map<string, Array<(payload: unknown) => void>>();
@@ -33,6 +35,15 @@ const {
       );
     }),
     wsConnectMock: vi.fn(),
+    navigateMock: vi.fn(),
+  };
+});
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
   };
 });
 
@@ -75,6 +86,7 @@ describe('ClientNotificationBell', () => {
     wsOnMock.mockClear();
     wsOffMock.mockClear();
     wsConnectMock.mockClear();
+  navigateMock.mockClear();
 
     listLearnerNotificationsMock.mockResolvedValue([
       {
@@ -134,6 +146,34 @@ describe('ClientNotificationBell', () => {
 
     await waitFor(() => {
       expect(listLearnerNotificationsMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('marks as read and navigates to assignment action URL when present', async () => {
+    listLearnerNotificationsMock.mockResolvedValue([
+      {
+        id: 'n-2',
+        title: 'New survey assigned',
+        type: 'survey_assignment',
+        read: false,
+        createdAt: new Date().toISOString(),
+        metadata: { actionUrl: '/client/surveys?assignment=a-1&focus=s-1' },
+      },
+    ] as any);
+
+    const user = userEvent.setup();
+    render(<ClientNotificationBell />);
+
+    await waitFor(() => {
+      expect(listLearnerNotificationsMock).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByLabelText('Notifications'));
+    await user.click(screen.getByText('New survey assigned'));
+
+    await waitFor(() => {
+      expect(markLearnerNotificationReadMock).toHaveBeenCalledWith('n-2');
+      expect(navigateMock).toHaveBeenCalledWith('/client/surveys?assignment=a-1&focus=s-1');
     });
   });
 });

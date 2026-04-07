@@ -191,12 +191,12 @@ export const useSignedMediaUrl = ({
       } catch (err) {
         console.error('Failed to refresh signed media URL', err);
         const message = err instanceof Error ? err.message : 'Unable to load media. Please try again.';
-        setSafeState({
-          url: fallbackUrl,
-          expiresAt: null,
+        setSafeState((prev) => ({
+          url: prev.url ?? fallbackUrl,
+          expiresAt: prev.expiresAt,
           isLoading: false,
           error: message,
-        });
+        }));
       }
     },
     [asset, bypassSigning, bypassUrl, fallbackUrl, refreshBufferMs, setSafeState],

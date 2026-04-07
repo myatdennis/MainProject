@@ -14296,13 +14296,17 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  const scopedOrgIds = orgScope.orgId
+    ? [orgScope.orgId]
+    : Array.isArray(context.organizationIds)
+    ? context.organizationIds
+    : [];
   if (orgScope.requiresExplicitSelection) {
-    res.status(403).json({
-      error: 'org_selection_required',
-      code: 'org_selection_required',
-      message: 'Select an organization before loading assigned surveys.',
+    logger.warn('client_assigned_surveys_org_selection_ambiguous', {
+      requestId: req.requestId ?? null,
+      userId: context.userId,
+      orgIdCount: scopedOrgIds.length,
     });
-    return;
   }
 
   const parseBoolean = (value, defaultValue = true) => {
@@ -14334,19 +14338,27 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   try {
     await ensureSurveyAssignmentsForUserFromOrgScope({
       userId: context.userId,
-      orgIds:
-        orgScope.orgId
-          ? [orgScope.orgId]
-          : Array.isArray(context.organizationIds)
-          ? context.organizationIds
-          : [],
+      orgIds: scopedOrgIds,
     });
+
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+    const isUserIdUuid = isUuid(context.userId);
 
     let assignmentQuery = supabase
       .from('assignments')
       .select(SURVEY_ASSIGNMENT_SELECT)
-      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-      .eq('user_id', context.userId);
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE);
+
+    if (assignmentsSupportUserIdUuid && isUserIdUuid) {
+      assignmentQuery = assignmentQuery.or(`user_id.eq.${context.userId},user_id_uuid.eq.${context.userId}`);
+    } else {
+      assignmentQuery = assignmentQuery.eq('user_id', context.userId);
+    }
+
+    if (scopedOrgIds.length > 0) {
+      assignmentQuery = assignmentQuery.in(assignmentsOrgColumn, scopedOrgIds);
+    }
 
     if (!includeCompleted) {
       assignmentQuery = assignmentQuery.eq('active', true).in('status', ['assigned', 'in-progress']);
@@ -24349,9 +24361,18 @@ app.get('/api/learner/notifications', async (req, res) => {
 
   const limit = clampNumber(parseInt(req.query.limit, 10) || 20, 1, 100);
   const sinceIso = typeof req.query.since === 'string' ? req.query.since : null;
-  const readFilter = typeof req.query.read === 'string' ? req.query.read.trim().toLowerCase() : null;
+  const unreadOnlyParam = req.query.unread_only ?? req.query.unreadOnly;
+  const unreadOnly =
+    typeof unreadOnlyParam === 'string'
+      ? unreadOnlyParam.trim().toLowerCase() === 'true'
+      : unreadOnlyParam === true;
+  const readFilter = unreadOnly
+    ? 'false'
+    : typeof req.query.read === 'string'
+      ? req.query.read.trim().toLowerCase()
+      : null;
 
-  if (isDemoOrTestMode) {
+  if (isDemoOrTestMode && !supabase) {
     res.json({ ok: true, data: [], requestId: req.requestId ?? null });
     return;
   }
@@ -24489,14 +24510,6 @@ app.post('/api/learner/notifications/:id/read', async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
 
   try {
     const existing = await supabase
@@ -24584,14 +24597,6 @@ app.delete('/api/learner/notifications/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
 
   try {
     const existing = await supabase

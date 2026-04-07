@@ -46,6 +46,8 @@ export interface PublishCourseOptions {
   clientEventId?: string;
 }
 
+const PUBLISH_REQUEST_TIMEOUT_MS = 45_000;
+
 export async function adminPublishCourse(courseId: string, options: PublishCourseOptions = {}): Promise<any> {
   const body: Record<string, unknown> = { action: 'course.publish' };
   if (typeof options.version === 'number') {
@@ -63,6 +65,7 @@ export async function adminPublishCourse(courseId: string, options: PublishCours
     method: 'POST',
     body: Object.keys(parsedBody).length > 0 ? parsedBody : undefined,
     skipAdminGateCheck: true,
+    timeoutMs: PUBLISH_REQUEST_TIMEOUT_MS,
   });
 
   return response.data;

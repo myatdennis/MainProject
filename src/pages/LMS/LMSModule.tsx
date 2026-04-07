@@ -25,6 +25,7 @@ import FloatingProgressBar from '../../components/FloatingProgressBar';
 import { progressService } from '../../dal/progress';
 import useSignedMediaUrl from '../../hooks/useSignedMediaUrl';
 import type { LessonVideoAsset } from '../../types/courseTypes';
+import { resolveLessonVideoPlayback } from '../../utils/videoUtils';
 
 const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource', 'text'] as const;
 const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
@@ -517,7 +518,13 @@ const LMSModule = () => {
     activeLessonIndex >= 0 && activeLessonIndex < lessonSequence.length - 1 ? lessonSequence[activeLessonIndex + 1] : undefined;
 
   const videoSourceType = (activeLesson?.content?.videoSourceType ?? 'internal').toLowerCase();
-  const usesExternalVideoSource = ['external', 'youtube', 'vimeo'].includes(videoSourceType);
+  const lessonVideoPlayback = useMemo(
+    () => resolveLessonVideoPlayback(activeLesson?.content ?? null),
+    [activeLesson?.content],
+  );
+  const usesExternalVideoSource =
+    ['external', 'youtube', 'vimeo', 'ted', 'loom'].includes(videoSourceType) ||
+    lessonVideoPlayback.mode === 'embed';
   const isDocumentLikeLesson = ['document', 'resource', 'download'].includes(activeLesson?.type ?? '');
   const isTextLikeLesson = ['text', 'reflection'].includes(activeLesson?.type ?? '');
   const {
@@ -531,7 +538,7 @@ const LMSModule = () => {
       !usesExternalVideoSource && activeLesson
         ? (activeLesson.content?.videoAsset as LessonVideoAsset | undefined | null)
         : undefined,
-    fallbackUrl: activeLesson?.content?.videoUrl ?? null,
+    fallbackUrl: lessonVideoPlayback.src ?? activeLesson?.content?.videoUrl ?? null,
   });
 
   const {
@@ -734,7 +741,7 @@ const LMSModule = () => {
                               </div>
                             )}
 
-                            {securedVideoUrl ? (
+                            {(lessonVideoPlayback.mode === 'embed' ? lessonVideoPlayback.embedUrl ?? lessonVideoPlayback.src : securedVideoUrl) ? (
                               <>
                                 {hasSecuredVideoAsset && (
                                   <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
@@ -742,28 +749,49 @@ const LMSModule = () => {
                                     <span>Secure streaming active</span>
                                   </div>
                                 )}
-                              <EnhancedVideoPlayer
-                                key={`${activeLesson.id}-${securedVideoUrl}`}
-                                src={securedVideoUrl}
-                                title={activeLesson.title}
-                                transcript={activeLesson.content?.transcript || ''}
-                                captions={activeLessonCaptions}
-                                showTranscript={Boolean(activeLesson.content?.transcript)}
-                                autoPlay
-                                initialTime={activeLessonInitialTime}
-                                onProgress={(progress) => updateLessonProgress(activeLesson.id, progress)}
-                                onComplete={() => markLessonComplete(activeLesson.id)}
-                                onTimeUpdate={(seconds) =>
-                                  setLessonPositions((prev) => {
-                                    const previousValue = prev[activeLesson.id] ?? 0;
-                                    if (Math.abs(previousValue - seconds) < 0.5) {
-                                      return prev;
+                                {lessonVideoPlayback.mode === 'embed' ? (
+                                  <iframe
+                                    key={`${activeLesson.id}-${lessonVideoPlayback.embedUrl ?? lessonVideoPlayback.src}`}
+                                    src={lessonVideoPlayback.embedUrl ?? lessonVideoPlayback.src ?? undefined}
+                                    className="h-full w-full max-h-[520px] rounded-xl bg-black"
+                                    style={{ aspectRatio: '16/9' }}
+                                    frameBorder="0"
+                                    scrolling="no"
+                                    allow={
+                                      lessonVideoPlayback.provider === 'youtube'
+                                        ? 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
+                                        : lessonVideoPlayback.provider === 'vimeo'
+                                        ? 'autoplay; fullscreen; picture-in-picture'
+                                        : 'fullscreen'
                                     }
-                                    return { ...prev, [activeLesson.id]: seconds };
-                                  })
-                                }
-                                onPlaybackError={handleVideoPlaybackError}
-                              />
+                                    allowFullScreen
+                                    title={activeLesson.title}
+                                    data-test="video-player"
+                                  />
+                                ) : (
+                                  <EnhancedVideoPlayer
+                                    key={`${activeLesson.id}-${securedVideoUrl}`}
+                                    src={securedVideoUrl!}
+                                    title={activeLesson.title}
+                                    transcript={activeLesson.content?.transcript || ''}
+                                    captions={activeLessonCaptions}
+                                    showTranscript={Boolean(activeLesson.content?.transcript)}
+                                    autoPlay
+                                    initialTime={activeLessonInitialTime}
+                                    onProgress={(progress) => updateLessonProgress(activeLesson.id, progress)}
+                                    onComplete={() => markLessonComplete(activeLesson.id)}
+                                    onTimeUpdate={(seconds) =>
+                                      setLessonPositions((prev) => {
+                                        const previousValue = prev[activeLesson.id] ?? 0;
+                                        if (Math.abs(previousValue - seconds) < 0.5) {
+                                          return prev;
+                                        }
+                                        return { ...prev, [activeLesson.id]: seconds };
+                                      })
+                                    }
+                                    onPlaybackError={handleVideoPlaybackError}
+                                  />
+                                )}
                               </>
                             ) : (
                               !securingVideo && (

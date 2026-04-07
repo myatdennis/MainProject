@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, Megaphone, BookOpen, Check, MessageSquare, Sparkles } from 'lucide-react';
 import { listLearnerNotifications, markLearnerNotificationRead } from '../../dal/notifications';
 import type { Notification } from '../../dal/notifications';
@@ -46,6 +47,7 @@ const formatTimestamp = (value?: string) => {
 };
 
 const ClientNotificationBell = () => {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
@@ -160,6 +162,25 @@ const ClientNotificationBell = () => {
     }
   }, []);
 
+  const resolveNotificationActionUrl = useCallback((notification: Notification): string | null => {
+    const payload = (notification.payload ?? notification.metadata ?? null) as Record<string, unknown> | null;
+    if (!payload || typeof payload !== 'object') return null;
+    const actionUrl = payload.actionUrl;
+    return typeof actionUrl === 'string' && actionUrl.startsWith('/') ? actionUrl : null;
+  }, []);
+
+  const handleNotificationClick = useCallback(
+    async (notification: Notification) => {
+      await markRead(notification.id);
+      const actionUrl = resolveNotificationActionUrl(notification);
+      if (actionUrl) {
+        setOpen(false);
+        navigate(actionUrl);
+      }
+    },
+    [markRead, navigate, resolveNotificationActionUrl],
+  );
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -198,7 +219,9 @@ const ClientNotificationBell = () => {
                   <div
                     key={notification.id}
                     className={`flex items-start gap-3 px-4 py-3 cursor-pointer ${!notification.read ? 'bg-sky-50/40' : ''}`}
-                    onClick={() => markRead(notification.id)}
+                    onClick={() => {
+                      void handleNotificationClick(notification);
+                    }}
                   >
                     <div className={`flex-shrink-0 rounded-full p-2 ${tone.wrapper}`}>{tone.icon}</div>
                     <div className="flex-1">

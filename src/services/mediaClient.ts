@@ -16,6 +16,8 @@ export const isExternalMediaReference = (value: string) => /^external:\/\//i.tes
 export const shouldBypassMediaSigning = (value: string) =>
   isDirectMediaUrl(value) || isExternalMediaReference(value);
 
+const MEDIA_SIGN_TIMEOUT_MS = 30_000;
+
 export const signMediaAsset = async (assetId: string): Promise<SignedMediaResponse> => {
   if (!assetId) {
     throw new Error('assetId is required to sign media');
@@ -40,6 +42,7 @@ export const signMediaAsset = async (assetId: string): Promise<SignedMediaRespon
 
   const payload = await apiRequest<{ data: SignedMediaResponse }>(`/api/media/assets/${encodeURIComponent(assetId)}/sign`, {
     method: 'POST',
+    timeoutMs: MEDIA_SIGN_TIMEOUT_MS,
   });
   if (!payload?.data?.signedUrl) {
     throw new Error('Signed URL not returned by media service');
