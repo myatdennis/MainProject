@@ -1,6 +1,7 @@
 import { getSupabase } from './supabaseClient';
 import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
+import { resolveApiUrl } from '../config/apiBase';
 
 export class NotAuthenticatedError extends Error {
   constructor(message = 'Backend session is unavailable') {
@@ -23,30 +24,13 @@ const PUBLIC_ENDPOINTS = new Set([
 ]);
 const PUBLIC_ENDPOINT_PREFIXES = ['/api/diagnostics'];
 
-const API_BASE =
-  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_API_BASE_URL) ||
-  (typeof process !== 'undefined' ? process.env?.VITE_API_BASE_URL : '') ||
-  '';
-
 const normalizeUrl = (target: string): string => {
   if (!target) return target;
   const absolutePattern = /^https?:\/\//i;
   if (absolutePattern.test(target)) {
     return target;
   }
-  if (typeof window !== 'undefined' && target.startsWith('/')) {
-    try {
-      return new URL(target, window.location.origin).toString();
-    } catch {
-      return target;
-    }
-  }
-  if (API_BASE) {
-    const base = API_BASE.replace(/\/+$/, '');
-    const path = target.startsWith('/') ? target : `/${target}`;
-    return `${base}${path}`;
-  }
-  return target;
+  return resolveApiUrl(target);
 };
 
 const extractPathname = (target: string): string => {

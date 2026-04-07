@@ -24811,7 +24811,7 @@ app.get('/api/admin/notifications', async (req, res) => {
     res.json(buildDisabledNotificationsResponse(1, 25, req.requestId ?? null));
     return;
   }
-  if (isDemoOrTestMode) {
+  if (isDemoOrTestMode && !supabase) {
     const { page, pageSize } = parsePaginationParams(req, { defaultSize: 25, maxSize: 200 });
     res.json(buildDisabledNotificationsResponse(page, pageSize, req.requestId ?? null));
     return;
@@ -24926,7 +24926,7 @@ app.post('/api/admin/notifications', async (req, res) => {
     });
     return;
   }
-  if (isDemoOrTestMode) {
+  if (isDemoOrTestMode && !supabase) {
     res.status(202).json({
       ok: true,
       data: null,

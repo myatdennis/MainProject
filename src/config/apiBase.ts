@@ -100,6 +100,24 @@ const getRawApiBase = (): string => {
   const value = getMetaEnv().VITE_API_BASE_URL;
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (trimmed) {
+    if (!isTestEnv && typeof window !== 'undefined' && /^https?:\/\//i.test(trimmed)) {
+      const localHostPattern = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/i;
+      const currentHost = String(window.location?.hostname || '').trim().toLowerCase();
+      const isLocalRuntime = localHostPattern.test(currentHost);
+      if (isLocalRuntime) {
+        try {
+          const configuredHost = new URL(trimmed).hostname.toLowerCase();
+          if (!localHostPattern.test(configuredHost)) {
+            console.warn(
+              `[apiBase] Local runtime detected (${currentHost}) but VITE_API_BASE_URL points to remote host (${configuredHost}). Falling back to /api.`,
+            );
+            return DEFAULT_DEV_API_BASE;
+          }
+        } catch {
+          // ignore parse failures and continue with normal handling
+        }
+      }
+    }
     if (isSupabaseFunctionsApiBase(trimmed)) {
       const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
       console.error(
