@@ -47,6 +47,8 @@ export const upsertRequestBodySchema = writeMetaSchema
   .extend({
   course: z.custom<Course>(),
   modules: z.custom<Module[]>().default([]),
+  draftMode: z.boolean().optional(),
+  clientRevision: z.number().int().nonnegative().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.action && value.action !== 'course.save' && value.action !== 'course.auto-save') {

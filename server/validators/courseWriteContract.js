@@ -22,6 +22,8 @@ const upsertRequestSchema = writeMetaSchema
   .extend({
     course: z.object({}).passthrough(),
     modules: z.array(z.object({}).passthrough()).default([]),
+    draftMode: z.boolean().optional(),
+    clientRevision: z.number().int().nonnegative().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.action && !writeActionSchema.safeParse(value.action).success) {

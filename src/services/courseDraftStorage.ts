@@ -29,11 +29,44 @@ export interface DraftFilter {
 const DB_NAME = 'huddle_course_drafts';
 const STORE_NAME = 'course_drafts';
 const DB_VERSION = 1;
+const LOCAL_FALLBACK_PREFIX = 'huddle.courseDraft.';
 
 const memoryDrafts = new Map<string, DraftSnapshot>();
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 const hasIndexedDb = () => typeof indexedDB !== 'undefined' && typeof window !== 'undefined';
+const hasLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+
+const writeLocalFallback = (record: DraftSnapshot) => {
+  if (!hasLocalStorage()) return;
+  try {
+    window.localStorage.setItem(`${LOCAL_FALLBACK_PREFIX}${record.id}`, JSON.stringify(record));
+  } catch (error) {
+    console.warn('[courseDraftStorage] Failed to write localStorage fallback:', error);
+  }
+};
+
+const readLocalFallback = (courseId: string): DraftSnapshot | null => {
+  if (!hasLocalStorage()) return null;
+  try {
+    const raw = window.localStorage.getItem(`${LOCAL_FALLBACK_PREFIX}${courseId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DraftSnapshot;
+    return parsed && parsed.id === courseId ? parsed : null;
+  } catch (error) {
+    console.warn('[courseDraftStorage] Failed to read localStorage fallback:', error);
+    return null;
+  }
+};
+
+const deleteLocalFallback = (courseId: string) => {
+  if (!hasLocalStorage()) return;
+  try {
+    window.localStorage.removeItem(`${LOCAL_FALLBACK_PREFIX}${courseId}`);
+  } catch (error) {
+    console.warn('[courseDraftStorage] Failed to delete localStorage fallback:', error);
+  }
+};
 
 const getDb = (): Promise<IDBDatabase> => {
   if (!hasIndexedDb()) {
@@ -127,6 +160,7 @@ const snapshotRuntimeStatus = (): DraftSnapshot['runtimeStatus'] => {
 
 const writeRecord = async (record: DraftSnapshot): Promise<void> => {
   memoryDrafts.set(record.id, record);
+  writeLocalFallback(record);
 
   if (!hasIndexedDb()) {
     return;
@@ -151,8 +185,13 @@ const readRecord = async (courseId: string): Promise<DraftSnapshot | null> => {
     return memoryDrafts.get(courseId) ?? null;
   }
 
+  const fallbackRecord = readLocalFallback(courseId);
+  if (fallbackRecord) {
+    memoryDrafts.set(courseId, fallbackRecord);
+  }
+
   if (!hasIndexedDb()) {
-    return null;
+    return fallbackRecord;
   }
 
   try {
@@ -166,18 +205,19 @@ const readRecord = async (courseId: string): Promise<DraftSnapshot | null> => {
         if (value) {
           memoryDrafts.set(courseId, value);
         }
-        resolve(value ?? null);
+        resolve(value ?? fallbackRecord ?? null);
       };
       request.onerror = () => reject(request.error ?? new Error('Failed to read draft snapshot'));
     });
   } catch (error) {
     console.warn('[courseDraftStorage] Failed to read draft snapshot:', error);
-    return null;
+    return fallbackRecord;
   }
 };
 
 const deleteRecord = async (courseId: string): Promise<void> => {
   memoryDrafts.delete(courseId);
+  deleteLocalFallback(courseId);
 
   if (!hasIndexedDb()) {
     return;

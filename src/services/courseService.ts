@@ -676,7 +676,7 @@ export class CourseService {
 
   private static async upsertCourse(
     course: NormalizedCourse,
-    options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal } = {},
+    options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal; clientRevision?: number } = {},
   ): Promise<SupabaseCourseRecord | null> {
     const payload = buildCoursePayload(course);
     let modules = CourseService.buildModulesPayloadForUpsert(course);
@@ -686,6 +686,12 @@ export class CourseService {
     }
     if (options.action === 'course.save' || options.action === 'course.auto-save') {
       body.action = options.action;
+    }
+    if ((course.status || 'draft') !== 'published') {
+      body.draftMode = true;
+    }
+    if (typeof options.clientRevision === 'number') {
+      body.clientRevision = options.clientRevision;
     }
 
     const {
@@ -877,7 +883,7 @@ export class CourseService {
 
   static async syncCourseToDatabase(
     course: Course,
-    options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal } = {},
+    options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal; clientRevision?: number } = {},
   ): Promise<NormalizedCourse | null> {
     const normalizedCourse = normalizeCourse(course);
     const isNewCourse = !hasServerAssignedCourseId(normalizedCourse.id);
@@ -893,7 +899,7 @@ export class CourseService {
     // Single upsert with full graph (course + modules + lessons).
     // The server response contains the authoritative saved course with server-assigned UUIDs.
     const serverCourse = await withSupabaseAuthRetry(() =>
-      CourseService.upsertCourse(normalizedCourse, { idempotencyKey, action, signal }),
+      CourseService.upsertCourse(normalizedCourse, { idempotencyKey, action, signal, clientRevision: options.clientRevision }),
     );
 
     // Use the server response directly (now includes module_id and course_id on each lesson).

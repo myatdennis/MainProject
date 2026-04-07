@@ -15,6 +15,7 @@ interface MobileCourseToolbarProps {
   saveDisabled?: boolean;
   publishTitle?: string;
   saveTitle?: string;
+  saveLabel?: string;
 }
 
 const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
@@ -31,6 +32,7 @@ const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
   saveDisabled = false,
   publishTitle,
   saveTitle,
+  saveLabel,
 }) => {
   const isSaving = saveStatus === 'saving';
   const savedLabel = lastSaved
@@ -49,7 +51,7 @@ const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
         </div>
         <span className={`${hasPendingChanges ? 'text-amber-600' : 'text-green-600'} flex items-center gap-1 font-semibold`}>
           <span className={`h-2 w-2 rounded-full ${hasPendingChanges ? 'bg-amber-500' : 'bg-green-500'}`} />
-          {hasPendingChanges ? 'Unsynced changes' : savedLabel}
+          {saveLabel || (hasPendingChanges ? 'Unsynced changes' : savedLabel)}
         </span>
       </div>
       <div className="flex gap-2">

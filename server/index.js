@@ -12546,6 +12546,14 @@ const normalizeKeyTakeawaysInput = (input) => {
 
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
+  const upsertStartedAt = Date.now();
+  const requestPayloadSize = (() => {
+    try {
+      return Buffer.byteLength(JSON.stringify(req.body || {}), 'utf8');
+    } catch {
+      return null;
+    }
+  })();
   if (courseIdFromParams && !isUuid(courseIdFromParams) && !isFallbackMode) {
     sendApiError(res, 400, 'invalid_course_id', 'Course ID must be a UUID.', {
       meta: { requestId: req.requestId ?? null },
@@ -12576,6 +12584,26 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     clientEventId: upsertRequest.client_event_id ?? null,
     action: upsertRequest.action ?? null,
   };
+
+  const requestedStatus =
+    typeof upsertRequest?.course?.status === 'string'
+      ? upsertRequest.course.status.toLowerCase()
+      : 'draft';
+  const isDraftModeRequest = Boolean(upsertRequest.draftMode) || requestedStatus === 'draft';
+  const clientRevision = typeof upsertRequest.clientRevision === 'number' ? upsertRequest.clientRevision : null;
+  const validationMode = isDraftModeRequest ? 'draft-light' : 'full';
+
+  console.info('[autosave.backend]', {
+    event: 'saveStarted',
+    route: req.originalUrl ?? req.path,
+    requestId: req.requestId ?? null,
+    userId: req.user?.id ?? null,
+    orgId: req.activeOrgId ?? null,
+    draftMode: isDraftModeRequest,
+    payloadSize: requestPayloadSize,
+    validationMode,
+    clientRevision,
+  });
 
   let { course: courseLocal, modules: modulesLocal = [] } = upsertRequest;
   modulesLocal = Array.isArray(modulesLocal)
@@ -12620,10 +12648,12 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     delete courseLocal.version;
   }
 
-  const payloadValidation = validateCoursePayload(
-    { course: courseLocal, modules: modulesLocal },
-    { enforceLessonContent: false },
-  );
+  const payloadValidation = isDraftModeRequest
+    ? { ok: true, data: { course: courseLocal, modules: modulesLocal }, issues: [] }
+    : validateCoursePayload(
+        { course: courseLocal, modules: modulesLocal },
+        { enforceLessonContent: false },
+      );
   if (!payloadValidation.ok && !isDemoMode) {
     const details = (payloadValidation.issues || []).map((issue) => {
       const moduleMatch = /modules\[(\d+)\]/.exec(issue.path || '');
@@ -12716,7 +12746,15 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         .json({ error: 'org_required', message: 'Organization required to create course' });
       return;
     }
-    if (organizationId) {
+    const orgHeaderMatchesResolved =
+      normalizeOrgIdValue(req.activeOrgId ?? context.activeOrganizationId ?? context.requestedOrgId ?? null) ===
+      normalizeOrgIdValue(organizationId ?? null);
+    const canTrustResolvedOrgFromMiddleware =
+      isDraftModeRequest &&
+      !context.isPlatformAdmin &&
+      Boolean(orgHeaderMatchesResolved);
+
+    if (organizationId && !canTrustResolvedOrgFromMiddleware) {
       const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     }
@@ -12866,7 +12904,23 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       persistE2EStore();
       console.log(`✅ Saved course "${courseObj.title}" to persistent storage`);
 
-      res.status(201).json({ data: courseObj });
+      res.status(201).json({
+        ok: true,
+        code: 'course_created',
+        data: courseObj,
+        meta: {
+          requestId: req.requestId ?? null,
+          courseId: courseObj?.id ?? null,
+          orgId: organizationId ?? null,
+          draftMode: isDraftModeRequest,
+          validationMode,
+          payloadSize: requestPayloadSize,
+          durationMs: Date.now() - upsertStartedAt,
+          savedAt: new Date().toISOString(),
+          revision: typeof courseObj?.version === 'number' ? courseObj.version : null,
+          clientRevision,
+        },
+      });
       return;
     } catch (error) {
       logAdminCoursesError(req, error, 'E2E upsert course failed');
@@ -13101,7 +13155,15 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       return;
     }
 
-    if (organizationId) {
+    const orgHeaderMatchesResolved =
+      normalizeOrgIdValue(req.activeOrgId ?? context.activeOrganizationId ?? context.requestedOrgId ?? null) ===
+      normalizeOrgIdValue(organizationId ?? null);
+    const canTrustResolvedOrgFromMiddleware =
+      isDraftModeRequest &&
+      !context.isPlatformAdmin &&
+      Boolean(orgHeaderMatchesResolved);
+
+    if (organizationId && !canTrustResolvedOrgFromMiddleware) {
       const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     }
@@ -13186,17 +13248,21 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         }
       }
     }
-    const persistenceNormalization = normalizeModuleLessonPayloads(modules, {
-      courseId: course?.id ?? courseIdFromParams ?? null,
-      organizationId,
-      pickOrgId,
-    });
-    logModuleNormalizationDiagnostics(persistenceNormalization.diagnostics, {
-      requestId: req.requestId,
-      source: 'course_upsert.persist',
-      courseId: course?.id ?? courseIdFromParams ?? null,
-    });
-    const modulesForPersistence = persistenceNormalization.modules;
+    const persistenceNormalization = isDraftModeRequest
+      ? null
+      : normalizeModuleLessonPayloads(modules, {
+          courseId: course?.id ?? courseIdFromParams ?? null,
+          organizationId,
+          pickOrgId,
+        });
+    const modulesForPersistence = persistenceNormalization?.modules ?? modules;
+    if (persistenceNormalization) {
+      logModuleNormalizationDiagnostics(persistenceNormalization.diagnostics, {
+        requestId: req.requestId,
+        source: 'course_upsert.persist',
+        courseId: course?.id ?? courseIdFromParams ?? null,
+      });
+    }
     const idNormalization = normalizeModuleLessonIdentifiers(modulesForPersistence);
     if (idNormalization.modulesNormalized > 0 || idNormalization.lessonsNormalized > 0) {
       console.info('[admin-courses] normalized_temp_ids', {
@@ -13306,6 +13372,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       }
       const durationMs = Date.now() - startedAt;
       const savedCourse = rpcRes.data;
+  const totalDurationMs = Date.now() - upsertStartedAt;
       if (process.env.NODE_ENV !== 'production') {
         console.info('[course.save_success]', {
           requestId: req.requestId ?? null,
@@ -13348,7 +13415,26 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           requestId: req.requestId ?? null,
           courseId: savedCourse?.id ?? null,
           orgId: organizationId ?? null,
+          draftMode: isDraftModeRequest,
+          validationMode,
+          payloadSize: requestPayloadSize,
+          durationMs: totalDurationMs,
+          savedAt: new Date().toISOString(),
+          revision: typeof savedCourse?.version === 'number' ? savedCourse.version : null,
+          clientRevision,
         },
+      });
+      console.info('[autosave.backend]', {
+        event: 'saveSucceeded',
+        route: req.originalUrl ?? req.path,
+        requestId: req.requestId ?? null,
+        userId: req.user?.id ?? null,
+        orgId: organizationId ?? null,
+        draftMode: isDraftModeRequest,
+        payloadSize: requestPayloadSize,
+        durationMs: totalDurationMs,
+        validationMode,
+        result: 'ok',
       });
       return true;
     };
@@ -13374,6 +13460,18 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       }
     }
   } catch (error) {
+    console.info('[autosave.backend]', {
+      event: 'saveFailed',
+      route: req.originalUrl ?? req.path,
+      requestId: req.requestId ?? null,
+      userId: req.user?.id ?? null,
+      orgId: organizationId ?? null,
+      draftMode: isDraftModeRequest,
+      payloadSize: requestPayloadSize,
+      durationMs: Date.now() - upsertStartedAt,
+      validationMode,
+      result: error?.code ?? 'error',
+    });
 
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'upsert_failed';

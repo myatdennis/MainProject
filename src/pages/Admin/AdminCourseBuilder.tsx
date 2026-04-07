@@ -82,7 +82,7 @@ import { useToast } from '../../context/ToastContext';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import type { CourseAssignment } from '../../types/assignment';
-import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnapshot } from '../../dal/courseDrafts';
+import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, saveDraftSnapshot, type DraftSnapshot } from '../../dal/courseDrafts';
 import useNavTrace from '../../hooks/useNavTrace';
 import { evaluateRuntimeGate, type RuntimeGateResult, type GateMode, type RuntimeAction } from '../../utils/runtimeGating';
 import { createActionIdentifiers, type IdempotentAction } from '../../utils/idempotency';
@@ -111,8 +111,59 @@ const parseUploadKey = (key: string) => {
   return { moduleId, lessonId };
 };
 const LESSON_AUTOSAVE_DELAY = 900;
-const AUTOSAVE_DEBOUNCE_MS = 1500;
+const AUTOSAVE_DEBOUNCE_MS = 1000;
 const AUTOSAVE_SUPERSEDED_CODE = 'autosave_superseded';
+const AUTOSAVE_STATUS_TICK_MS = 1000;
+
+const formatRelativeSaveTime = (timestamp?: number | null): string => {
+  if (!timestamp) return 'Saved just now';
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (elapsedSeconds <= 2) {
+    return 'Saved just now';
+  }
+  if (elapsedSeconds < 60) {
+    return `Saved ${elapsedSeconds}s ago`;
+  }
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  return `Saved ${elapsedMinutes}m ago`;
+};
+
+const buildAutosaveComparableSignature = (course: Course): string => {
+  const normalizedModules = Array.isArray(course.modules)
+    ? course.modules.map((module, moduleIndex) => {
+        const legacyOrderIndex = (module as Module & { order_index?: number }).order_index;
+        return {
+        id: module.id,
+        title: module.title,
+        description: module.description,
+        order: module.order ?? legacyOrderIndex ?? moduleIndex,
+        lessons: Array.isArray(module.lessons)
+          ? module.lessons.map((lesson, lessonIndex) => ({
+              id: lesson.id,
+              title: lesson.title,
+              type: lesson.type,
+              duration: lesson.duration,
+              order: lesson.order ?? lesson.order_index ?? lessonIndex,
+              content: canonicalizeLessonContent(lesson.content || {}),
+            }))
+          : [],
+      };
+      })
+    : [];
+
+  return JSON.stringify({
+    id: course.id,
+    slug: course.slug ?? null,
+    title: course.title,
+    description: course.description,
+    status: course.status,
+    difficulty: course.difficulty,
+    tags: Array.isArray(course.tags) ? [...course.tags].sort() : [],
+    learningObjectives: Array.isArray(course.learningObjectives) ? course.learningObjectives : [],
+    keyTakeaways: Array.isArray(course.keyTakeaways) ? course.keyTakeaways : [],
+    modules: normalizedModules,
+  });
+};
 
 const createAutosaveSupersededError = () => {
   const error = new Error(AUTOSAVE_SUPERSEDED_CODE);
@@ -413,6 +464,14 @@ type LessonAutosaveState = {
   moduleId: string | null;
   lessonId: string | null;
   message: string | null;
+};
+
+type DraftRevisionState = {
+  localRevision: number;
+  serverRevision: number | null;
+  lastEditedAt: number | null;
+  lastSavedAt: number | null;
+  lastSavedLocalRevision: number;
 };
 
 const AdminCourseBuilder = () => {
@@ -920,15 +979,32 @@ const AdminCourseBuilder = () => {
           ? Date.parse(lastPersistedRef.current.lastUpdated)
           : 0;
         if (snapshot.updatedAt > lastPersisted + 500) {
-          setDraftSnapshotPrompt(snapshot);
-          setStatusBanner((prev) =>
-            prev ?? {
-              tone: 'warning',
-              title: 'Unsynced draft detected',
-              description: 'We found local edits that never reached Supabase. Restore them or discard below.',
-              icon: AlertTriangle,
-            },
+          suppressNextDirtyRef.current = true;
+          setCourse(snapshot.course);
+          courseStore.saveCourse(snapshot.course, { skipRemoteSync: true });
+          setHasPendingChanges(true);
+          localRevisionRef.current = Math.max(
+            localRevisionRef.current,
+            Number((snapshot.metadata as Record<string, unknown> | undefined)?.localRevision ?? 0) || 0,
           );
+          setDraftRevisionState((prev) => ({
+            ...prev,
+            localRevision: Math.max(prev.localRevision, localRevisionRef.current),
+            lastEditedAt: snapshot.updatedAt,
+          }));
+          logAutoSaveEvent('localDraftRecovered', {
+            courseId: course.id,
+            localRevision: localRevisionRef.current,
+            recoveredAt: snapshot.updatedAt,
+          });
+          setStatusBanner({
+            tone: 'warning',
+            title: 'Recovered unsaved changes',
+            description: 'Your newer local draft was restored automatically. Keep editing — autosave will sync when available.',
+            icon: RefreshCcw,
+          });
+          showToast('Recovered unsaved changes from your local draft.', 'info', 5000);
+          draftCheckIdRef.current = course.id;
         } else {
           draftCheckIdRef.current = course.id;
         }
@@ -1191,6 +1267,75 @@ const AdminCourseBuilder = () => {
     latestCourseRef.current = course;
   }, [course]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => {
+      setIsOnline(true);
+      setSaveErrorMessage(null);
+      logAutoSaveEvent('saveScheduled', { reason: 'reconnect_flush' });
+      if (dirtyRef.current || hasPendingChanges) {
+        setAutoSaveRetryNonce((prev) => prev + 1);
+      }
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [hasPendingChanges, logAutoSaveEvent]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setAutosaveTick((tick) => tick + 1);
+    }, AUTOSAVE_STATUS_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (initializing || !course?.id) {
+      return;
+    }
+
+    const signature = buildAutosaveComparableSignature(course);
+    if (signature === lastCourseSignatureRef.current) {
+      return;
+    }
+    lastCourseSignatureRef.current = signature;
+
+    localRevisionRef.current += 1;
+    const editedAt = Date.now();
+    setDraftRevisionState((prev) => ({
+      ...prev,
+      localRevision: localRevisionRef.current,
+      lastEditedAt: editedAt,
+    }));
+    setSaveErrorMessage(null);
+
+    if (localDraftPersistTimerRef.current) {
+      clearTimeout(localDraftPersistTimerRef.current);
+    }
+    localDraftPersistTimerRef.current = setTimeout(() => {
+      void saveDraftSnapshot(course, {
+        dirty: true,
+        cause: 'autosave.local-edit',
+        metadata: {
+          localRevision: localRevisionRef.current,
+          lastEditedAt: editedAt,
+        },
+      });
+    }, 180);
+
+    return () => {
+      if (localDraftPersistTimerRef.current) {
+        clearTimeout(localDraftPersistTimerRef.current);
+      }
+    };
+  }, [course, initializing]);
+
 
   function createEmptyCourse(initialCourseId?: string): Course {
     // Smart defaults based on common course patterns
@@ -1267,6 +1412,23 @@ const AdminCourseBuilder = () => {
 
 const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
+const [autosaveTick, setAutosaveTick] = useState(0);
+const [draftRevisionState, setDraftRevisionState] = useState<DraftRevisionState>({
+  localRevision: 0,
+  serverRevision: null,
+  lastEditedAt: null,
+  lastSavedAt: null,
+  lastSavedLocalRevision: 0,
+});
+const localRevisionRef = useRef(0);
+const staleResponseCounterRef = useRef(0);
+const saveSequenceRef = useRef(0);
+const latestAppliedSaveSequenceRef = useRef(0);
+const lastCourseSignatureRef = useRef<string | null>(null);
+const lastRemotePayloadSignatureRef = useRef<string | null>(null);
+const localDraftPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 const syncTruth = useMemo(
   () =>
@@ -1376,6 +1538,7 @@ const autoSaveHaltedRef = useRef(false);
 const autoSaveWarningIssuedRef = useRef(false);
 const autoSavePauseLoggedRef = useRef(false);
 const saveInFlightRef = useRef(false);
+const pendingAutoSaveFlushRef = useRef(false);
 const publishInFlightRef = useRef(false);
 const videoRefreshInFlightRef = useRef<Record<string, boolean>>({});
   const cancelScheduledAutosave = useCallback(
@@ -1422,6 +1585,7 @@ const scheduleAutosave = useCallback(
     }
 
     if (saveInFlightRef.current) {
+      pendingAutoSaveFlushRef.current = true;
       if (import.meta.env?.DEV) {
         console.info('[COURSE SAVE BATCH]', {
           event: 'skip_inflight',
@@ -1441,7 +1605,8 @@ const scheduleAutosave = useCallback(
         break;
       }
 
-      dirtyRef.current = false;
+  dirtyRef.current = false;
+  pendingAutoSaveFlushRef.current = false;
       saveInFlightRef.current = true;
       autoSaveLockRef.current = true;
       setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
@@ -1453,8 +1618,9 @@ const scheduleAutosave = useCallback(
       }
       autoSaveRequestAbortRef.current = controller;
 
-      const requestToken = nextRequestToken();
-      autoSaveRequestIdRef.current = requestToken;
+  const sequence = ++saveSequenceRef.current;
+  const requestToken = `${sequence}-${nextRequestToken()}`;
+  autoSaveRequestIdRef.current = requestToken;
       const persistHandler = persistCourseRef.current;
       if (!persistHandler) {
         console.warn('[AdminCourseBuilder] persistCourseRef missing; skipping autosave run');
@@ -1464,7 +1630,16 @@ const scheduleAutosave = useCallback(
       }
 
       try {
-        logAutoSaveEvent('autosave_start', { courseId: snapshot.id, requestToken });
+        const snapshotSignature = buildAutosaveComparableSignature(snapshot);
+        const payloadBytes = new Blob([snapshotSignature]).size;
+        logAutoSaveEvent('saveStarted', {
+          courseId: snapshot.id,
+          requestToken,
+          sequence,
+          localRevision: localRevisionRef.current,
+          payloadBytes,
+          queueDepth: saveInFlightRef.current ? 1 : 0,
+        });
         const sendingVersion = snapshot.version ?? lastPersistedRef.current?.version ?? 1;
         if (import.meta.env?.DEV) {
           console.info('[COURSE SAVE DIRTY]', {
@@ -1492,21 +1667,63 @@ const scheduleAutosave = useCallback(
         );
 
         if (autoSaveRequestIdRef.current !== requestToken) {
+          staleResponseCounterRef.current += 1;
+          logAutoSaveEvent('staleResponseIgnored', {
+            courseId: snapshot.id,
+            requestToken,
+            sequence,
+            staleResponseCount: staleResponseCounterRef.current,
+          });
           continue;
         }
 
+        if (sequence < latestAppliedSaveSequenceRef.current) {
+          staleResponseCounterRef.current += 1;
+          logAutoSaveEvent('staleResponseIgnored', {
+            courseId: snapshot.id,
+            requestToken,
+            sequence,
+            latestApplied: latestAppliedSaveSequenceRef.current,
+            staleResponseCount: staleResponseCounterRef.current,
+          });
+          continue;
+        }
+        latestAppliedSaveSequenceRef.current = sequence;
+
         if (result?.remoteSynced) {
           setSaveStatus('saved');
-          setLastSaveTime(new Date());
+          setSaveErrorMessage(null);
+          const savedAt = Date.now();
+          setLastSaveTime(new Date(savedAt));
+          setDraftRevisionState((prev) => ({
+            ...prev,
+            serverRevision: result.course?.version ?? prev.serverRevision,
+            lastSavedAt: savedAt,
+            lastSavedLocalRevision: localRevisionRef.current,
+          }));
           setTimeout(() => setSaveStatus('idle'), 2000);
-          logAutoSaveEvent('autosave_success', { courseId: snapshot.id, requestToken, mode: 'remote' });
+          logAutoSaveEvent('saveSucceeded', {
+            courseId: snapshot.id,
+            requestToken,
+            sequence,
+            mode: 'remote',
+            serverRevision: result.course?.version ?? null,
+          });
           broadcastCourseSaved(snapshot.id);
         } else {
           setSaveStatus('idle');
-          logAutoSaveEvent('autosave_success', { courseId: snapshot.id, requestToken, mode: 'local' });
+          setSaveErrorMessage(null);
+          logAutoSaveEvent('saveSucceeded', { courseId: snapshot.id, requestToken, sequence, mode: 'local' });
         }
       } catch (err) {
         if (autoSaveRequestIdRef.current !== requestToken) {
+          staleResponseCounterRef.current += 1;
+          logAutoSaveEvent('staleResponseIgnored', {
+            courseId: snapshot.id,
+            requestToken,
+            sequence,
+            staleResponseCount: staleResponseCounterRef.current,
+          });
           continue;
         }
         if (controller.signal.aborted) {
@@ -1550,6 +1767,13 @@ const scheduleAutosave = useCallback(
             console.error('❌ Remote auto-sync failed:', err);
           }
         }
+        setSaveErrorMessage(err instanceof Error ? err.message : 'Save failed');
+        logAutoSaveEvent('saveFailed', {
+          courseId: snapshot.id,
+          requestToken,
+          sequence,
+          retryCount: autoSaveFailureRef.current.count,
+        });
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 4000);
       } finally {
@@ -1559,6 +1783,10 @@ const scheduleAutosave = useCallback(
         }
         autoSaveLockRef.current = false;
         saveInFlightRef.current = false;
+        if (pendingAutoSaveFlushRef.current || dirtyRef.current) {
+          pendingAutoSaveFlushRef.current = false;
+          setAutoSaveRetryNonce((prev) => prev + 1);
+        }
       }
     }
   }, [
@@ -1763,6 +1991,7 @@ const scheduleAutosave = useCallback(
 
       const apiInfo = extractApiErrorInfo(error);
       if (apiInfo) {
+        setSaveErrorMessage(apiInfo.message ?? 'Save failed');
         const now = Date.now();
         const last = lastAutoSaveErrorRef.current;
         if (!last || last.code !== apiInfo.code || last.status !== apiInfo.status || now - last.timestamp > 15000) {
@@ -1784,6 +2013,7 @@ const scheduleAutosave = useCallback(
       }
 
       if (!isRetryableAutoSaveError(error)) {
+        setSaveErrorMessage(apiInfo?.message ?? 'Save failed');
         autoSaveHaltedRef.current = true;
         autoSaveBackoffUntilRef.current = Number.POSITIVE_INFINITY;
         clearAutoSaveBackoffTimer();
@@ -1814,6 +2044,7 @@ const scheduleAutosave = useCallback(
 
       const state = autoSaveFailureRef.current;
       state.count += 1;
+  setSaveErrorMessage(apiInfo?.message ?? 'Save failed');
       const scheduleIndex = Math.min(state.count - 1, AUTOSAVE_BACKOFF_STEPS_MS.length - 1);
       const delay = AUTOSAVE_BACKOFF_STEPS_MS[scheduleIndex];
       autoSaveBackoffUntilRef.current = Date.now() + delay;
@@ -1861,6 +2092,51 @@ const scheduleAutosave = useCallback(
     ],
   );
 
+  const flushPendingWrites = useCallback(
+    async (reason: 'manual' | 'publish' | 'preview' | 'beforeunload' | 'navigation') => {
+      if (!dirtyRef.current && !hasPendingChanges) {
+        return;
+      }
+      logAutoSaveEvent('saveScheduled', {
+        reason: `flush_${reason}`,
+        queueDepth: saveInFlightRef.current ? 1 : 0,
+      });
+      try {
+        await flushAutosave();
+      } catch (error) {
+        if (!isAutosaveSupersededError(error)) {
+          console.warn('[AdminCourseBuilder] flushPendingWrites failed', { reason, error });
+        }
+      }
+    },
+    [flushAutosave, hasPendingChanges, logAutoSaveEvent],
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current && !hasPendingChanges) {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = '';
+      void flushPendingWrites('beforeunload');
+    };
+
+    const handlePageHide = () => {
+      void flushPendingWrites('beforeunload');
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+      void flushPendingWrites('navigation');
+    };
+  }, [flushPendingWrites, hasPendingChanges]);
+
   const publishIssueCount = effectiveValidationSummary.issues.length;
   const publishDisabled =
     !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving' || lessonAutosaveBlocking;
@@ -1887,6 +2163,21 @@ const scheduleAutosave = useCallback(
         : 'Lesson autosave in progress. Please wait.'
       : 'Please wait for the current operation to finish'
     : '';
+  const relativeSavedLabel = useMemo(
+    () => formatRelativeSaveTime(draftRevisionState.lastSavedAt ?? lastSaveTime?.getTime() ?? null),
+    [draftRevisionState.lastSavedAt, lastSaveTime, autosaveTick],
+  );
+  const hasUnsavedChanges = hasPendingChanges || draftRevisionState.localRevision > draftRevisionState.lastSavedLocalRevision;
+  const isOfflineMode = !isOnline || saveErrorMessage === 'Offline — changes stored locally';
+  const eliteSaveLabel = saveStatus === 'saving'
+    ? 'Saving...'
+    : saveStatus === 'error'
+    ? 'Save failed'
+    : isOfflineMode && hasUnsavedChanges
+    ? 'Offline — changes stored locally'
+    : hasUnsavedChanges
+    ? 'Unsaved changes'
+    : relativeSavedLabel;
 
   useEffect(() => {
     if (!confirmDialog) return;
@@ -1966,6 +2257,20 @@ const scheduleAutosave = useCallback(
       orderIndex: index + 1,
     }));
   }, []);
+
+  const normalizeCourseForPersistence = useCallback((input: Course): Course => {
+    const modules = Array.isArray(input.modules) ? input.modules : [];
+    return {
+      ...input,
+      modules: modules.map((module, moduleIndex) => ({
+        ...module,
+        order: moduleIndex + 1,
+        order_index: moduleIndex + 1,
+        orderIndex: moduleIndex + 1,
+        lessons: reindexLessons(Array.isArray(module.lessons) ? module.lessons : []),
+      })),
+    };
+  }, [reindexLessons]);
 
   const reorderModules = useCallback((dragIndex: number, hoverIndex: number) => {
     setCourse((prev) => {
@@ -2080,7 +2385,8 @@ const scheduleAutosave = useCallback(
     const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation, abortSignal } =
       resolvedOptions;
 
-    const enforcedCourse = enforceStableModuleGraph(nextCourse);
+  const normalizedInputCourse = normalizeCourseForPersistence(nextCourse);
+  const enforcedCourse = enforceStableModuleGraph(normalizedInputCourse);
     const { course: sanitizedNextCourse, issues: lessonIntegrityIssues } = ensureLessonIntegrity(enforcedCourse);
   setLatestIntegrityRepairIssues(lessonIntegrityIssues);
 
@@ -2168,6 +2474,11 @@ const scheduleAutosave = useCallback(
     }
 
     if (!diff.hasChanges) {
+      logAutoSaveEvent('saveSkippedNoChanges', {
+        courseId: preparedCourse.id,
+        reason: 'diff_has_no_changes',
+        action: derivedAction,
+      });
       courseStore.saveCourse(preparedCourse, { skipRemoteSync: true });
       setCourse(preparedCourse);
       await markDraftSynced(preparedCourse.id, preparedCourse);
@@ -2179,6 +2490,16 @@ const scheduleAutosave = useCallback(
 
     if (allowRemoteSync && resolvedOrgId) {
       const isCreateOperation = isClientGeneratedId(lastPersistedRef.current?.id) || !lastPersistedRef.current;
+      const outboundSignature = buildAutosaveComparableSignature(preparedCourse);
+      if (outboundSignature === lastRemotePayloadSignatureRef.current) {
+        logAutoSaveEvent('saveSkippedNoChanges', {
+          courseId: preparedCourse.id,
+          reason: 'payload_signature_match',
+          action: derivedAction,
+        });
+        await markDraftSynced(preparedCourse.id, preparedCourse);
+        return { course: preparedCourse, gate, remoteSynced: true };
+      }
       try {
         const { clone: apiCourse } = cloneWithCanonicalOrgId(preparedCourse, { removeAliases: true });
         const latestVersion =
@@ -2197,9 +2518,11 @@ const scheduleAutosave = useCallback(
         const persisted = await syncCourseToDatabase(apiCourse as Course, {
           action: derivedAction,
           signal: abortSignal,
+          clientRevision: localRevisionRef.current,
         });
         merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
         remoteSynced = true;
+        lastRemotePayloadSignatureRef.current = outboundSignature;
         logDev(isCreateOperation ? 'autosave_post_success' : 'autosave_put_success', {
           id: merged.id,
         });
@@ -2240,6 +2563,13 @@ const scheduleAutosave = useCallback(
     if (remoteSynced) {
       resetAutoSaveFailures();
       lastPersistedRef.current = mergedWithFallback;
+      const savedAt = Date.now();
+      setDraftRevisionState((prev) => ({
+        ...prev,
+        serverRevision: mergedWithFallback.version ?? prev.serverRevision,
+        lastSavedAt: savedAt,
+        lastSavedLocalRevision: localRevisionRef.current,
+      }));
       await markDraftSynced(mergedWithFallback.id, mergedWithFallback);
     }
     return { course: mergedWithFallback, gate, remoteSynced };
@@ -2322,6 +2652,9 @@ const scheduleAutosave = useCallback(
           : gate.reason ?? 'Drafts are stored locally until Huddle reconnects.';
         showToast(toastMessage, gate.tone === 'danger' ? 'error' : 'warning', 6000);
       }
+      if (!isBrowserOnline) {
+        setSaveErrorMessage('Offline — changes stored locally');
+      }
       lastAutoSaveGateModeRef.current = derivedMode;
       return;
     }
@@ -2331,6 +2664,13 @@ const scheduleAutosave = useCallback(
     }
     lastAutoSaveGateModeRef.current = 'remote';
     lastLocalOnlyReasonRef.current = null;
+    logAutoSaveEvent('saveScheduled', {
+      courseId: course.id,
+      debounceMs: AUTOSAVE_DEBOUNCE_MS,
+      localRevision: localRevisionRef.current,
+      queueDepth: saveInFlightRef.current ? 1 : 0,
+      retryCount: autoSaveFailureRef.current.count,
+    });
 
     scheduleAutosave(() => flushAutosave()).catch((error) => {
       if (isAutosaveSupersededError(error)) {
@@ -2368,7 +2708,9 @@ const scheduleAutosave = useCallback(
 
   const handleSave = async () => {
     if (saveInFlightRef.current) return;
+    await flushPendingWrites('manual');
     setSaveStatus('saving');
+    setSaveErrorMessage(null);
     
     try {
       const gate = evaluateRuntimeGate('course.save', runtimeStatus);
@@ -2377,6 +2719,7 @@ const scheduleAutosave = useCallback(
       if (result.remoteSynced) {
         setSaveStatus('saved');
         setLastSaveTime(new Date());
+        setSaveErrorMessage(null);
         setHasPendingChanges(false);
         showToast('Draft synced to your Huddle workspace.', 'success');
         clearValidationIssues();
@@ -2384,6 +2727,7 @@ const scheduleAutosave = useCallback(
         broadcastCourseSaved(course.id);
       } else {
         setSaveStatus('idle');
+        setSaveErrorMessage('Offline — changes stored locally');
         showToast(
           result.gate.reason ?? 'Draft saved locally. We’ll sync once Huddle reconnects.',
           'warning',
@@ -2396,16 +2740,19 @@ const scheduleAutosave = useCallback(
       }
     } catch (error) {
       if (error instanceof SlugConflictError) {
+        setSaveErrorMessage(error.userMessage);
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 5000);
         return;
       }
       if (error instanceof CourseValidationError) {
+        setSaveErrorMessage('Save failed');
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
         const details = mapValidationErrorDetails(error, 'local.validation');
         presentValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'draft');
       } else {
+        setSaveErrorMessage(error instanceof Error ? error.message : 'Save failed');
         if (import.meta.env?.DEV) {
           console.error('❌ Error saving course:', error);
         }
@@ -2426,6 +2773,7 @@ const scheduleAutosave = useCallback(
 
   const handlePublish = async () => {
     if (publishInFlightRef.current) return;
+    await flushPendingWrites('publish');
     publishInFlightRef.current = true;
     const publishOrgId = activeOrgId ?? course.organizationId ?? null;
     const publishContext = {
@@ -4887,7 +5235,10 @@ const scheduleAutosave = useCallback(
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => navigate('/admin/courses')}
+          onClick={async () => {
+            await flushPendingWrites('navigation');
+            navigate('/admin/courses');
+          }}
           className="mb-4 inline-flex items-center text-orange-500 hover:text-orange-600"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -5058,7 +5409,10 @@ const scheduleAutosave = useCallback(
                 <span>Reset Template</span>
               </button>
               <button
-                onClick={() => setShowPreview(true)}
+                onClick={async () => {
+                  await flushPendingWrites('preview');
+                  setShowPreview(true);
+                }}
                 className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2 font-medium"
                 title="Preview course as learner"
               >
@@ -5087,7 +5441,7 @@ const scheduleAutosave = useCallback(
                 ) : saveStatus === 'saved' ? (
                   <>
                     <CheckCircle className="h-4 w-4" />
-                    <span>Saved!</span>
+                    <span>Saved just now</span>
                   </>
                 ) : saveStatus === 'error' ? (
                   <>
@@ -5199,6 +5553,37 @@ const scheduleAutosave = useCallback(
       {/* Tabs */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="border-b border-gray-200">
+            <div className="ml-2 flex items-center gap-2 text-xs">
+              <span
+                className={`font-semibold ${
+                  saveStatus === 'error'
+                    ? 'text-red-600'
+                    : saveStatus === 'saving'
+                    ? 'text-blue-600'
+                    : isOfflineMode && hasUnsavedChanges
+                    ? 'text-amber-700'
+                    : hasUnsavedChanges
+                    ? 'text-amber-700'
+                    : 'text-green-700'
+                }`}
+              >
+                {eliteSaveLabel}
+              </span>
+              {saveStatus === 'error' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSaveStatus('idle');
+                    setSaveErrorMessage(null);
+                    setAutoSaveRetryNonce((prev) => prev + 1);
+                    void handleSave();
+                  }}
+                  className="rounded border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
           <nav className="flex space-x-8 px-6">
             {tabs.map((tab) => {
               const Icon = tab.icon;
@@ -5941,7 +6326,10 @@ const scheduleAutosave = useCallback(
       {isMobile && activeTab === 'content' && (
         <MobileCourseToolbar
           onAddModule={addModule}
-          onPreview={() => setShowPreview(true)}
+          onPreview={async () => {
+            await flushPendingWrites('preview');
+            setShowPreview(true);
+          }}
           onSave={handleSave}
           onAssign={() => setShowAssignmentModal(true)}
           onPublish={handlePublish}
@@ -5951,6 +6339,7 @@ const scheduleAutosave = useCallback(
           disabled={initializing}
           saveDisabled={saveButtonDisabled}
           saveTitle={saveButtonTitle || undefined}
+          saveLabel={eliteSaveLabel}
           publishDisabled={publishDisabled}
           publishTitle={publishButtonTitle || undefined}
         />

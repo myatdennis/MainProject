@@ -163,4 +163,50 @@ describe('Admin course save validation', () => {
     expect(JSON.stringify(body)).not.toContain('lesson.order.duplicate');
     expect(body?.data?.id).toBeTruthy();
   }, 60000);
+
+  it('persists draftMode autosave quickly without heavy publish validation paths', async () => {
+    const slug = `draft-mode-fast-${randomUUID()}`;
+    const startedAt = Date.now();
+
+    const response = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({
+        action: 'course.auto-save',
+        draftMode: true,
+        course: {
+          title: `Draft Mode Fast ${slug}`,
+          slug,
+          description: 'Draft mode should persist quickly without publish checks.',
+          status: 'draft',
+          organization_id: TEST_ORG_ID,
+        },
+        modules: [
+          {
+            title: 'Fast Draft Module',
+            order_index: 1,
+            lessons: [
+              {
+                title: 'Fast Draft Lesson',
+                type: 'text',
+                order_index: 1,
+                content_json: { body: { textContent: 'draft body' } },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const elapsedMs = Date.now() - startedAt;
+    const body = await response.json();
+    expect([200, 201]).toContain(response.status);
+    expect(body?.ok).toBe(true);
+    expect(body?.code).not.toBe('validation_failed');
+    expect(body?.data?.id).toBeTruthy();
+    expect(typeof body?.meta?.savedAt).toBe('string');
+    expect(body?.meta?.draftMode).toBe(true);
+    expect(body?.meta?.validationMode).toBe('draft-light');
+    expect(elapsedMs).toBeLessThan(2500);
+  }, 60000);
 });
