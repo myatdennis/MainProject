@@ -14880,7 +14880,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async (req, res) => {
+app.post('/api/admin/courses/:id/publish', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
@@ -14912,6 +14912,7 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
     return;
   }
   const idempotencyKey = publishRequest.idempotencyKey ?? publishRequest.clientEventId ?? null;
+  const incomingVersion = publishRequest.version;
 
   const publishLogMeta = {
     requestId: req.requestId ?? null,
@@ -14924,6 +14925,8 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
     requestId: publishLogMeta.requestId,
     userId: publishLogMeta.userId,
     courseId: publishLogMeta.courseId,
+    incomingVersion,
+    idempotencyKey: idempotencyKey ?? null,
   });
   logCourseRequestEvent('admin.courses.publish.start', publishLogMeta);
   res.once('finish', () => {
@@ -15034,8 +15037,16 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       return;
     }
 
-  const incomingVersion = publishRequest.version;
     const currentVersion = typeof existingCourseRow.version === 'number' ? existingCourseRow.version : null;
+    console.info('[course.publish_version_check]', {
+      requestId: publishLogMeta.requestId,
+      userId: publishLogMeta.userId,
+      orgId: publishLogMeta.orgId,
+      courseId,
+      incomingVersion,
+      persistedVersion: currentVersion,
+      source: publishViaSupabaseFallback ? 'supabase_fallback' : 'sql',
+    });
     if (incomingVersion !== null && currentVersion !== null && incomingVersion !== currentVersion) {
       res.locals = res.locals || {};
       res.locals.errorCode = 'version_conflict';
@@ -15171,6 +15182,15 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       }
 
       const validation = validatePublishableCourse(shapeCourseForValidation(lockedCourse), { intent: 'publish' });
+      console.info('[course.publish_validation_result]', {
+        requestId: publishLogMeta.requestId,
+        userId: publishLogMeta.userId,
+        orgId: publishLogMeta.orgId,
+        courseId,
+        valid: validation.isValid,
+        issuesCount: Array.isArray(validation.issues) ? validation.issues.length : 0,
+        source: 'supabase_fallback',
+      });
       if (!validation.isValid) {
         const error = new Error('Course is not publishable.');
         error.code = 'validation_failed';
@@ -15287,6 +15307,15 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       }
 
       const validation = validatePublishableCourse(shapeCourseForValidation(lockedCourse), { intent: 'publish' });
+      console.info('[course.publish_validation_result]', {
+        requestId: publishLogMeta.requestId,
+        userId: publishLogMeta.userId,
+        orgId: publishLogMeta.orgId,
+        courseId,
+        valid: validation.isValid,
+        issuesCount: Array.isArray(validation.issues) ? validation.issues.length : 0,
+        source: 'sql_tx',
+      });
       if (!validation.isValid) {
         const error = new Error('Course is not publishable.');
         error.code = 'validation_failed';

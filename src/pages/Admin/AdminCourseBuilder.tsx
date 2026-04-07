@@ -2761,12 +2761,45 @@ const scheduleAutosave = useCallback(
           });
           publishFailedToast('Publish request already in progress. Please wait a moment and retry.', 'info', 4000);
         } else {
+          const structuredErrorDetail = apiErrorMessage || (typeof responseBody?.error === 'string' ? responseBody.error : null);
+          const isAuthFailure = error.status === 401;
+          const isOrgScopeFailure =
+            error.status === 403 ||
+            errorCode === 'org_admin_required' ||
+            errorCode === 'organization_id_required' ||
+            errorCode === 'org_required' ||
+            errorCode === 'organization_membership_required';
+          const isValidationFailure = error.status === 422;
+
           if (error.status === 401) {
             handleAuthRequired('publish-course');
           }
-          logPublishGuard('warn', 'publish_request_failed_retryable', { status: error.status });
-          const fallbackDetail = networkFallback('Unable to publish course. Please try again.');
-          publishFailedToast(fallbackDetail, isOffline() ? 'warning' : 'error', 5000);
+          if (isOrgScopeFailure) {
+            setStatusBanner({
+              tone: 'danger',
+              title: 'Organization access required',
+              description:
+                structuredErrorDetail ||
+                'Select an organization where you have admin access before publishing this course.',
+              icon: AlertTriangle,
+            });
+          }
+
+          if (isAuthFailure || isOrgScopeFailure || isValidationFailure) {
+            const detail = structuredErrorDetail || 'Unable to publish course.';
+            publishFailedToast(detail, isAuthFailure ? 'warning' : 'error', 6000);
+            logPublishGuard('warn', 'publish_request_failed_structured', {
+              status: error.status,
+              errorCode,
+              detail,
+            });
+          } else {
+            logPublishGuard('warn', 'publish_request_failed_retryable', { status: error.status, errorCode });
+            const fallbackDetail = networkFallback(
+              structuredErrorDetail || 'Unable to publish course. Please try again.',
+            );
+            publishFailedToast(fallbackDetail, isOffline() ? 'warning' : 'error', 5000);
+          }
         }
       } else {
         logPublishGuard('error', 'publish_unhandled_error', { error });
