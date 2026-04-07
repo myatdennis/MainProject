@@ -26,7 +26,7 @@ test.describe('Client survey entry points', () => {
 
     await page.getByRole('link', { name: '← Back to dashboard' }).click();
     await expect(page).toHaveURL(/\/client\/dashboard/);
-    await expect(page.getByRole('heading', { name: /Welcome back/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: /Go to full learning hub/i })).toBeVisible({ timeout: 20_000 });
   });
 
   test('client surveys API returns published records for orgs', async ({ request }) => {

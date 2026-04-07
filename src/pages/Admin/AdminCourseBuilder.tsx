@@ -164,6 +164,9 @@ const buildClearedVideoContent = (
   return nextContent;
 };
 
+const isExternalVideoSourceType = (sourceType?: LessonContent['videoSourceType']): boolean =>
+  sourceType === 'external' || sourceType === 'youtube' || sourceType === 'vimeo';
+
 const nextRequestToken = () =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -3104,7 +3107,7 @@ const scheduleAutosave = useCallback(
     const lesson = module?.lessons.find((item) => item.id === editingLesson.lessonId);
     const lessonContent = lesson?.content;
 
-    if (!module || !lesson || lessonContent?.videoSourceType === 'external') {
+    if (!module || !lesson || isExternalVideoSourceType(lessonContent?.videoSourceType)) {
       return;
     }
 
@@ -3656,7 +3659,7 @@ const scheduleAutosave = useCallback(
                       }
                     })}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
-                      (!lesson.content.videoSourceType || lesson.content.videoSourceType === 'internal')
+                      (!lesson.content.videoSourceType || !isExternalVideoSourceType(lesson.content.videoSourceType))
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-300 hover:border-gray-400'
                     }`}
@@ -3674,12 +3677,12 @@ const scheduleAutosave = useCallback(
                           videoAsset: undefined,
                           fileName: undefined,
                           fileSize: undefined,
-                          videoUrl: lesson.content.videoSourceType === 'external' ? lesson.content.videoUrl || '' : '',
+                          videoUrl: isExternalVideoSourceType(lesson.content.videoSourceType) ? lesson.content.videoUrl || '' : '',
                         }
                       });
                     }}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
-                      lesson.content.videoSourceType === 'external'
+                      isExternalVideoSourceType(lesson.content.videoSourceType)
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-gray-300 hover:border-gray-400'
                     }`}
@@ -3692,7 +3695,7 @@ const scheduleAutosave = useCallback(
 
               {/* Video Content */}
               <div>
-                {(!lesson.content.videoSourceType || lesson.content.videoSourceType === 'internal') ? (
+                {(!lesson.content.videoSourceType || !isExternalVideoSourceType(lesson.content.videoSourceType)) ? (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Video Upload</label>
                     <input

@@ -22,6 +22,8 @@ const REALTIME_REFRESH_EVENT_TYPES = new Set([
 
 const notificationTone = (notification: Notification) => {
   switch (notification.type) {
+    case 'admin_message':
+      return { wrapper: 'bg-violet-50 text-violet-700', icon: <MessageSquare className="h-4 w-4" />, accent: 'text-violet-600' };
     case 'course_assignment':
       return { wrapper: 'bg-sky-50 text-sky-700', icon: <BookOpen className="h-4 w-4" />, accent: 'text-sky-600' };
     case 'survey_assignment':

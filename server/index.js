@@ -3071,9 +3071,11 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const limit = Math.min(parseInt(req.query.limit, 10) || 500, 1000);
-    const members = isPlatformAdmin && !orgId
-      ? await fetchAllOrgMembersWithProfiles({ offset, limit })
-      : await fetchOrgMembersWithProfiles(orgId);
+    const members = await runSupabaseTransientRetry('admin.users.list', async () =>
+      isPlatformAdmin && !orgId
+        ? fetchAllOrgMembersWithProfiles({ offset, limit })
+        : fetchOrgMembersWithProfiles(orgId),
+    );
     res.json({ data: members, meta: { offset, limit } });
   } catch (error) {
     const normalized = logUsersStageError('memberships_fetch', error, {
@@ -6743,6 +6745,74 @@ const withSupabaseTimeout = (promise, label = 'supabase_query') => {
  *  Throws on error or timeout. */
 const runTimedQuery = (label, buildQuery) =>
   withSupabaseTimeout(runSupabaseQueryWithRetry(label, buildQuery), label);
+
+const SUPABASE_TRANSIENT_MAX_ATTEMPTS = Math.min(
+  Math.max(Number(process.env.SUPABASE_TRANSIENT_MAX_ATTEMPTS || 2), 1),
+  5,
+);
+const SUPABASE_TRANSIENT_RETRY_BASE_MS = Math.min(
+  Math.max(Number(process.env.SUPABASE_TRANSIENT_RETRY_BASE_MS || 250), 50),
+  2000,
+);
+
+const waitFor = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isSupabaseTransientError = (error) => {
+  if (!error) return false;
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  const transientCodes = new Set([
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'SELF_SIGNED_CERT_IN_CHAIN',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_SOCKET',
+    'SUPABASE_TIMEOUT',
+  ]);
+  if (transientCodes.has(code)) return true;
+  return (
+    message.includes('fetch failed') ||
+    message.includes('network') ||
+    message.includes('timeout') ||
+    message.includes('socket hang up') ||
+    message.includes('connection terminated') ||
+    message.includes('self-signed certificate')
+  );
+};
+
+const runSupabaseTransientRetry = async (label, operation, options = {}) => {
+  const maxAttempts = Math.min(
+    Math.max(Number(options.maxAttempts || SUPABASE_TRANSIENT_MAX_ATTEMPTS), 1),
+    5,
+  );
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const transient = isSupabaseTransientError(error);
+      if (!transient || attempt >= maxAttempts) {
+        throw error;
+      }
+      const backoffMs = SUPABASE_TRANSIENT_RETRY_BASE_MS * attempt;
+      logger.warn('supabase_transient_retry', {
+        label,
+        attempt,
+        maxAttempts,
+        backoffMs,
+        code: error?.code ?? null,
+        message: error?.message ?? String(error),
+      });
+      await waitFor(backoffMs);
+    }
+  }
+  return operation();
+};
+
+const runSupabaseReadQueryWithRetry = (label, buildQuery, options = {}) =>
+  runSupabaseTransientRetry(label, () => runTimedQuery(label, buildQuery), options);
 
 /** Extract the first row from an INSERT/UPDATE/UPSERT result safely.
  *  Replaces .single() — tolerates multiple rows (duplicates) without throwing PGRST116.
@@ -12144,29 +12214,32 @@ app.get('/api/admin/courses', authenticate, async (req, res) => {
     : '';
 
   try {
-    let query = supabase
-      .from('courses')
-      .select(`${baseFields.join(',')}${moduleFields}`, { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(from, to);
+    const buildAdminCoursesQuery = () => {
+      let query = supabase
+        .from('courses')
+        .select(`${baseFields.join(',')}${moduleFields}`, { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
-    if (search) {
-      const term = sanitizeIlike(search);
-      query = query.or(`title.ilike.%${term}%,description.ilike.%${term}%`);
-    }
+      if (search) {
+        const term = sanitizeIlike(search);
+        query = query.or(`title.ilike.%${term}%,description.ilike.%${term}%`);
+      }
 
-    if (statusFilter.length) {
-      query = query.in('status', statusFilter);
-    }
+      if (statusFilter.length) {
+        query = query.in('status', statusFilter);
+      }
 
-    if (orgFilter) {
-      query = query.eq('organization_id', orgFilter);
-    } else if (!isPlatformAdmin) {
-      query = query.in('organization_id', adminOrgIds);
-    }
+      if (orgFilter) {
+        query = query.eq('organization_id', orgFilter);
+      } else if (!isPlatformAdmin) {
+        query = query.in('organization_id', adminOrgIds);
+      }
 
-    const { data, error, count } = await query;
-    if (error) throw error;
+      return query;
+    };
+
+    const { data, count } = await runSupabaseReadQueryWithRetry('admin.courses.list', buildAdminCoursesQuery);
 
     const normalizedData = Array.isArray(data) ? data : [];
     const hydratedData = includeStructure
@@ -12327,15 +12400,23 @@ app.get('/api/admin/courses/:identifier', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const fetchCourseRecord = async (column, value) => {
-    const { data, error } = await supabase
-      .from('courses')
-      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-      .eq(column, value)
-      .maybeSingle();
-    if (error && error.code !== 'PGRST116') {
+    try {
+      const { data } = await runSupabaseReadQueryWithRetry(
+        `admin.courses.detail.${column}`,
+        () =>
+          supabase
+            .from('courses')
+            .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+            .eq(column, value)
+            .maybeSingle(),
+      );
+      return data;
+    } catch (error) {
+      if (error?.code === 'PGRST116') {
+        return null;
+      }
       throw error;
     }
-    return data;
   };
 
   let courseRecord = await fetchCourseRecord('id', identifier);
@@ -15607,13 +15688,17 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
         const userFilter = assignmentsSupportUserIdUuid
           ? `user_id.eq.${userIdForFallback},user_id_uuid.eq.${userIdForFallback}`
           : `user_id.eq.${userIdForFallback}`;
-        const { data: assignmentOrgRows, error: assignmentOrgError } = await supabase
-          .from('assignments')
-          .select(`${assignmentsOrgColumn},organization_id,org_id`)
-          .eq('assignment_type', 'course')
-          .eq('active', true)
-          .or(userFilter)
-          .limit(200);
+        const { data: assignmentOrgRows, error: assignmentOrgError } = await runSupabaseReadQueryWithRetry(
+          'client.courses.org_scope_fallback',
+          () =>
+            supabase
+              .from('assignments')
+              .select(`${assignmentsOrgColumn},organization_id,org_id`)
+              .eq('assignment_type', 'course')
+              .eq('active', true)
+              .or(userFilter)
+              .limit(200),
+        );
         if (assignmentOrgError) {
           throw assignmentOrgError;
         }
@@ -15765,19 +15850,28 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
             ];
 
       for (const candidate of orgColumnCandidates) {
-        let query = supabase.from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
-        if (normalizedSessionUserId) {
-          if (table === 'assignments' && assignmentsSupportUserIdUuid) {
-            query = query.or(`user_id.eq.${normalizedSessionUserId},user_id_uuid.eq.${normalizedSessionUserId},user_id.is.null`);
+        const buildAssignmentCandidateQuery = () => {
+          let query = supabase.from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
+          if (normalizedSessionUserId) {
+            if (table === 'assignments' && assignmentsSupportUserIdUuid) {
+              query = query.or(`user_id.eq.${normalizedSessionUserId},user_id_uuid.eq.${normalizedSessionUserId},user_id.is.null`);
+            } else {
+              query = query.or(`user_id.eq.${normalizedSessionUserId},user_id.is.null`);
+            }
           } else {
-            query = query.or(`user_id.eq.${normalizedSessionUserId},user_id.is.null`);
+            query = query.is('user_id', null);
           }
-        } else {
-          query = query.is('user_id', null);
-        }
+          return query;
+        };
 
-        const { data, error } = await query;
-        if (error) {
+        let data = null;
+        try {
+          const result = await runSupabaseReadQueryWithRetry(
+            `client.courses.assignments.${table}.${candidate.column}`,
+            buildAssignmentCandidateQuery,
+          );
+          data = result?.data ?? null;
+        } catch (error) {
           const missingRelation = typeof error.message === 'string' && /relation/.test(error.message);
           const missingColumn =
             error.code === '42703' || (typeof error.message === 'string' && /column .* does not exist/i.test(error.message));
@@ -15913,7 +16007,10 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
   try {
     let assignmentCourseIds = null;
     if (effectiveAssignedOnly && assignmentOrgId) {
-      assignmentCourseIds = await resolveAssignmentCourseIds();
+      assignmentCourseIds = await runSupabaseTransientRetry(
+        'client.courses.resolve_assignment_ids',
+        () => resolveAssignmentCourseIds(),
+      );
       if (effectiveAssignedOnly && Array.isArray(assignmentCourseIds) && assignmentCourseIds.length === 0) {
         res.status(200).json({ ok: true, data: [], requestId });
         return;
@@ -15924,31 +16021,29 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     // causing Postgres 42703 (undefined column "org_id") during the published courses fetch.
     // TODO: Keep user_organizations_vw aligned with organization_memberships.organization_id so this query remains stable.
     const queryName = 'client_courses_published';
-    let courseQuery = supabase
-      .from('courses')
-      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-      .eq('status', 'published')
-      .order('created_at', { ascending: false })
-      .order('order_index', { ascending: true, foreignTable: 'modules' })
-      .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE });
+    const buildPublishedCoursesQuery = () => {
+      let courseQuery = supabase
+        .from('courses')
+        .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+        .eq('status', 'published')
+        .order('created_at', { ascending: false })
+        .order('order_index', { ascending: true, foreignTable: 'modules' })
+        .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE });
 
-    if (effectiveAssignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)) {
-      courseQuery = courseQuery.in('id', assignmentCourseIds);
-    }
-    if (!context.isPlatformAdmin || effectiveScopedOrgIds.length > 0) {
-      if (effectiveScopedOrgIds.length === 1) {
-        courseQuery = courseQuery.eq('organization_id', effectiveScopedOrgIds[0]);
-      } else if (effectiveScopedOrgIds.length > 1) {
-        courseQuery = courseQuery.in('organization_id', effectiveScopedOrgIds);
+      if (effectiveAssignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)) {
+        courseQuery = courseQuery.in('id', assignmentCourseIds);
       }
-    }
+      if (!context.isPlatformAdmin || effectiveScopedOrgIds.length > 0) {
+        if (effectiveScopedOrgIds.length === 1) {
+          courseQuery = courseQuery.eq('organization_id', effectiveScopedOrgIds[0]);
+        } else if (effectiveScopedOrgIds.length > 1) {
+          courseQuery = courseQuery.in('organization_id', effectiveScopedOrgIds);
+        }
+      }
+      return courseQuery;
+    };
 
-    const { data, error } = await courseQuery;
-
-    if (error) {
-      error.queryName = queryName;
-      throw error;
-    }
+    const { data } = await runSupabaseReadQueryWithRetry('client.courses.published', buildPublishedCoursesQuery);
     const list = Array.isArray(data) ? data : [];
     const responseMeta = {
       orgId: assignmentOrgId ?? (scopedOrgIds.length === 1 ? scopedOrgIds[0] : null),
@@ -16189,13 +16284,24 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
   const queryName = 'client_course_detail';
   let identifierType = 'slug';
   try {
-  identifierType = isUuid(courseIdentifier) ? 'uuid' : 'slug';
+    identifierType = isUuid(courseIdentifier) ? 'uuid' : 'slug';
     const identifierValue = courseIdentifier;
-    let { data, error } = identifierType === 'uuid' ? await buildQuery('id', identifierValue) : { data: null, error: null };
-    if (error && error.code !== 'PGRST116') throw error;
+    let data = null;
+    if (identifierType === 'uuid') {
+      try {
+        const result = await runSupabaseReadQueryWithRetry('client.course.detail.id', () => buildQuery('id', identifierValue));
+        data = result?.data ?? null;
+      } catch (error) {
+        if (error?.code !== 'PGRST116') throw error;
+      }
+    }
     if (!data) {
-      ({ data, error } = await buildQuery('slug', identifierValue));
-      if (error && error.code !== 'PGRST116') throw error;
+      try {
+        const result = await runSupabaseReadQueryWithRetry('client.course.detail.slug', () => buildQuery('slug', identifierValue));
+        data = result?.data ?? null;
+      } catch (error) {
+        if (error?.code !== 'PGRST116') throw error;
+      }
     }
     if (data) {
       const courseOrgId = data.organization_id ?? data.org_id ?? data.organizationId ?? null;
@@ -19233,7 +19339,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   let totalCount = 0;
   try {
     logOrganizationsEvent('base_query_start', { requestId, status: 'start' });
-    const result = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
+  const result = await runSupabaseReadQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
     organizations = Array.isArray(result?.data) ? result.data : [];
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
     logOrganizationsEvent('base_query_done', {
@@ -22965,7 +23071,7 @@ app.get('/api/admin/surveys', requireAdminAccess, asyncHandler(async (_req, res)
       return;
     }
 
-    const { data } = await runSupabaseQueryWithRetry('admin.surveys.list', () =>
+    const { data } = await runSupabaseReadQueryWithRetry('admin.surveys.list', () =>
       supabase.from('surveys').select('*').order('updated_at', { ascending: false }),
     );
 
@@ -25075,14 +25181,6 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
   }
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
   const { read = true } = req.body || {};
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -25185,14 +25283,6 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   }
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
   const isAdmin = context.userRole === 'admin';

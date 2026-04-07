@@ -87,6 +87,8 @@ export const ensureLessonIntegrity = (input: Course): { course: Course; issues: 
     const provider = typeof content.videoProvider === 'string' ? content.videoProvider.toLowerCase() : '';
     const explicitExternal =
       content.videoSourceType === 'external' ||
+      content.videoSourceType === 'youtube' ||
+      content.videoSourceType === 'vimeo' ||
       EXTERNAL_VIDEO_PROVIDERS.has(provider);
 
     if (explicitExternal) {
