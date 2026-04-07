@@ -134,6 +134,26 @@ const ClientDashboard = () => {
     if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
+  const learnerFirstName = useMemo(() => {
+    const candidate =
+      (user as Record<string, unknown> | null)?.firstName ||
+      (user as Record<string, unknown> | null)?.first_name ||
+      (user as Record<string, unknown> | null)?.name ||
+      (user as Record<string, unknown> | null)?.fullName;
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim().split(/\s+/)[0];
+    }
+    if (user?.email) {
+      return user.email.split('@')[0];
+    }
+    return 'there';
+  }, [user]);
+  const contextualGreeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }, []);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [assignmentsLoading, setAssignmentsLoading] = useState(true);
   const [surveyAssignments, setSurveyAssignments] = useState<LearnerSurveyAssignment[]>([]);
@@ -617,11 +637,48 @@ const ClientDashboard = () => {
   const hasAssignedCourses = courseDetails.length > 0;
   const showingFallbackCatalog = !hasAssignedCourses && fallbackCourseDetails.length > 0;
   const displayedCourseDetails = hasAssignedCourses ? courseDetails : fallbackCourseDetails;
+  const continueLearningEntry = useMemo(() => {
+    const byPriority = [...displayedCourseDetails].sort((left, right) => {
+      const leftActive = left.isInProgress ? 1 : 0;
+      const rightActive = right.isInProgress ? 1 : 0;
+      if (leftActive !== rightActive) return rightActive - leftActive;
+      return (right.progressPercent ?? 0) - (left.progressPercent ?? 0);
+    });
+    return byPriority.find((entry) => entry.progressPercent > 0 && entry.progressPercent < 100) ?? byPriority[0] ?? null;
+  }, [displayedCourseDetails]);
+  const continueLearningLessonTitle = useMemo(() => {
+    if (!continueLearningEntry?.preferredLessonId) return 'Next available lesson';
+    const lessonTitle = (continueLearningEntry.course.chapters || [])
+      .flatMap((chapter) => chapter.lessons || [])
+      .find((lesson) => lesson.id === continueLearningEntry.preferredLessonId)?.title;
+    return lessonTitle || 'Next available lesson';
+  }, [continueLearningEntry]);
   const assignedCourseCount = hasAssignedCourses ? assignments.length : fallbackCourseDetails.length;
   const completedCount = displayedCourseDetails.filter((entry) => entry.isCompleted).length;
   const inProgressCount = displayedCourseDetails.filter((entry) => entry.isInProgress).length;
+  const lessonSnapshot = useMemo(() => {
+    const totalLessons = displayedCourseDetails.reduce((count, entry) => {
+      const chapterLessons = (entry.course.chapters || []).reduce(
+        (sum, chapter) => sum + (chapter.lessons?.length || 0),
+        0,
+      );
+      return count + chapterLessons;
+    }, 0);
+    const completedLessonsCount = displayedCourseDetails.reduce(
+      (count, entry) => count + (entry.stored?.completedLessonIds?.length || 0),
+      0,
+    );
+    return {
+      totalLessons,
+      completedLessonsCount,
+    };
+  }, [displayedCourseDetails]);
   const featuredResources = useMemo(() => resources.slice(0, 3), [resources]);
   const extraResources = Math.max(0, resources.length - featuredResources.length);
+  const progressSnapshotLabel =
+    lessonSnapshot.totalLessons > 0
+      ? `You’ve completed ${Math.min(lessonSnapshot.completedLessonsCount, lessonSnapshot.totalLessons)} of ${lessonSnapshot.totalLessons} lessons this week`
+      : 'Your assignments will appear here as soon as your facilitator publishes them';
 
   const essentialReady =
     bootSteps.session.status === 'success' && bootSteps.membership.status === 'success';
@@ -759,10 +816,11 @@ const ClientDashboard = () => {
               <Sparkles className="h-3.5 w-3.5" />
               Client Portal
             </Badge>
-            <h1 className="mt-4 font-heading text-3xl font-bold md:text-4xl">Welcome back</h1>
+            <h1 className="mt-4 font-heading text-3xl font-bold md:text-4xl">{contextualGreeting}, {learnerFirstName}</h1>
             <p className="mt-3 max-w-2xl text-sm text-slate/80">
-              Track assigned courses, follow due dates, and jump back into lessons in one place.
+              {progressSnapshotLabel}
             </p>
+            <p className="mt-1 text-sm text-slate/70">{inProgressCount} {inProgressCount === 1 ? 'course' : 'courses'} in progress</p>
           </div>
           <div className="flex flex-wrap gap-3">
             <Button
@@ -777,16 +835,48 @@ const ClientDashboard = () => {
         </div>
       </Card>
 
+      {continueLearningEntry && (
+        <section aria-label="Continue where you left off" className="mt-6">
+        <Card className="border border-skyblue/20 bg-gradient-to-r from-white via-skyblue/5 to-indigo-50/60 shadow-card">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Continue where you left off</p>
+              <h2 className="mt-2 font-heading text-2xl font-semibold text-charcoal">{continueLearningEntry.course.title}</h2>
+              <p className="mt-1 text-sm text-slate/80">
+                Lesson: {continueLearningLessonTitle}
+              </p>
+              <div className="mt-3 max-w-md">
+                <ProgressBar value={continueLearningEntry.progressPercent} srLabel="Resume course progress" />
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="shadow-md transition-transform active:scale-[0.98]"
+              onClick={() => {
+                if (continueLearningEntry.preferredLessonId) {
+                  navigate(`/client/courses/${continueLearningEntry.course.slug}/lessons/${continueLearningEntry.preferredLessonId}`);
+                  return;
+                }
+                navigate(`/client/courses/${continueLearningEntry.course.slug}`);
+              }}
+            >
+              Resume now
+            </Button>
+          </div>
+        </Card>
+        </section>
+      )}
+
       <div className="mt-8 grid gap-4 md:grid-cols-4">
-        <Card tone="muted" className="text-center py-6">
+        <Card tone="muted" className="text-center py-6 hover:shadow-card transition-all duration-200">
           <div className="font-heading text-3xl font-bold text-charcoal">{assignedCourseCount}</div>
           <p className="text-xs uppercase tracking-wide text-slate/70">Assigned courses</p>
         </Card>
-        <Card tone="muted" className="text-center py-6">
+        <Card tone="muted" className="text-center py-6 hover:shadow-card transition-all duration-200">
           <div className="font-heading text-3xl font-bold text-charcoal">{completedCount}</div>
           <p className="text-xs uppercase tracking-wide text-slate/70">Completed</p>
         </Card>
-        <Card tone="muted" className="text-center py-6">
+        <Card tone="muted" className="text-center py-6 hover:shadow-card transition-all duration-200">
           <div className="font-heading text-3xl font-bold text-charcoal">{inProgressCount}</div>
           <p className="text-xs uppercase tracking-wide text-slate/70">In progress</p>
         </Card>
@@ -885,14 +975,21 @@ const ClientDashboard = () => {
       </div>
 
       <div className="mt-10 grid gap-6 lg:grid-cols-2">
+        <section aria-label="Assigned courses">
         <Card className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="font-heading text-lg font-semibold text-charcoal">Assigned courses</h2>
             <Badge tone="info" className="bg-skyblue/10 text-skyblue">{assignedCourseCount}</Badge>
           </div>
           {assignmentsLoading ? (
-            <div className="flex items-center justify-center py-8 text-sm text-slate/60">
-              Checking for assignments…
+            <div className="space-y-3 py-2" aria-label="Loading assignments">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="rounded-2xl border border-mist bg-white/80 p-4 animate-pulse">
+                  <div className="h-4 w-1/2 rounded bg-cloud" />
+                  <div className="mt-2 h-3 w-1/3 rounded bg-cloud" />
+                  <div className="mt-4 h-2 w-full rounded bg-cloud" />
+                </div>
+              ))}
             </div>
           ) : !hasAssignedCourses && !showingFallbackCatalog && learnerCatalogState.status === 'empty' ? (
             // Catalog confirmed empty by server — no courses are published/available for this org.
@@ -919,7 +1016,8 @@ const ClientDashboard = () => {
               </div>
               <h3 className="mt-4 font-heading text-base font-semibold text-charcoal">No assignments yet</h3>
               <p className="mt-2 text-sm text-slate/70">
-                Your facilitator will share programs here soon. In the meantime, explore the catalog to keep learning.
+                You’re all set — your learning plan will appear here as soon as your facilitator assigns it.
+                You can still browse available content anytime.
               </p>
               <div className="mt-4 flex flex-wrap justify-center gap-3">
                 <Button size="sm" onClick={() => navigate('/client/courses')}>
@@ -938,7 +1036,7 @@ const ClientDashboard = () => {
                 </div>
               )}
               {displayedCourseDetails.map(({ course, assignment, progressPercent, preferredLessonId }) => (
-                <Card key={course.id} tone="muted" className="space-y-2">
+                <Card key={course.id} tone="muted" className="space-y-2 hover:shadow-card transition-all duration-200">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-heading text-sm font-semibold text-charcoal">{course.title}</p>
@@ -964,7 +1062,8 @@ const ClientDashboard = () => {
               ))}
             </div>
           )}
-        </Card>
+  </Card>
+  </section>
 
         <Card className="space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -989,7 +1088,14 @@ const ClientDashboard = () => {
             </div>
           </div>
           {resourcesLoading ? (
-            <div className="flex items-center justify-center py-6 text-sm text-slate/60">Loading resources…</div>
+            <div className="space-y-3 py-2" aria-label="Loading resources">
+              {Array.from({ length: 2 }).map((_, index) => (
+                <div key={index} className="rounded-xl border border-mist bg-white/80 p-3 animate-pulse">
+                  <div className="h-4 w-2/3 rounded bg-cloud" />
+                  <div className="mt-2 h-3 w-1/3 rounded bg-cloud" />
+                </div>
+              ))}
+            </div>
           ) : featuredResources.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-4 text-sm text-slate/70">
               No shared documents yet. Your facilitator will add resources soon.
@@ -1066,8 +1172,14 @@ const ClientDashboard = () => {
           </div>
         </div>
         {surveyAssignmentsLoading ? (
-          <div className="flex items-center justify-center py-10 text-sm text-slate/60">
-            Checking for surveys…
+          <div className="space-y-3 py-2" aria-label="Loading surveys">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="rounded-2xl border border-mist bg-white/80 p-4 animate-pulse">
+                <div className="h-4 w-2/5 rounded bg-cloud" />
+                <div className="mt-2 h-3 w-1/4 rounded bg-cloud" />
+                <div className="mt-4 h-8 w-28 rounded bg-cloud" />
+              </div>
+            ))}
           </div>
         ) : surveyAssignments.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-6 text-center">

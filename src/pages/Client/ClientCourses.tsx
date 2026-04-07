@@ -21,6 +21,7 @@ import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
+import { shouldIncludeCourseForLearner } from './clientCoursesUtils';
 
 const ClientCourses = () => {
   // Prefetch critical user flows for fast navigation
@@ -68,10 +69,18 @@ const ClientCourses = () => {
   );
 
   // Learners see published + assigned only
-  const assignedSet = useMemo(() => new Set(assignments.map((a) => a.courseId)), [assignments]);
+  const assignmentByCourseId = useMemo(
+    () =>
+      new Map(
+        assignments
+          .filter((a): a is CourseAssignment & { courseId: string } => typeof a.courseId === 'string' && a.courseId.length > 0)
+          .map((a) => [a.courseId, a]),
+      ),
+    [assignments],
+  );
   const normalizedCourses = useMemo(
-    () => normalizedCoursesAll.filter((c) => c.status === 'published' || assignedSet.has(c.id)),
-    [normalizedCoursesAll, assignedSet],
+    () => normalizedCoursesAll.filter((c) => shouldIncludeCourseForLearner(c.id, assignmentByCourseId)),
+    [normalizedCoursesAll, assignmentByCourseId],
   );
 
   useEffect(() => {
@@ -316,6 +325,9 @@ const ClientCourses = () => {
                             <Link to={`/client/courses/${course.slug}`}>Details</Link>
                           </Button>
                         </div>
+                        {status === 'in-progress' && (
+                          <p className="text-xs font-medium text-skyblue">Continue where you left off</p>
+                        )}
                       </div>
                     </Card>
                   );

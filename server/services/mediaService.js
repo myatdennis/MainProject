@@ -19,6 +19,13 @@ const normalizePath = (value = '') => value.replace(/^\/+/, '');
 const isUuid = (value = '') => UUID_RE.test(String(value).trim());
 const isDirectUrl = (value = '') => DIRECT_URL_RE.test(String(value).trim());
 const isExternalRef = (value = '') => EXTERNAL_REF_RE.test(String(value).trim());
+const inferBucketForStoragePath = ({ storagePath, courseVideosBucket, documentsBucket }) => {
+  const normalizedPath = normalizePath(storagePath);
+  if (normalizedPath.startsWith('documents/')) {
+    return documentsBucket;
+  }
+  return courseVideosBucket;
+};
 
 const parseSupabaseStorageUrl = (value = '') => {
   try {
@@ -200,6 +207,38 @@ export const createMediaService = ({
       const supabase = requireSupabase();
       const asset = await getAssetById(assetId, logOnce);
       if (!asset) {
+        const legacyStoragePath = normalizePath(assetId);
+        if (legacyStoragePath) {
+          try {
+            const inferredBucket = inferBucketForStoragePath({
+              storagePath: legacyStoragePath,
+              courseVideosBucket,
+              documentsBucket,
+            });
+            const signedLegacy = await createSignedUrlForPath({
+              bucket: inferredBucket,
+              storagePath: legacyStoragePath,
+              ttlSeconds,
+            });
+            return {
+              asset: {
+                id: assetId,
+                bucket: inferredBucket,
+                storage_path: legacyStoragePath,
+                mime_type: null,
+                bytes: 0,
+                metadata: {
+                  legacyStoragePath: true,
+                },
+              },
+              signedUrl: signedLegacy.url,
+              expiresAt: signedLegacy.expiresAt,
+              fallback: false,
+            };
+          } catch (legacySignErr) {
+            logOnce('[mediaService] signAssetById: legacy path sign error', legacySignErr);
+          }
+        }
         logOnce('[mediaService] signAssetById: asset not found', assetId);
         return {
           asset: null,

@@ -81,4 +81,41 @@ describe('useSignedMediaUrl', () => {
 
     expect(signMediaAssetMock).not.toHaveBeenCalled();
   });
+
+  it('retries transient signing failures and recovers playback URL', async () => {
+    const asset = {
+      assetId: 'asset-retry-1',
+      bucket: 'course-videos',
+      storagePath: 'courses/c-1/m-1/l-1/video.mp4',
+      bytes: 123,
+      mimeType: 'video/mp4',
+      signedUrl: null,
+      urlExpiresAt: null,
+    };
+
+    signMediaAssetMock
+      .mockRejectedValueOnce(new Error('Network timeout while signing media'))
+      .mockResolvedValueOnce({
+        assetId: 'asset-retry-1',
+        signedUrl: 'https://signed.example.com/video-retry.mp4',
+        urlExpiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
+    const { result } = renderHook(() =>
+      useSignedMediaUrl({
+        asset,
+        autoRefresh: false,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.url).toBe('https://signed.example.com/video-retry.mp4');
+      expect(result.current.error).toBeNull();
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(signMediaAssetMock).toHaveBeenCalledTimes(2);
+    expect(signMediaAssetMock).toHaveBeenNthCalledWith(1, 'asset-retry-1');
+    expect(signMediaAssetMock).toHaveBeenNthCalledWith(2, 'asset-retry-1');
+  });
 });

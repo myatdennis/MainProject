@@ -56,6 +56,7 @@
     "analyze": "npx vite-bundle-analyzer",
     "check:bundle": "node scripts/check_bundle_size.mjs",
     "verify:schema": "node scripts/verify-schema.mjs",
+  "verify:user-course-progress-db": "node scripts/verify-user-course-progress-db.js",
     "ci": "npm run -s typecheck && npm run -s lint && npm run -s guard:api-nav && vitest run && npm run -s build",
     "guard:reference-errors": "node scripts/guard_reference_errors.mjs",
     "archive:server-ts": "node scripts/archive_server_ts.mjs",

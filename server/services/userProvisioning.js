@@ -301,15 +301,70 @@ const ensureMembership = async ({
     payload.org_id = String(orgId);
   }
 
+  const deactivateOtherActiveMemberships = async () => {
+    const updatePayload = {
+      updated_at: new Date().toISOString(),
+    };
+    if (statusColumn === 'status') {
+      updatePayload.status = 'inactive';
+    }
+    if (hasIsActiveColumn) {
+      updatePayload.is_active = false;
+    }
+
+    let updateQuery = supabase
+      .from('organization_memberships')
+      .update(updatePayload)
+      .eq('user_id', userId)
+      .neq(membershipOrgColumn, orgId);
+
+    if (hasIsActiveColumn) {
+      updateQuery = updateQuery.eq('is_active', true);
+    } else if (statusColumn === 'status') {
+      updateQuery = updateQuery.eq('status', 'active');
+    }
+
+    const { error } = await updateQuery;
+    if (error) {
+      throw new ProvisioningError(
+        'membership_enforce_single_active',
+        'membership_single_active_enforcement_failed',
+        error.message || 'Unable to enforce single active membership',
+        500,
+        error,
+      );
+    }
+  };
+
   let data = null;
   let upsertError = null;
 
+  await deactivateOtherActiveMemberships();
+
   // Primary attempt: use the detected org column as the conflict target.
   // Use array result to avoid PGRST116 when duplicate membership rows exist.
-  const primaryResult = await supabase
+  let primaryResult = await supabase
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
     .select('*');
+
+  const isUniqueConstraintViolation = (() => {
+    const code = String(primaryResult?.error?.code || '').toUpperCase();
+    const message = String(primaryResult?.error?.message || primaryResult?.error?.details || '').toLowerCase();
+    return (
+      code === '23505' ||
+      message.includes('duplicate key value violates unique constraint') ||
+      message.includes('organization_memberships_single_active_user_idx')
+    );
+  })();
+
+  if (primaryResult.error && isUniqueConstraintViolation) {
+    await deactivateOtherActiveMemberships();
+    primaryResult = await supabase
+      .from('organization_memberships')
+      .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
+      .select('*');
+  }
 
   upsertError = primaryResult.error;
   data = Array.isArray(primaryResult.data) ? (primaryResult.data[0] ?? null) : primaryResult.data;

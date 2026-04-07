@@ -4276,7 +4276,11 @@ const collectOrgIdsFromContext = (context = {}, req = {}) => {
   return ids;
 };
 
-const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {}) => {
+const resolveOrgScopeForRequest = async (
+  req,
+  context,
+  { queryOrgId = null, requireExplicitSelection = false } = {},
+) => {
   const membershipIds = collectOrgIdsFromContext(context, req);
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !context?.isPlatformAdmin });
   const normalizedQueryOrgId = normalizeOrgIdValue(queryOrgId);
@@ -4312,6 +4316,16 @@ const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {
 
   const membershipList = Array.from(membershipIds);
   const membershipSet = new Set(membershipList);
+  if (requireExplicitSelection && !context?.isPlatformAdmin && !resolvedOrgId && membershipList.length > 1) {
+    return {
+      resolvedOrgId: null,
+      scopedOrgIds: membershipList,
+      membershipSet,
+      primaryOrgId: null,
+      headerOrgId,
+      requiresExplicitSelection: true,
+    };
+  }
   const scopedOrgIds = resolvedOrgId ? [resolvedOrgId] : membershipList;
   const primaryOrgId =
     resolvedOrgId ??
@@ -4323,6 +4337,7 @@ const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {
     membershipSet,
     primaryOrgId,
     headerOrgId,
+    requiresExplicitSelection: false,
   };
 };
 
@@ -14280,6 +14295,15 @@ app.get('/api/client/surveys', authenticate, async (req, res) => {
 app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    res.status(403).json({
+      error: 'org_selection_required',
+      code: 'org_selection_required',
+      message: 'Select an organization before loading assigned surveys.',
+    });
+    return;
+  }
 
   const parseBoolean = (value, defaultValue = true) => {
     if (value === undefined || value === null) return defaultValue;
@@ -14310,7 +14334,12 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   try {
     await ensureSurveyAssignmentsForUserFromOrgScope({
       userId: context.userId,
-      orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+      orgIds:
+        orgScope.orgId
+          ? [orgScope.orgId]
+          : Array.isArray(context.organizationIds)
+          ? context.organizationIds
+          : [],
     });
 
     let assignmentQuery = supabase
@@ -15498,8 +15527,20 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     return res.json({ ok: true, courses: [], total: 0, requestId });
   }
 
-  const orgScope = await resolveOrgScopeForRequest(req, context, { queryOrgId: queryOrgParam });
-  const { resolvedOrgId, scopedOrgIds, membershipSet, primaryOrgId } = orgScope;
+  const orgScope = await resolveOrgScopeForRequest(req, context, {
+    queryOrgId: queryOrgParam,
+    requireExplicitSelection: true,
+  });
+  const { resolvedOrgId, scopedOrgIds, membershipSet, primaryOrgId, requiresExplicitSelection } = orgScope;
+  if (requiresExplicitSelection) {
+    res.status(403).json({
+      ok: false,
+      code: 'org_selection_required',
+      message: 'Select an organization before loading learner courses.',
+      requestId,
+    });
+    return;
+  }
   let effectiveScopedOrgIds = Array.isArray(scopedOrgIds) ? [...scopedOrgIds] : [];
   let effectiveAssignedOnly = assignedOnly;
   let membershipFallbackApplied = false;
@@ -15608,7 +15649,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
   const normalizedSessionUserId = sessionUserId ? String(sessionUserId).trim().toLowerCase() : null;
 
   const resolveAssignmentCourseIds = async () => {
-    if (!assignedOnly || !assignmentOrgId) {
+    if (!effectiveAssignedOnly || !assignmentOrgId) {
       return null;
     }
 
@@ -15928,8 +15969,17 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
     context = requireUserContext(req, res);
     if (!context) return;
   }
-  const orgScope = await resolveOrgScopeForRequest(req, context);
-  const { membershipSet, scopedOrgIds } = orgScope;
+  const orgScope = await resolveOrgScopeForRequest(req, context, { requireExplicitSelection: true });
+  const { membershipSet, scopedOrgIds, requiresExplicitSelection } = orgScope;
+  if (requiresExplicitSelection) {
+    res.status(403).json({
+      ok: false,
+      code: 'org_selection_required',
+      message: 'Select an organization before opening this course.',
+      requestId,
+    });
+    return;
+  }
   const allowAllOrgAccess = context.isPlatformAdmin || scopedOrgIds.length === 0;
   const isOrgAllowed = (orgId) => {
     if (allowAllOrgAccess) return true;
@@ -18274,7 +18324,7 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/client/progress/lesson', async (req, res) => {
+app.post('/api/client/progress/lesson', authenticate, async (req, res) => {
   if (isDemoOrTestMode) {
     const { user_id, lesson_id, percent, status, time_spent_s, resume_at_s } = req.body || {};
     const clientEventId = req.body?.client_event_id ?? null;
@@ -18475,7 +18525,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Batch Progress Endpoint (demo/E2E + Supabase placeholder)
 // ---------------------------------------------------------------------------
-app.post('/api/client/progress/batch', async (req, res) => {
+app.post('/api/client/progress/batch', authenticate, async (req, res) => {
   const payload = req.body || {};
   const events = Array.isArray(payload.events) ? payload.events : [];
   if (events.length === 0) {
@@ -20904,7 +20954,7 @@ app.patch('/api/admin/onboarding/:orgId/steps/:stepId', authenticate, requireOrg
   }
 });
 
-app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
+app.post('/api/orgs/:orgId/memberships/accept', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const context = requireUserContext(req, res);
@@ -20912,9 +20962,18 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
 
   try {
     const now = new Date().toISOString();
+
+    const { error: deactivateOthersError } = await supabase
+      .from('organization_memberships')
+      .update({ status: 'inactive', is_active: false, last_seen_at: now })
+      .eq('user_id', context.userId)
+      .neq('organization_id', orgId)
+      .eq('is_active', true);
+    if (deactivateOthersError) throw deactivateOthersError;
+
     const { data, error } = await supabase
       .from('organization_memberships')
-      .update({ status: 'active', accepted_at: now, last_seen_at: now })
+      .update({ status: 'active', is_active: true, accepted_at: now, last_seen_at: now })
       .eq('organization_id', orgId)
       .eq('user_id', context.userId)
       .select(buildMembershipSelect('id', 'organization_id', 'user_id', 'role', 'status', 'accepted_at', 'last_seen_at'))
@@ -20961,7 +21020,7 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
   }
 });
 
-app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
+app.post('/api/orgs/:orgId/memberships/leave', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const context = requireUserContext(req, res);
@@ -20999,7 +21058,7 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
     const now = new Date().toISOString();
     const { error: updateError } = await supabase
       .from('organization_memberships')
-      .update({ status: 'revoked', last_seen_at: now })
+      .update({ status: 'revoked', is_active: false, last_seen_at: now })
       .eq('organization_id', orgId)
       .eq('user_id', context.userId);
 

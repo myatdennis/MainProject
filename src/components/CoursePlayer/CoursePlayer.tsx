@@ -57,6 +57,7 @@ import { batchService } from '../../dal/batchService';
 import { progressService } from '../../dal/progress';
 
 const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
+const AUTOPLAY_NEXT_PREF_KEY = 'courseplayer:autoplay-next-enabled';
 const PROGRESS_SYNC_DEBOUNCE_MS = 4000;
 
 type CaptionCue = {
@@ -133,6 +134,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
   const [currentCaption, setCurrentCaption] = useState('');
   const [hasCaptionTracks, setHasCaptionTracks] = useState(false);
+  const [autoplayNextLesson, setAutoplayNextLesson] = useState(false);
+  const [isLessonTransitioning, setIsLessonTransitioning] = useState(false);
+  const [completionFeedback, setCompletionFeedback] = useState<{ lessonTitle: string; timestamp: number } | null>(null);
   const captionsRef = useRef<CaptionCue[]>([]);
   const progressSnapshotTimerRef = useRef<number | null>(null);
   const lastSnapshotSignatureRef = useRef<string>('');
@@ -169,6 +173,25 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       setCaptionsEnabled(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(AUTOPLAY_NEXT_PREF_KEY);
+      setAutoplayNextLesson(stored === 'true');
+    } catch {
+      setAutoplayNextLesson(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(AUTOPLAY_NEXT_PREF_KEY, autoplayNextLesson ? 'true' : 'false');
+    } catch {
+      // no-op
+    }
+  }, [autoplayNextLesson]);
 
   // Note-taking state
   const [noteText, setNoteText] = useState('');
@@ -220,6 +243,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   });
   const canGoPrevious = currentLessonIndex > 0;
   const canGoNext = currentLessonIndex !== -1 && currentLessonIndex < courseLessons.length - 1;
+  const nextLesson = canGoNext ? courseLessons[currentLessonIndex + 1] : null;
 
   const calculateOverallPercent = useCallback(
     (progressMap: Record<string, number>, completedSet: Set<string>) => {
@@ -479,6 +503,23 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     setVideoError(null);
     setVideoSessionKey((prev) => prev + 1);
   }, [currentLesson?.id, currentLesson?.type]);
+
+  useEffect(() => {
+    if (!completionFeedback) return;
+    const timer = window.setTimeout(() => {
+      setCompletionFeedback(null);
+    }, 2800);
+    return () => window.clearTimeout(timer);
+  }, [completionFeedback]);
+
+  useEffect(() => {
+    if (!currentLesson?.id) return;
+    setIsLessonTransitioning(true);
+    const timer = window.setTimeout(() => {
+      setIsLessonTransitioning(false);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [currentLesson?.id]);
 
   useEffect(() => {
     if (!currentLesson) {
@@ -793,6 +834,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
       if (!silent) {
         showToast(`Marked "${lesson.title}" complete`, 'success');
+        setCompletionFeedback({ lessonTitle: lesson.title, timestamp: Date.now() });
       }
 
       if (course?.id) {
@@ -1295,6 +1337,14 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
           </span>
         </div>
 
+        <div className="sticky top-0 z-30 mt-5 rounded-xl border border-mist/70 bg-white/90 px-4 py-3 shadow-card-sm backdrop-blur">
+          <div className="flex items-center justify-between text-xs font-medium text-slate/70">
+            <span>Course progress</span>
+            <span>{courseProgressPercent}% complete</span>
+          </div>
+          <ProgressBar value={courseProgressPercent} className="mt-2" />
+        </div>
+
         <div className="mt-8 grid gap-6 lg:grid-cols-[320px,1fr]">
           <Card tone="muted" className="h-full">
             <div className="flex flex-col gap-6">
@@ -1319,7 +1369,13 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
             </div>
           </Card>
 
-          <Card padding="none" className="overflow-hidden">
+          <Card
+            padding="none"
+            className={cn(
+              'overflow-hidden transition-all duration-200',
+              isLessonTransitioning ? 'opacity-90' : 'opacity-100',
+            )}
+          >
             {currentLesson.type === 'video' && (() => {
               const playback = currentLessonPlayback;
               const videoUrl = playback.mode === 'embed' ? playback.src : securedVideoUrl || playback.src;
@@ -1346,7 +1402,11 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                 if (securingVideo && !videoUrl) {
                   return (
                     <Card tone="muted" className="h-full w-full rounded-none border-none">
-                      <p className="text-sm text-slate/80">Securing video stream…</p>
+                      <div className="space-y-3 p-6" aria-label="Loading lesson video">
+                        <div className="h-5 w-40 animate-pulse rounded bg-cloud" />
+                        <div className="h-3 w-56 animate-pulse rounded bg-cloud" />
+                        <div className="h-52 w-full animate-pulse rounded-2xl bg-cloud" />
+                      </div>
                     </Card>
                   );
                 }
@@ -1354,9 +1414,27 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                 if (!videoUrl) {
                   return (
                     <Card tone="muted" className="h-full w-full rounded-none border-none">
-                      <p className="text-sm text-slate/80">
-                        {secureVideoError || 'Video source unavailable. Please contact your facilitator.'}
-                      </p>
+                      <div className="space-y-3">
+                        <p className="text-sm text-slate/80">
+                          {secureVideoError || 'We had trouble loading this video. Your progress is safe — try again below.'}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              handleRetryVideoPlayback();
+                              if (hasSecuredVideoAsset) {
+                                void refreshVideoSource(true);
+                              }
+                            }}
+                          >
+                            Retry video
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={handleRetry}>
+                            Reload lesson
+                          </Button>
+                        </div>
+                      </div>
                     </Card>
                   );
                 }
@@ -1405,9 +1483,14 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                     onEnded={() => {
                       setIsPlaying(false);
                       scheduleProgressSnapshot({ immediate: true });
+                      if (autoplayNextLesson && canGoNext) {
+                        window.setTimeout(() => {
+                          navigateLesson('next');
+                        }, 900);
+                      }
                     }}
                     onError={() => {
-                      const message = 'We are having trouble loading this lesson video. Please try again.';
+                      const message = 'We had trouble loading this video. Please try again.';
                       setVideoStatus('error');
                       setVideoError(message);
                       if (hasSecuredVideoAsset) {
@@ -1438,12 +1521,20 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                   )}
 
                   {isNativeVideo && !isPlaying && videoStatus === 'ready' && canResumePlayback && resumeLabel && (
-                    <button
-                      onClick={handleResumePlayback}
-                      className="absolute bottom-4 left-4 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-charcoal shadow-lg transition hover:bg-white"
-                    >
-                      {resumeLabel}
-                    </button>
+                    <div className="absolute bottom-4 left-4 flex flex-wrap gap-2">
+                      <button
+                        onClick={handleResumePlayback}
+                        className="rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-charcoal shadow-lg transition hover:bg-white"
+                      >
+                        {resumeLabel}
+                      </button>
+                      <button
+                        onClick={() => skipTime(15)}
+                        className="rounded-full bg-black/55 px-4 py-2 text-sm font-medium text-white transition hover:bg-black/70"
+                      >
+                        Skip intro 15s
+                      </button>
+                    </div>
                   )}
 
                   {isNativeVideo && videoStatus === 'loading' && (
@@ -1457,12 +1548,15 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 text-center text-white">
                       <AlertTriangle className="h-12 w-12 text-sunrise" />
                       <div>
-                        <p className="text-base font-semibold">We paused playback</p>
-                        <p className="mt-1 text-sm text-white/80">{videoError ?? 'Check your connection and retry the video.'}</p>
+                        <p className="text-base font-semibold">We had trouble loading this video</p>
+                        <p className="mt-1 text-sm text-white/80">{videoError ?? 'Please check your connection and retry when you’re ready.'}</p>
                       </div>
                       <div className="flex flex-wrap justify-center gap-3">
                         <Button size="sm" onClick={handleRetryVideoPlayback}>
                           Try again
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={handleRetry}>
+                          Reload lesson
                         </Button>
                         {currentLesson.content?.transcript && (
                           <Button
@@ -1533,6 +1627,19 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
               </div>
 
               <div className="space-y-6">
+                {nextLesson && (
+                  <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
+                    <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Next step</p>
+                    <p className="mt-2 text-sm font-semibold text-charcoal">Up next: {nextLesson.title}</p>
+                    <p className="mt-1 text-xs text-slate/70">
+                      {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next lesson” anytime to keep momentum.'}
+                    </p>
+                    <Button size="sm" className="mt-3" onClick={() => navigateLesson('next')}>
+                      Start next lesson
+                    </Button>
+                  </Card>
+                )}
+
                 {showNotes && (
                   <NotesPanel
                     notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
@@ -1549,6 +1656,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                   canGoPrevious={canGoPrevious}
                   canGoNext={canGoNext}
                   onMarkComplete={markLessonComplete}
+                  autoplayNextLesson={autoplayNextLesson}
+                  onAutoplayNextLessonChange={setAutoplayNextLesson}
                 />
               </div>
             </div>
@@ -1601,6 +1710,15 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
             setQuizScore(null);
           }}
         />
+      )}
+
+      {completionFeedback && (
+        <div className="pointer-events-none fixed bottom-6 right-6 z-50 animate-pulse rounded-xl border border-emerald-200 bg-white/95 px-4 py-3 shadow-card">
+          <div className="flex items-center gap-2 text-sm text-emerald-800">
+            <CheckCircle className="h-4 w-4" />
+            <span className="font-medium">Nice work — “{completionFeedback.lessonTitle}” completed.</span>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2403,10 +2521,29 @@ const NavigationPanel: React.FC<{
   canGoPrevious: boolean;
   canGoNext: boolean;
   onMarkComplete: () => void;
-}> = ({ onPrevious, onNext, canGoPrevious, canGoNext, onMarkComplete }) => (
+  autoplayNextLesson: boolean;
+  onAutoplayNextLessonChange: (next: boolean) => void;
+}> = ({
+  onPrevious,
+  onNext,
+  canGoPrevious,
+  canGoNext,
+  onMarkComplete,
+  autoplayNextLesson,
+  onAutoplayNextLessonChange,
+}) => (
   <div className="rounded-2xl border border-mist bg-white p-4 shadow-card-sm">
     <h3 className="font-heading text-sm font-semibold text-charcoal">Lesson actions</h3>
     <p className="mt-1 text-xs text-slate/70">Navigate through the module or mark this lesson complete.</p>
+    <label className="mt-4 flex cursor-pointer items-center justify-between rounded-xl border border-mist px-3 py-2 text-xs text-slate/80">
+      <span>Autoplay next lesson</span>
+      <input
+        type="checkbox"
+        className="h-4 w-4 rounded border-mist text-skyblue focus:ring-skyblue"
+        checked={autoplayNextLesson}
+        onChange={(event) => onAutoplayNextLessonChange(event.target.checked)}
+      />
+    </label>
     <div className="mt-4 flex flex-col gap-3">
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={onPrevious} disabled={!canGoPrevious} leadingIcon={<ArrowLeft className="h-4 w-4" />} className="flex-1">

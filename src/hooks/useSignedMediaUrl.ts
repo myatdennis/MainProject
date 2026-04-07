@@ -3,6 +3,8 @@ import type { LessonVideoAsset } from '../types/courseTypes';
 import { shouldBypassMediaSigning, signMediaAsset, shouldRefreshSignedUrl } from '../dal/media';
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
+const DEFAULT_SIGN_RETRY_COUNT = 2;
+const DEFAULT_SIGN_RETRY_BASE_DELAY_MS = 350;
 
 type UseSignedMediaUrlOptions = {
   asset?: LessonVideoAsset | null;
@@ -24,6 +26,20 @@ const createUnavailableState = (fallbackUrl?: string | null): SignedMediaState =
   isLoading: false,
   error: fallbackUrl ? null : 'Media source unavailable.',
 });
+
+const isTransientSigningError = (error: unknown) => {
+  const message = String(error instanceof Error ? error.message : error || '').toLowerCase();
+  return (
+    message.includes('network') ||
+    message.includes('fetch') ||
+    message.includes('timeout') ||
+    message.includes('temporarily') ||
+    message.includes('rate limit') ||
+    message.includes('429') ||
+    message.includes('5xx') ||
+    message.includes('service unavailable')
+  );
+};
 
 export const useSignedMediaUrl = ({
   asset,
@@ -139,7 +155,27 @@ export const useSignedMediaUrl = ({
       setSafeState((prev) => ({ ...prev, isLoading: true, error: null }));
 
       try {
-        const payload = await signMediaAsset(asset.assetId);
+        let payload: Awaited<ReturnType<typeof signMediaAsset>> | null = null;
+        let lastError: unknown = null;
+
+        for (let attempt = 0; attempt <= DEFAULT_SIGN_RETRY_COUNT; attempt += 1) {
+          try {
+            payload = await signMediaAsset(asset.assetId);
+            break;
+          } catch (attemptError) {
+            lastError = attemptError;
+            if (attempt >= DEFAULT_SIGN_RETRY_COUNT || !isTransientSigningError(attemptError)) {
+              throw attemptError;
+            }
+            const waitMs = DEFAULT_SIGN_RETRY_BASE_DELAY_MS * 2 ** attempt;
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+          }
+        }
+
+        if (!payload) {
+          throw lastError ?? new Error('Unable to refresh signed media URL.');
+        }
+
         if (cacheKey && typeof window !== 'undefined') {
           sessionStorage.setItem(
             cacheKey,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { render, screen, within } from '@testing-library/react';
 import ClientDashboard from '../ClientDashboard';
 
 const mockNavigate = vi.fn();
@@ -95,6 +95,15 @@ vi.mock('../../../state/runtimeStatus', () => ({
 }));
 
 describe('ClientDashboard', () => {
+  const renderDashboard = (initialEntry = '/client/dashboard') =>
+    render(
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/client/dashboard" element={<ClientDashboard />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
   beforeEach(() => {
     mockNavigate.mockReset();
     getAssignmentsForUserMock.mockClear();
@@ -119,15 +128,9 @@ describe('ClientDashboard', () => {
   });
 
   it('renders no assignments state without redirecting', async () => {
-    render(
-      <MemoryRouter initialEntries={['/client/dashboard']}>
-        <ClientDashboard />
-      </MemoryRouter>,
-    );
+    renderDashboard();
 
-    await waitFor(() => {
-      expect(screen.getByText(/No assignments yet/i)).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('heading', { name: /No assignments yet/i })).toBeInTheDocument();
 
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
@@ -160,15 +163,11 @@ describe('ClientDashboard', () => {
 
     buildLearnerProgressSnapshotMock.mockReturnValue({ overallProgress: 1 });
 
-    render(
-      <MemoryRouter initialEntries={['/client/dashboard']}>
-        <ClientDashboard />
-      </MemoryRouter>,
-    );
+    renderDashboard();
 
-    await waitFor(() => {
-      expect(screen.getByText('Course 1')).toBeInTheDocument();
-    });
+    const assignedCoursesRegion = await screen.findByRole('region', { name: 'Assigned courses' });
+    expect(within(assignedCoursesRegion).getByText('Course 1')).toBeInTheDocument();
+    expect(within(assignedCoursesRegion).getByRole('button', { name: 'Continue' })).toBeInTheDocument();
 
     const completedLabel = screen.getByText(/^Completed$/);
     const completedCard = completedLabel.closest('.text-center');
