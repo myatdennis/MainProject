@@ -7,10 +7,12 @@ import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { LoadingSpinner } from '../../components/LoadingComponents';
 import { fetchLearnerSurveyResults } from '../../dal/surveys';
+import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 
 const ClientSurveyProgress = () => {
   const { surveyId } = useParams<{ surveyId: string }>();
   const location = useLocation();
+  const portalPath = getLearnerPortalBasePath(location.pathname);
   const assignmentId = useMemo(() => new URLSearchParams(location.search).get('assignmentId') ?? undefined, [location.search]);
 
   const [loading, setLoading] = useState(true);
@@ -62,8 +64,8 @@ const ClientSurveyProgress = () => {
       <SEO title="HDI Progress" description="Track your HDI pre/post progress and growth recommendations." />
       <Breadcrumbs
         items={[
-          { label: 'Dashboard', to: '/client/dashboard' },
-          { label: 'Surveys', to: '/client/surveys' },
+          { label: 'Dashboard', to: `${portalPath}/dashboard` },
+          { label: 'Surveys', to: `${portalPath}/surveys` },
           { label: 'Progress' },
         ]}
       />
@@ -75,12 +77,12 @@ const ClientSurveyProgress = () => {
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" asChild>
-            <Link to={`/client/surveys/${surveyId}/results${assignmentId ? `?assignmentId=${assignmentId}` : ''}`}>
+            <Link to={`${portalPath}/surveys/${surveyId}/results${assignmentId ? `?assignmentId=${assignmentId}` : ''}`}>
               View report
             </Link>
           </Button>
           <Button variant="ghost" asChild>
-            <Link to="/client/surveys">
+            <Link to={`${portalPath}/surveys`}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Back
             </Link>
           </Button>

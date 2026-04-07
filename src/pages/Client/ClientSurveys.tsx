@@ -13,6 +13,7 @@ import {
 } from '../../dal/surveys';
 import type { CourseAssignmentStatus } from '../../types/assignment';
 import { subscribeSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
+import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 
 const deriveStatusTone = (status: CourseAssignmentStatus, overdue: boolean) => {
   const statusValue = String(status);
@@ -65,6 +66,7 @@ const ClientSurveys = () => {
   const [error, setError] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const portalPath = getLearnerPortalBasePath(location.pathname);
   const highlightAssignmentId = useMemo(() => new URLSearchParams(location.search).get('assignment'), [location.search]);
 
   const refresh = useCallback(async () => {
@@ -143,7 +145,7 @@ const ClientSurveys = () => {
     if (entry.survey?.id) {
       params.set('focus', entry.survey.id);
     }
-    navigate(`/client/surveys?${params.toString()}`);
+    navigate(`${portalPath}/surveys?${params.toString()}`);
   };
 
   const renderSurveyCard = (entry: LearnerSurveyAssignment) => {
@@ -192,12 +194,12 @@ const ClientSurveys = () => {
           {assignment.status === 'completed' && survey?.id && (
             <>
               <Button size="sm" variant="ghost" asChild>
-                <Link to={`/client/surveys/${survey.id}/results?assignmentId=${assignment.id}`}>
+                <Link to={`${portalPath}/surveys/${survey.id}/results?assignmentId=${assignment.id}`}>
                   View report
                 </Link>
               </Button>
               <Button size="sm" variant="ghost" asChild>
-                <Link to={`/client/surveys/${survey.id}/progress?assignmentId=${assignment.id}`}>
+                <Link to={`${portalPath}/surveys/${survey.id}/progress?assignmentId=${assignment.id}`}>
                   View progress
                 </Link>
               </Button>
@@ -220,8 +222,8 @@ const ClientSurveys = () => {
       <SEO title="My Surveys" description="View and complete assigned surveys." />
       <Breadcrumbs
         items={[
-          { label: 'Dashboard', to: '/client/dashboard' },
-          { label: 'Surveys', to: '/client/surveys' },
+          { label: 'Dashboard', to: `${portalPath}/dashboard` },
+          { label: 'Surveys', to: `${portalPath}/surveys` },
         ]}
       />
       <Card tone="muted" className="flex flex-wrap items-center justify-between gap-4" padding="lg">
@@ -264,7 +266,7 @@ const ClientSurveys = () => {
           <h2 className="font-heading text-lg font-semibold text-charcoal">No surveys assigned</h2>
           <p className="text-sm text-slate/70">You don’t have any surveys yet. Check back later.</p>
           <Button variant="ghost" asChild>
-            <Link to="/client/dashboard">← Back to dashboard</Link>
+            <Link to={`${portalPath}/dashboard`}>← Back to dashboard</Link>
           </Button>
         </Card>
       ) : (

@@ -1278,11 +1278,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           reason: meta.reason ?? null,
         });
       };
-      if (!hasStoredToken) {
-        logAuthDebug('[auth] session_fetch_skipped_no_backend_token', { surface });
-        finalizeMeta({ statusCode: 401, reason: 'no_backend_token' });
-        await forceLogout(surface ? `${surface}_session_no_backend_token` : 'session_no_backend_token');
-        return false;
+      if (!hasStoredToken && import.meta.env.DEV) {
+        logAuthDebug('[auth] session_fetch_without_cached_tokens', { surface });
       }
       if (import.meta.env.DEV) {
         logAuthDebug('[auth] session_fetch_request', {
@@ -1858,9 +1855,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
       const hasStoredToken = Boolean(storedAccessToken);
-      if (!hasStoredToken) {
-        await forceLogout('bootstrap_no_backend_token');
-        return;
+      if (!hasStoredToken && import.meta.env.DEV) {
+        logAuthDebug('[auth] bootstrap_without_cached_tokens', {
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        });
       }
       try {
         const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {

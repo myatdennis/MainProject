@@ -8,6 +8,7 @@ import Badge from '../../components/ui/Badge';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { LoadingSpinner } from '../../components/LoadingComponents';
 import { fetchLearnerSurveyResults } from '../../dal/surveys';
+import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 
 const HDI_STAGE_ORDER = [
   { key: 'avoidance', label: 'Avoidance', color: '#D72638' },
@@ -26,6 +27,7 @@ const round = (value: unknown) => {
 const ClientSurveyResults = () => {
   const { surveyId } = useParams<{ surveyId: string }>();
   const location = useLocation();
+  const portalPath = getLearnerPortalBasePath(location.pathname);
   const assignmentId = useMemo(() => new URLSearchParams(location.search).get('assignmentId') ?? undefined, [location.search]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,8 +76,8 @@ const ClientSurveyResults = () => {
         <SEO title="Survey Results" description="View your latest survey insights." />
         <Breadcrumbs
           items={[
-            { label: 'Dashboard', to: '/client/dashboard' },
-            { label: 'Surveys', to: '/client/surveys' },
+            { label: 'Dashboard', to: `${portalPath}/dashboard` },
+            { label: 'Surveys', to: `${portalPath}/surveys` },
             { label: 'Results' },
           ]}
         />
@@ -83,7 +85,7 @@ const ClientSurveyResults = () => {
           <p className="text-sm text-slate/70">{error ?? 'No scored results are available yet for this survey.'}</p>
           <div className="flex justify-center">
             <Button variant="ghost" asChild>
-              <Link to="/client/surveys">Back to surveys</Link>
+              <Link to={`${portalPath}/surveys`}>Back to surveys</Link>
             </Button>
           </div>
         </Card>
@@ -121,8 +123,8 @@ const ClientSurveyResults = () => {
   <SEO title="HDI Results" description="Review your personalized HDI assessment report and developmental orientation." />
       <Breadcrumbs
         items={[
-          { label: 'Dashboard', to: '/client/dashboard' },
-          { label: 'Surveys', to: '/client/surveys' },
+          { label: 'Dashboard', to: `${portalPath}/dashboard` },
+          { label: 'Surveys', to: `${portalPath}/surveys` },
           { label: 'Results' },
         ]}
       />
@@ -136,12 +138,12 @@ const ClientSurveyResults = () => {
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" asChild>
-            <Link to="/client/surveys">
+            <Link to={`${portalPath}/surveys`}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Back to surveys
             </Link>
           </Button>
           <Button asChild>
-            <Link to={`/client/surveys/${surveyId}/progress?assignmentId=${assignmentId ?? ''}`}>
+            <Link to={`${portalPath}/surveys/${surveyId}/progress?assignmentId=${assignmentId ?? ''}`}>
               View progress <ArrowRight className="h-4 w-4 ml-1" />
             </Link>
           </Button>

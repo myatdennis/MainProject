@@ -460,6 +460,9 @@ function AppContent() {
             <Route path="courses/:courseId" element={<LMSModule />} />
             <Route path="course/:courseId" element={<LMSModule />} />
             <Route path="module/:moduleId" element={<LMSModule />} />
+            <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="surveys/:surveyId/results" element={<ClientSurveyResults />} />
+            <Route path="surveys/:surveyId/progress" element={<ClientSurveyProgress />} />
             {/* Canonical lesson URL — always use the plural "courses" form */}
             <Route path="courses/:courseId/lesson/:lessonId" element={<LMSLessonView />} />
             {/*

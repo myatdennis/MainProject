@@ -10,16 +10,20 @@ type WSMessage = {
   timestamp?: number;
 };
 
-const parseFlag = (value?: string, defaultValue = false) => {
-  if (value === undefined || value === null || value === '') return defaultValue;
-  const normalized = String(value).trim().toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
-  return defaultValue;
-};
-
 const isBrowser = typeof window !== 'undefined';
 const devMode = Boolean((import.meta as any)?.env?.DEV);
+
+type FlagMode = 'on' | 'off' | 'auto';
+
+const parseWsFlagMode = (value?: string): FlagMode => {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return 'auto';
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return 'on';
+  if (['false', '0', 'no', 'off'].includes(normalized)) return 'off';
+  return 'auto';
+};
 // Lightweight browser-friendly event emitter (avoid Node 'events' polyfills)
 class SimpleEmitter {
   private listeners: Map<string, Set<(...args: unknown[]) => void>> = new Map();
@@ -66,7 +70,7 @@ class WSClient extends SimpleEmitter {
   private failureCount = 0;
   private readonly isDev = devMode;
   private readonly maxFailuresBeforeDisable = devMode ? 1 : 5;
-  private featureFlagEnabled: boolean;
+  private readonly wsFlagMode: FlagMode;
   private runtimeWsEnabled: boolean;
   private unsubscribeRuntimeStatus?: () => void;
   private connectionAttempted = false;
@@ -77,7 +81,7 @@ class WSClient extends SimpleEmitter {
     super();
     const computedUrl = url || resolveWsUrl('/ws');
     this.url = computedUrl || undefined;
-    this.featureFlagEnabled = parseFlag(import.meta.env.VITE_ENABLE_WS as string | undefined, devMode);
+    this.wsFlagMode = parseWsFlagMode(import.meta.env.VITE_ENABLE_WS as string | undefined);
     this.runtimeWsEnabled = this.readRuntimeWsAvailability();
     this.enabled = this.computeEnabled();
     this.shouldReconnect = this.enabled;
@@ -85,10 +89,13 @@ class WSClient extends SimpleEmitter {
   }
 
   private computeEnabled() {
-    if (this.isDev) {
-      return this.featureFlagEnabled;
+    if (this.wsFlagMode === 'off') {
+      return false;
     }
-    return this.featureFlagEnabled || this.runtimeWsEnabled;
+    if (this.wsFlagMode === 'on') {
+      return true;
+    }
+    return this.runtimeWsEnabled || this.hasValidUrl();
   }
 
   private readRuntimeWsAvailability() {

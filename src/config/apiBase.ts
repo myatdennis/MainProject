@@ -383,10 +383,6 @@ export function resolveWsUrl(path = DEFAULT_WS_PATH): string {
     return rawWsUrl;
   }
 
-  if (!devMode) {
-    return '';
-  }
-
   if (!isBrowser) {
     const nodeWs = readNodeEnv('WS_URL');
     if (nodeWs) {

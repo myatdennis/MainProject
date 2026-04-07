@@ -810,6 +810,9 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       // Bootstrap still running — render nothing and wait for the real state.
       return null;
     }
+    if (sessionStatus === 'loading') {
+      return null;
+    }
     // Bootstrap is complete.  If auth is not definitively unauthenticated,
     // something is still resolving (e.g. authStatus='error') — don't redirect.
     if (authStatus !== 'unauthenticated') {
@@ -891,6 +894,9 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         // auth is still initializing.  isAuthenticated.lms is false transiently
         // during bootstrap before the session payload is applied.
         if (bootstrapInProgress) {
+          return null;
+        }
+        if (sessionStatus === 'loading') {
           return null;
         }
         // Only redirect once auth is definitively settled as unauthenticated.

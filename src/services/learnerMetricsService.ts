@@ -1,6 +1,25 @@
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 const isSupabaseReady = hasSupabaseConfig();
+const unavailableTables = new Set<string>();
+
+const isMissingTableError = (error: unknown) => {
+  const code = String((error as any)?.code ?? '').toUpperCase();
+  const status = Number((error as any)?.status ?? (error as any)?.statusCode ?? 0);
+  const message = String((error as any)?.message ?? '').toLowerCase();
+  return (
+    code === '42P01' ||
+    message.includes('relation') && message.includes('does not exist') ||
+    message.includes('could not find') && message.includes('table') ||
+    status === 404
+  );
+};
+
+const markUnavailableIfMissing = (tableName: string, error: unknown) => {
+  if (!isMissingTableError(error)) return;
+  unavailableTables.add(tableName);
+  console.warn(`[learnerMetricsService] ${tableName} is unavailable in this environment; disabling this metric source.`);
+};
 
 export interface PersistedGoal {
   id: string;
@@ -48,7 +67,7 @@ export const learnerMetricsService = {
   },
 
   async fetchGoals(userId: string): Promise<PersistedGoal[]> {
-    if (!isSupabaseReady || !userId) return [];
+    if (!isSupabaseReady || !userId || unavailableTables.has('user_learning_goals')) return [];
     try {
       const supabase = await getSupabase();
       if (!supabase) return [];
@@ -61,13 +80,14 @@ export const learnerMetricsService = {
       if (error) throw error;
       return (data ?? []).map(mapGoal);
     } catch (error) {
+      markUnavailableIfMissing('user_learning_goals', error);
       console.error('Failed to fetch learning goals:', error);
       return [];
     }
   },
 
   async upsertGoals(userId: string, goals: PersistedGoal[]): Promise<void> {
-    if (!isSupabaseReady || !userId || goals.length === 0) return;
+    if (!isSupabaseReady || !userId || goals.length === 0 || unavailableTables.has('user_learning_goals')) return;
     const payload = goals.map((goal) => ({
       id: goal.id,
       user_id: userId,
@@ -85,12 +105,13 @@ export const learnerMetricsService = {
       const { error } = await supabase.from('user_learning_goals').upsert(payload);
       if (error) throw error;
     } catch (error) {
+      markUnavailableIfMissing('user_learning_goals', error);
       console.error('Failed to upsert learning goals:', error);
     }
   },
 
   async fetchAchievements(userId: string): Promise<PersistedAchievement[]> {
-    if (!isSupabaseReady || !userId) return [];
+    if (!isSupabaseReady || !userId || unavailableTables.has('user_achievements')) return [];
     try {
       const supabase = await getSupabase();
       if (!supabase) return [];
@@ -103,13 +124,14 @@ export const learnerMetricsService = {
       if (error) throw error;
       return (data ?? []).map(mapAchievement);
     } catch (error) {
+      markUnavailableIfMissing('user_achievements', error);
       console.error('Failed to fetch achievements:', error);
       return [];
     }
   },
 
   async upsertAchievements(userId: string, achievements: PersistedAchievement[]): Promise<void> {
-    if (!isSupabaseReady || !userId || achievements.length === 0) return;
+    if (!isSupabaseReady || !userId || achievements.length === 0 || unavailableTables.has('user_achievements')) return;
     const payload = achievements.map((item) => ({
       id: item.id,
       user_id: userId,
@@ -127,6 +149,7 @@ export const learnerMetricsService = {
       const { error } = await supabase.from('user_achievements').upsert(payload);
       if (error) throw error;
     } catch (error) {
+      markUnavailableIfMissing('user_achievements', error);
       console.error('Failed to upsert achievements:', error);
     }
   },

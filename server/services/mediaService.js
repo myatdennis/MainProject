@@ -256,6 +256,20 @@ export const createMediaService = ({
         });
       } catch (signErr) {
         logOnce('[mediaService] signAssetById: sign error', signErr);
+        const cachedSignedUrl = typeof asset?.signed_url === 'string' ? asset.signed_url.trim() : '';
+        const cachedExpiresAt = asset?.signed_url_expires_at || asset?.signedUrlExpiresAt || null;
+        const cachedExpiryMs = cachedExpiresAt ? Date.parse(String(cachedExpiresAt)) : NaN;
+        const hasFreshCachedUrl =
+          Boolean(cachedSignedUrl) &&
+          (Number.isNaN(cachedExpiryMs) || cachedExpiryMs > Date.now() + 30_000);
+        if (hasFreshCachedUrl) {
+          return {
+            asset,
+            signedUrl: cachedSignedUrl,
+            expiresAt: cachedExpiresAt,
+            fallback: false,
+          };
+        }
         // fallback: no signed url
         return {
           asset,

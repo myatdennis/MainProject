@@ -13,7 +13,9 @@ vi.mock('../../utils/apiClient', () => ({
 }));
 import {
   listNotifications,
+  listLearnerNotifications,
   addNotification,
+  markLearnerNotificationRead,
   markNotificationRead,
   clearNotifications
 } from '../notificationService';
@@ -69,6 +71,34 @@ describe('notificationService', () => {
       body: { read: true }
     });
     expect(updated).toMatchObject({ id: 'note-3', read: true });
+  });
+
+  it('returns empty learner notifications when notifications are disabled', async () => {
+    vi.mocked(apiRequest).mockResolvedValue({
+      ok: true,
+      notificationsDisabled: true,
+      data: null,
+    });
+
+    const notifications = await listLearnerNotifications();
+
+    expect(apiRequest).toHaveBeenCalledWith('/api/learner/notifications', {});
+    expect(notifications).toEqual([]);
+  });
+
+  it('returns a safe read fallback when learner mark-read is disabled', async () => {
+    vi.mocked(apiRequest).mockResolvedValue({
+      ok: true,
+      notificationsDisabled: true,
+      data: null,
+    });
+
+    const updated = await markLearnerNotificationRead('note-disabled');
+
+    expect(apiRequest).toHaveBeenCalledWith('/api/learner/notifications/note-disabled/read', {
+      method: 'POST',
+    });
+    expect(updated).toMatchObject({ id: 'note-disabled', read: true });
   });
 
   it('clears notifications by deleting each record', async () => {

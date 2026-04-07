@@ -78,6 +78,9 @@ type AdminNotificationResponse = {
   notificationsDisabled?: boolean;
 };
 
+const isNotificationsDisabled = (payload: unknown): boolean =>
+  Boolean((payload as { notificationsDisabled?: boolean } | null | undefined)?.notificationsDisabled);
+
 export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: string; userId?: string }) => {
   const params = new URLSearchParams();
   if (opts?.organizationId) params.set('org_id', opts.organizationId);
@@ -137,10 +140,19 @@ export const addNotification = async (notification: Omit<Notification, 'id' | 'c
 };
 
 export const markNotificationRead = async (id: string, read = true) => {
-  const json = await apiFetch<{ data: any }>('admin.markRead', `/api/admin/notifications/${id}/read`, {
+  const json = await apiFetch<{ data: any; notificationsDisabled?: boolean }>('admin.markRead', `/api/admin/notifications/${id}/read`, {
     method: 'POST',
     body: { read }
   });
+
+  if (isNotificationsDisabled(json) || !json?.data) {
+    return mapNotification({
+      id,
+      title: 'Notification',
+      created_at: new Date().toISOString(),
+      read,
+    });
+  }
 
   return mapNotification(json.data);
 };
@@ -174,6 +186,9 @@ export const listLearnerNotifications = async (opts?: { limit?: number; unreadOn
   const path = buildLearnerNotificationsPath(opts);
   try {
     const json = await apiFetch<{ data: any[] }>('learner.list', path);
+    if (isNotificationsDisabled(json)) {
+      return [] as Notification[];
+    }
     return (json.data ?? []).map(mapNotification);
   } catch (error) {
     return handleSchemaMissing(error, 'learner.list', [] as Notification[]);
@@ -182,13 +197,21 @@ export const listLearnerNotifications = async (opts?: { limit?: number; unreadOn
 
 export const markLearnerNotificationRead = async (id: string) => {
   try {
-    const json = await apiFetch<{ data: any }>(
+    const json = await apiFetch<{ data: any; notificationsDisabled?: boolean }>(
       'learner.markRead',
       `/api/learner/notifications/${id}/read`,
       {
         method: 'POST',
       },
     );
+    if (isNotificationsDisabled(json) || !json?.data) {
+      return mapNotification({
+        id,
+        title: 'Notification',
+        created_at: new Date().toISOString(),
+        read: true,
+      });
+    }
     return mapNotification(json.data);
   } catch (error) {
     return handleSchemaMissing(
