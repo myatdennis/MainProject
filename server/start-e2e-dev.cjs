@@ -98,4 +98,20 @@ async function ensureVite() {
 (async () => {
   await ensureApi();
   await ensureVite();
+
+  console.log('[e2e-dev] Startup complete; waiting for Playwright to finish...');
+
+  // Keep this process alive while Playwright is running tests.
+  // Playwright will terminate the webServer process when the run completes.
+  const keepAlive = setInterval(() => {
+    // no-op heartbeat to keep the event loop active
+  }, 60_000);
+
+  await new Promise((resolve) => {
+    process.on('SIGINT', resolve);
+    process.on('SIGTERM', resolve);
+    process.on('exit', resolve);
+  });
+
+  clearInterval(keepAlive);
 })();
