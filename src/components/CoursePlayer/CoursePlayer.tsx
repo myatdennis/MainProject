@@ -57,6 +57,7 @@ import useSignedMediaUrl from '../../hooks/useSignedMediaUrl';
 import { batchService } from '../../dal/batchService';
 import { progressService } from '../../dal/progress';
 import GuidedReflectionFlow from './GuidedReflectionFlow';
+import LearnerSurveyLesson from './LearnerSurveyLesson';
 
 const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
 const AUTOPLAY_NEXT_PREF_KEY = 'courseplayer:autoplay-next-enabled';
@@ -854,7 +855,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   );
 
   const completeLesson = useCallback(
-    (lesson: NormalizedLesson, position?: number, totalDuration?: number, silent = false) => {
+    async (lesson: NormalizedLesson, position?: number, totalDuration?: number, silent = false) => {
       const nextCompleted = new Set(completedLessons);
       nextCompleted.add(lesson.id);
 
@@ -911,7 +912,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
       if (course?.id) {
         const overallPercent = calculateOverallPercent(nextProgressMap, nextCompleted);
-        void updateAssignmentProgress(course.id, learnerId, overallPercent);
+        await updateAssignmentProgress(course.id, learnerId, overallPercent);
       }
 
       scheduleProgressSnapshot();
@@ -1103,7 +1104,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       }));
 
       if (progressPercent >= 90 && !completedLessons.has(currentLesson.id)) {
-  completeLesson(currentLesson, position, effectiveDuration, true);
+  void completeLesson(currentLesson, position, effectiveDuration, true);
       } else if (progressPercent - previousProgress >= 10) {
         logProgress(currentLesson.id, progressPercent, position);
       }
@@ -1198,11 +1199,22 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     [currentLesson, navigate, courseData, courseId, coursePathBase, lessonPathSegment]
   );
 
-  const markLessonComplete = () => {
+  const markLessonComplete = async () => {
     if (!currentLesson) return;
-    completeLesson(currentLesson);
+    await completeLesson(currentLesson);
     navigateLesson('next');
   };
+
+  const completeLessonAndAdvance = useCallback(
+    async (lesson: NormalizedLesson) => {
+      await completeLesson(lesson);
+      if (nextLesson) {
+        await new Promise((resolve) => window.setTimeout(resolve, 650));
+        navigateLesson('next');
+      }
+    },
+    [completeLesson, navigateLesson, nextLesson],
+  );
 
   const addBookmark = () => {
     if (!currentLesson) return;
@@ -1690,7 +1702,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                   lesson={currentLesson}
                   courseId={course.id}
                   learnerId={learnerId}
-                  onComplete={markLessonComplete}
+                  onComplete={() => void markLessonComplete()}
+                  onSubmitAndAdvance={
+                    currentLesson ? () => completeLessonAndAdvance(currentLesson) : undefined
+                  }
                   onShowQuizModal={setShowQuizModal}
                 />
 
@@ -1728,7 +1743,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                   onNext={() => navigateLesson('next')}
                   canGoPrevious={canGoPrevious}
                   canGoNext={canGoNext}
-                  onMarkComplete={markLessonComplete}
+                  onMarkComplete={() => void markLessonComplete()}
                   autoplayNextLesson={autoplayNextLesson}
                   onAutoplayNextLessonChange={setAutoplayNextLesson}
                 />
@@ -1768,7 +1783,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
             const passingScore = quizData.passingScore || 70;
             if (scorePercent >= passingScore) {
               // Mark lesson as complete
-              markLessonComplete();
+              void markLessonComplete();
             }
           }}
           onRetry={() => {
@@ -2267,8 +2282,9 @@ const LessonContent: React.FC<{
   courseId: string;
   learnerId: string;
   onComplete: () => void;
+  onSubmitAndAdvance?: () => Promise<void>;
   onShowQuizModal: (show: boolean) => void;
-}> = ({ lesson, courseId, learnerId, onComplete, onShowQuizModal }) => {
+}> = ({ lesson, courseId, learnerId, onComplete, onSubmitAndAdvance, onShowQuizModal }) => {
   const lessonType = (lesson as any).type as string;
   const reflectionPrompt =
     lesson.content?.prompt ||
@@ -2286,6 +2302,12 @@ const LessonContent: React.FC<{
     Boolean(lesson.content?.allowReflection) ||
     Boolean(reflectionPrompt);
   const reflectionRequired = lessonType === 'reflection' || lesson.content?.requireReflection === true;
+  const linkedSurveyId =
+    (lesson.content as any)?.surveyId ||
+    (lesson.content as any)?.survey_id ||
+    (lesson.content as any)?.assignedSurveyId ||
+    (lesson.content as any)?.assigned_survey_id ||
+    '';
 
   const documentUrlCandidates = [
     (lesson.content as any)?.downloadUrl,
@@ -2341,7 +2363,7 @@ const LessonContent: React.FC<{
               lessonTitle={lesson.title}
               lessonContent={lesson.content as Record<string, unknown>}
               required={reflectionRequired}
-              onComplete={onComplete}
+              onComplete={onSubmitAndAdvance ?? onComplete}
             />
           ) : null
         )}
@@ -2353,6 +2375,22 @@ const LessonContent: React.FC<{
           </div>
         )}
       </div>
+    );
+  }
+
+  if (lessonType === 'survey') {
+    if (!linkedSurveyId.trim()) {
+      return renderFallback('This survey lesson is missing its linked survey configuration.');
+    }
+
+    return (
+      <LearnerSurveyLesson
+        lessonId={lesson.id}
+        lessonTitle={lesson.title}
+        lessonDescription={lesson.description || (lesson.content as any)?.surveyDescription}
+        surveyId={linkedSurveyId}
+        onSubmitSuccess={onSubmitAndAdvance ?? (async () => onComplete())}
+      />
     );
   }
 

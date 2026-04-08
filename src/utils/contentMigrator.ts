@@ -74,6 +74,11 @@ export function migrateLessonContent(raw: any): any {
         out.steps = out.steps.map((s: any, idx: number) => ({ id: s.id || `step_${idx}`, title: s.title || s.heading || `Step ${idx + 1}`, body: s.body || s.content || s.text || '' }));
       }
     }
+
+    // 8) survey lesson shape: canonicalize survey identifier
+    if (!out.type && (out.surveyId || out.survey_id)) {
+      out.type = 'survey';
+    }
   }
 
   // Ensure quizzes remain canonical on subsequent runs
@@ -84,6 +89,7 @@ export function migrateLessonContent(raw: any): any {
   // Promote video metadata to canonical object
   maybeDeriveVideo(out);
   normalizeReflectionContent(out);
+  normalizeSurveyContent(out);
 
   // Future migrations can be applied here using switch(out.schema_version) {...}
 
@@ -300,6 +306,31 @@ function normalizeReflectionContent(out: Record<string, any>) {
   if (shouldCollectResponse) {
     out.collectResponse = true;
     out.allowReflection = true;
+  }
+}
+
+function normalizeSurveyContent(out: Record<string, any>) {
+  const surveyId = firstNonEmptyString(
+    out.surveyId,
+    out.survey_id,
+    out.assignedSurveyId,
+    out.assigned_survey_id,
+  );
+
+  if (surveyId) {
+    out.surveyId = surveyId;
+    out.survey_id = surveyId;
+    out.type = out.type || 'survey';
+  }
+
+  const surveyTitle = firstNonEmptyString(out.surveyTitle, out.survey_title, out.title);
+  if (surveyTitle) {
+    out.surveyTitle = surveyTitle;
+  }
+
+  const surveyDescription = firstNonEmptyString(out.surveyDescription, out.survey_description, out.description);
+  if (surveyDescription) {
+    out.surveyDescription = surveyDescription;
   }
 }
 

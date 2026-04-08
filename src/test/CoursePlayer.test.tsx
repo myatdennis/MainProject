@@ -15,12 +15,21 @@ vi.mock('../hooks/useUserProfile', () => ({
 
 const mockFetchLearnerReflection = vi.hoisted(() => vi.fn());
 const mockSaveLearnerReflection = vi.hoisted(() => vi.fn());
+const mockFetchAssignedSurveysForLearner = vi.hoisted(() => vi.fn());
+const mockSaveLearnerSurveyProgress = vi.hoisted(() => vi.fn());
+const mockSubmitLearnerSurveyResponse = vi.hoisted(() => vi.fn());
 
 vi.mock('../dal/reflections', () => ({
   reflectionService: {
     fetchLearnerReflection: (...args: any[]) => mockFetchLearnerReflection(...args),
     saveLearnerReflection: (...args: any[]) => mockSaveLearnerReflection(...args),
   },
+}));
+
+vi.mock('../dal/surveys', () => ({
+  fetchAssignedSurveysForLearner: (...args: any[]) => mockFetchAssignedSurveysForLearner(...args),
+  saveLearnerSurveyProgress: (...args: any[]) => mockSaveLearnerSurveyProgress(...args),
+  submitLearnerSurveyResponse: (...args: any[]) => mockSubmitLearnerSurveyResponse(...args),
 }));
 
 const mockLogEvent = vi.hoisted(() => vi.fn());
@@ -244,17 +253,21 @@ describe('CoursePlayer progress integration', () => {
     mockSyncCourseProgressWithRemote.mockResolvedValue(null);
     mockUpdateAssignmentProgress.mockResolvedValue(undefined);
     mockFetchLearnerReflection.mockResolvedValue(null);
-    mockSaveLearnerReflection.mockImplementation(async ({ responseText }: { responseText: string }) => ({
+    mockSaveLearnerReflection.mockImplementation(async ({ responseText, status, responseData }: { responseText: string; status?: 'draft' | 'submitted'; responseData?: any }) => ({
       id: 'reflection-1',
       organizationId: 'org-1',
       courseId: 'course-1',
       lessonId: 'lesson-reflection',
       userId: 'local-user',
       responseText,
-      status: 'draft',
+      responseData,
+      status: status ?? 'draft',
       createdAt: '2026-04-08T12:00:00.000Z',
       updatedAt: '2026-04-08T12:00:01.000Z',
     }));
+    mockFetchAssignedSurveysForLearner.mockResolvedValue([]);
+    mockSaveLearnerSurveyProgress.mockResolvedValue({});
+    mockSubmitLearnerSurveyResponse.mockResolvedValue({});
     window.localStorage.clear();
   });
 
@@ -752,4 +765,441 @@ describe('CoursePlayer progress integration', () => {
     expect(await screen.findByDisplayValue('Draft that never reached the server')).toBeInTheDocument();
     expect(screen.getByText('Recovered your latest draft from this device.')).toBeInTheDocument();
   }, 10000);
+
+  it('submits reflection responses, marks the lesson complete, and advances to the next lesson', async () => {
+    mockLoadCourse.mockResolvedValue({
+      course: {
+        ...mockCourse,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-reflection',
+                title: 'Reflection Lesson',
+                type: 'reflection',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  prompt: 'What changed for you in this lesson?',
+                  collectResponse: true,
+                },
+              },
+              {
+                id: 'lesson-next',
+                title: 'Next Lesson',
+                type: 'text',
+                order: 2,
+                order_index: 2,
+                duration: '3 min',
+                content: {
+                  textContent: '<p>Next lesson content</p>',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-reflection',
+              title: 'Reflection Lesson',
+              type: 'reflection',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                prompt: 'What changed for you in this lesson?',
+                collectResponse: true,
+              },
+            },
+            {
+              id: 'lesson-next',
+              title: 'Next Lesson',
+              type: 'text',
+              order: 2,
+              order_index: 2,
+              duration: '3 min',
+              content: {
+                textContent: '<p>Next lesson content</p>',
+              },
+            },
+          ],
+        },
+      ],
+      lessons: [
+        {
+          id: 'lesson-reflection',
+          title: 'Reflection Lesson',
+          type: 'reflection',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            prompt: 'What changed for you in this lesson?',
+            collectResponse: true,
+          },
+        },
+        {
+          id: 'lesson-next',
+          title: 'Next Lesson',
+          type: 'text',
+          order: 2,
+          order_index: 2,
+          duration: '3 min',
+          content: {
+            textContent: '<p>Next lesson content</p>',
+          },
+        },
+      ],
+      source: 'supabase' as const,
+    });
+
+    const user = userEvent.setup();
+    renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
+
+    await user.click(await screen.findByRole('button', { name: /begin reflection/i }));
+    await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
+    await user.type(await screen.findByPlaceholderText('Write your initial thoughts here…'), 'I need to slow down.');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /submit reflection/i }));
+
+    await waitFor(() => {
+      expect(mockSaveLearnerReflection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          courseId: 'course-1',
+          lessonId: 'lesson-reflection',
+          status: 'submitted',
+          responseData: expect.objectContaining({
+            promptResponse: 'I need to slow down.',
+          }),
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateAssignmentProgress).toHaveBeenCalledWith('course-1', 'local-user', expect.any(Number));
+      expect(screen.getByText('Next lesson content')).toBeInTheDocument();
+    });
+  }, 12000);
+
+  it('loads a survey lesson, submits successfully, and advances to the next lesson', async () => {
+    mockLoadCourse.mockResolvedValue({
+      course: {
+        ...mockCourse,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-survey',
+                title: 'Survey Lesson',
+                type: 'survey',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  surveyId: 'survey-1',
+                  surveyDescription: 'Tell us how this landed for you.',
+                },
+              },
+              {
+                id: 'lesson-next',
+                title: 'Next Lesson',
+                type: 'text',
+                order: 2,
+                order_index: 2,
+                duration: '3 min',
+                content: {
+                  textContent: '<p>Next lesson content</p>',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-survey',
+              title: 'Survey Lesson',
+              type: 'survey',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                surveyId: 'survey-1',
+                surveyDescription: 'Tell us how this landed for you.',
+              },
+            },
+            {
+              id: 'lesson-next',
+              title: 'Next Lesson',
+              type: 'text',
+              order: 2,
+              order_index: 2,
+              duration: '3 min',
+              content: {
+                textContent: '<p>Next lesson content</p>',
+              },
+            },
+          ],
+        },
+      ],
+      lessons: [
+        {
+          id: 'lesson-survey',
+          title: 'Survey Lesson',
+          type: 'survey',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            surveyId: 'survey-1',
+            surveyDescription: 'Tell us how this landed for you.',
+          },
+        },
+        {
+          id: 'lesson-next',
+          title: 'Next Lesson',
+          type: 'text',
+          order: 2,
+          order_index: 2,
+          duration: '3 min',
+          content: {
+            textContent: '<p>Next lesson content</p>',
+          },
+        },
+      ],
+      source: 'supabase' as const,
+    });
+
+    mockFetchAssignedSurveysForLearner.mockResolvedValue([
+      {
+        assignment: {
+          id: 'assignment-1',
+          surveyId: 'survey-1',
+          survey_id: 'survey-1',
+          status: 'assigned',
+          metadata: {},
+        },
+        survey: {
+          id: 'survey-1',
+          title: 'Learner Survey',
+          description: 'Tell us how this landed for you.',
+          sections: [
+            {
+              id: 'section-1',
+              title: 'Section 1',
+              order: 1,
+              questions: [
+                {
+                  id: 'question-1',
+                  type: 'open-ended',
+                  title: 'What stood out to you?',
+                  required: true,
+                  order: 1,
+                },
+              ],
+            },
+          ],
+          blocks: [],
+        },
+      },
+    ]);
+
+    const user = userEvent.setup();
+    renderCoursePlayer('/lms/courses/course-1/lesson/lesson-survey');
+
+    expect(await screen.findByText('Learner Survey')).toBeInTheDocument();
+    await user.type(await screen.findByPlaceholderText('Type your answer…'), 'The pacing felt clear.');
+    await user.click(screen.getByRole('button', { name: /submit survey/i }));
+
+    await waitFor(() => {
+      expect(mockSubmitLearnerSurveyResponse).toHaveBeenCalledWith(
+        'survey-1',
+        expect.objectContaining({
+          assignmentId: 'assignment-1',
+          responses: {
+            'question-1': 'The pacing felt clear.',
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateAssignmentProgress).toHaveBeenCalledWith('course-1', 'local-user', expect.any(Number));
+      expect(screen.getByText('Next lesson content')).toBeInTheDocument();
+    });
+  }, 12000);
+
+  it('does not show survey success or advance when submission fails', async () => {
+    mockLoadCourse.mockResolvedValue({
+      course: {
+        ...mockCourse,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-survey',
+                title: 'Survey Lesson',
+                type: 'survey',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  surveyId: 'survey-1',
+                },
+              },
+              {
+                id: 'lesson-next',
+                title: 'Next Lesson',
+                type: 'text',
+                order: 2,
+                order_index: 2,
+                duration: '3 min',
+                content: {
+                  textContent: '<p>Next lesson content</p>',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-survey',
+              title: 'Survey Lesson',
+              type: 'survey',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                surveyId: 'survey-1',
+              },
+            },
+            {
+              id: 'lesson-next',
+              title: 'Next Lesson',
+              type: 'text',
+              order: 2,
+              order_index: 2,
+              duration: '3 min',
+              content: {
+                textContent: '<p>Next lesson content</p>',
+              },
+            },
+          ],
+        },
+      ],
+      lessons: [
+        {
+          id: 'lesson-survey',
+          title: 'Survey Lesson',
+          type: 'survey',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            surveyId: 'survey-1',
+          },
+        },
+        {
+          id: 'lesson-next',
+          title: 'Next Lesson',
+          type: 'text',
+          order: 2,
+          order_index: 2,
+          duration: '3 min',
+          content: {
+            textContent: '<p>Next lesson content</p>',
+          },
+        },
+      ],
+      source: 'supabase' as const,
+    });
+
+    mockFetchAssignedSurveysForLearner.mockResolvedValue([
+      {
+        assignment: {
+          id: 'assignment-1',
+          surveyId: 'survey-1',
+          survey_id: 'survey-1',
+          status: 'assigned',
+          metadata: {},
+        },
+        survey: {
+          id: 'survey-1',
+          title: 'Learner Survey',
+          description: '',
+          sections: [
+            {
+              id: 'section-1',
+              title: 'Section 1',
+              order: 1,
+              questions: [
+                {
+                  id: 'question-1',
+                  type: 'open-ended',
+                  title: 'What stood out to you?',
+                  required: true,
+                  order: 1,
+                },
+              ],
+            },
+          ],
+          blocks: [],
+        },
+      },
+    ]);
+    mockSubmitLearnerSurveyResponse.mockRejectedValueOnce(new Error('submit failed'));
+
+    const user = userEvent.setup();
+    renderCoursePlayer('/lms/courses/course-1/lesson/lesson-survey');
+
+    await user.type(await screen.findByPlaceholderText('Type your answer…'), 'The pacing felt clear.');
+    await user.click(screen.getByRole('button', { name: /submit survey/i }));
+
+    expect(await screen.findByText('Unable to submit your survey right now. Your answers are still on screen.')).toBeInTheDocument();
+    expect(screen.getByText('Learner Survey')).toBeInTheDocument();
+    expect(screen.queryByText('Next lesson content')).not.toBeInTheDocument();
+    expect(mockUpdateAssignmentProgress).not.toHaveBeenCalledWith('course-1', 'local-user', 100);
+  }, 12000);
 });

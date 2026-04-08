@@ -10,6 +10,7 @@ export type QuestionType =
   | 'nps'
   | 'slider'
   | 'open-ended'
+  | 'text'
   | 'file-upload'
   | 'demographics'
   | 'other-specify'

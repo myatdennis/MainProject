@@ -16057,6 +16057,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
                 }
               : {
                   last_completed_at: nowIso,
+                  draft_response: responses,
                   completion_audit: {
                     completed_by: context.userId,
                     completed_at: nowIso,
@@ -16189,6 +16190,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
             }
           : {
               last_completed_at: nowIso,
+              draft_response: responses,
               completion_audit: {
                 completed_by: context.userId,
                 completed_at: nowIso,

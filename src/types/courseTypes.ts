@@ -117,7 +117,17 @@ export interface Lesson {
   chapterId?: TextIdentifier; // optional for backward compatibility
   title: string;
   description?: string; // optional for backward compatibility
-  type: 'video' | 'text' | 'quiz' | 'interactive' | 'document' | 'scenario' | 'resource' | 'reflection' | 'download';
+  type:
+    | 'video'
+    | 'text'
+    | 'quiz'
+    | 'interactive'
+    | 'document'
+    | 'scenario'
+    | 'resource'
+    | 'reflection'
+    | 'download'
+    | 'survey';
   order?: number; // optional for backward compatibility
   order_index?: number; // snake_case variant used by admin builder
   estimatedDuration?: number; // optional for backward compatibility
@@ -161,6 +171,12 @@ export interface LessonContent {
   reflectionPrompt?: string; // for courseStore compatibility
   allowReflection?: boolean; // for courseStore compatibility
   requireReflection?: boolean; // for courseStore compatibility
+
+  // Survey content
+  surveyId?: string;
+  survey_id?: string;
+  surveyTitle?: string;
+  surveyDescription?: string;
   
   // Quiz content
   questions?: QuizQuestion[];

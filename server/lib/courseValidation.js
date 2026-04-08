@@ -287,6 +287,15 @@ const hasReflectionContent = (lesson) => {
   return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
 };
 
+const hasSurveyIdentifier = (lesson) => {
+  const content = lesson?.content || {};
+  const candidates = [
+    content.surveyId,
+    content.survey_id,
+  ];
+  return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
+};
+
 const hasInteractiveSource = (lesson) => {
   const { interactiveUrl, elements, scenarioText, options } = lesson?.content || {};
   if (trim(interactiveUrl).length > 0) return true;
@@ -308,6 +317,9 @@ const lessonHasPublishableMedia = (lesson, intent) => {
   }
   if (lesson?.type === 'reflection') {
     return hasReflectionContent(lesson);
+  }
+  if (lesson?.type === 'survey') {
+    return hasSurveyIdentifier(lesson);
   }
   return false;
 };
@@ -482,6 +494,17 @@ export const validateCourse = (course, options = {}) => {
               code: 'lesson.reflection.content_missing',
               message: `Reflection lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs learner-facing content or a prompt`,
               path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
+              moduleId: module.id,
+              lessonId: lesson?.id,
+            });
+          }
+          break;
+        case 'survey':
+          if (!hasSurveyIdentifier(lesson)) {
+            pushIssue(issues, {
+              code: 'lesson.survey.identifier_missing',
+              message: `Survey lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs a linked survey`,
+              path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.surveyId`,
               moduleId: module.id,
               lessonId: lesson?.id,
             });

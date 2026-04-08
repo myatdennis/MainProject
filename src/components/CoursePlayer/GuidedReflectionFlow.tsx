@@ -22,7 +22,7 @@ type GuidedReflectionFlowProps = {
   lessonTitle: string;
   lessonContent: Record<string, unknown>;
   required: boolean;
-  onComplete: () => void;
+  onComplete: () => Promise<void> | void;
 };
 
 type StepDefinition =
@@ -151,10 +151,12 @@ const GuidedReflectionFlow = ({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [draftRecovered, setDraftRecovered] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [advancing, setAdvancing] = useState(false);
   const hydratedRef = useRef(false);
   const syncedSerializedRef = useRef(JSON.stringify(createEmptyReflectionResponseData()));
   const latestDraftRef = useRef<ReflectionResponseData>(createEmptyReflectionResponseData());
-  const inFlightRef = useRef<Promise<void> | null>(null);
+  const inFlightRef = useRef<Promise<boolean> | null>(null);
   const queuedSaveRef = useRef<{ data: ReflectionResponseData; status: 'draft' | 'submitted' } | null>(null);
   const lastInputEventRef = useRef<string | null>(null);
 
@@ -174,9 +176,6 @@ const GuidedReflectionFlow = ({
   );
 
   const canSubmit = !required || reflectionData.promptResponse.trim().length > 0;
-  const completionReady =
-    currentStepId === 'confirmation' || (!required || reflectionData.promptResponse.trim().length > 0);
-
   useEffect(() => {
     setLoading(true);
     setSaveState('idle');
@@ -300,7 +299,7 @@ const GuidedReflectionFlow = ({
         }
       };
 
-      const promise = executeSave().then(() => undefined);
+      const promise = executeSave();
       inFlightRef.current = promise;
       return promise;
     },
@@ -308,7 +307,7 @@ const GuidedReflectionFlow = ({
   );
 
   useEffect(() => {
-    if (!hydratedRef.current || currentStepId === 'confirmation') return;
+    if (!hydratedRef.current || currentStepId === 'confirmation' || submitting || saveState === 'error') return;
     latestDraftRef.current = reflectionData;
     const serialized = JSON.stringify(reflectionData);
     if (serialized === syncedSerializedRef.current) {
@@ -324,7 +323,7 @@ const GuidedReflectionFlow = ({
     }, 1200);
 
     return () => window.clearTimeout(timer);
-  }, [currentStepId, lastSavedAt, persistReflection, reflectionData, saveState]);
+  }, [currentStepId, lastSavedAt, persistReflection, reflectionData, saveState, submitting]);
 
   useEffect(() => {
     if (!currentStep) return;
@@ -342,6 +341,10 @@ const GuidedReflectionFlow = ({
       latestDraftRef.current = next;
       return next;
     });
+    if (saveState === 'error') {
+      setSaveState('unsaved');
+      setSaveError(null);
+    }
     const nextSignature = `${currentStepId}:${field}`;
     if (lastInputEventRef.current !== nextSignature) {
       lastInputEventRef.current = nextSignature;
@@ -366,6 +369,7 @@ const GuidedReflectionFlow = ({
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     const submittedData = {
       ...reflectionData,
       currentStepId: 'review',
@@ -373,37 +377,28 @@ const GuidedReflectionFlow = ({
     };
     setReflectionData(submittedData);
     latestDraftRef.current = submittedData;
-    const submitResult = await reflectionService.saveLearnerReflection({
-      courseId,
-      lessonId,
-      responseText: submittedData.promptResponse,
-      responseData: submittedData,
-      status: 'submitted',
-    }).then((saved) => {
-      const savedData = normalizeReflectionResponseData(saved?.responseData ?? submittedData);
-      syncedSerializedRef.current = JSON.stringify(savedData);
-      setLastSavedAt(saved?.updatedAt ?? new Date().toISOString());
-      setSaveState('saved');
-      setSaveError(null);
-      clearDraft(courseId, lessonId, learnerId);
-      console.info('[guided-reflection] reflectionSaved', {
+    try {
+      if (inFlightRef.current) {
+        await inFlightRef.current;
+      }
+      queuedSaveRef.current = null;
+      const submitResult = await persistReflection(submittedData, 'submitted');
+      if (!submitResult) return;
+      console.info('[guided-reflection] reflectionSubmitted', {
         lessonId,
-        status: 'submitted',
-        responseSize: summarizeReflectionResponse(savedData).length,
+        responseSize: summarizeReflectionResponse(submittedData).length,
       });
-      return true;
-    }).catch((error) => {
-      console.warn('[guided-reflection] reflection submit failed', error);
+      setCurrentStepId('confirmation');
+      setAdvancing(true);
+      await onComplete();
+    } catch (error) {
+      console.warn('[guided-reflection] reflection completion handoff failed', error);
       setSaveState('error');
-      setSaveError('Submit failed. Your draft is still safe on this device.');
-      return false;
-    });
-    if (!submitResult) return;
-    console.info('[guided-reflection] reflectionSubmitted', {
-      lessonId,
-      responseSize: summarizeReflectionResponse(submittedData).length,
-    });
-    setCurrentStepId('confirmation');
+      setSaveError('Your reflection was saved, but we could not advance the lesson. Please continue manually.');
+    } finally {
+      setAdvancing(false);
+      setSubmitting(false);
+    }
   };
 
   const statusLabel =
@@ -417,6 +412,8 @@ const GuidedReflectionFlow = ({
       ? saveError || 'Save failed'
       : saveState === 'unsaved'
       ? 'Unsaved'
+      : advancing
+      ? 'Advancing…'
       : 'Ready';
 
   const renderStepBody = () => {
@@ -474,6 +471,8 @@ const GuidedReflectionFlow = ({
             <p className="text-sm font-semibold uppercase tracking-[0.22em] text-emerald-600">Reflection Saved</p>
             <h3 className="font-heading text-3xl font-bold text-charcoal">You captured something meaningful.</h3>
             <p className="mx-auto max-w-2xl text-base leading-8 text-slate/80">{config.confirmationMessage}</p>
+            {advancing && <p className="text-sm font-medium text-slate/65">Taking you to the next lesson…</p>}
+            {saveState === 'error' && saveError && <p className="text-sm font-medium text-red-600">{saveError}</p>}
           </div>
         </div>
       );
@@ -503,9 +502,9 @@ const GuidedReflectionFlow = ({
   };
 
   return (
-    <Card tone="muted" className="mt-8 border border-skyblue/15 bg-gradient-to-b from-white to-skyblue/5 p-6 sm:p-8">
-      <div className="mx-auto flex max-w-3xl flex-col gap-8">
-        <div className="space-y-4">
+    <Card tone="muted" className="mt-10 border border-skyblue/15 bg-gradient-to-b from-white to-skyblue/5 p-5 sm:mt-12 sm:p-8 lg:p-10">
+      <div className="mx-auto flex max-w-3xl flex-col gap-9">
+        <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate/60">
@@ -523,7 +522,7 @@ const GuidedReflectionFlow = ({
                 (saveState === 'idle' || loading) && 'bg-slate-100 text-slate-700',
               )}
             >
-              {loading && <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />}
+              {(loading || advancing) && <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />}
               {statusLabel}
             </div>
           </div>
@@ -538,33 +537,45 @@ const GuidedReflectionFlow = ({
           </p>
         </div>
 
-        <div className="min-h-[360px] rounded-[32px] border border-white/70 bg-white/90 px-6 py-8 shadow-sm transition-all duration-300 sm:px-10">
+        <div className="min-h-[420px] rounded-[32px] border border-white/70 bg-white/92 px-6 py-8 shadow-sm transition-all duration-300 sm:px-10 sm:py-10">
           {renderStepBody()}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-slate/70">
+        <div className="flex flex-col gap-4 border-t border-mist/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="max-w-xl text-sm leading-7 text-slate/70">
             {required ? 'A prompt response is required before you submit.' : 'You can skip optional steps and return later.'}
           </div>
           <div className="flex flex-wrap gap-2">
             {currentStepIndex > 0 && currentStep.id !== 'confirmation' && (
-              <Button size="sm" variant="ghost" onClick={() => goToStep(currentStepIndex - 1)} leadingIcon={<ArrowLeft className="h-4 w-4" />}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => goToStep(currentStepIndex - 1)}
+                disabled={submitting || advancing}
+                leadingIcon={<ArrowLeft className="h-4 w-4" />}
+              >
                 Back
               </Button>
             )}
 
             {currentStep.id === 'review' ? (
-              <Button size="sm" onClick={() => void handleSubmit()} disabled={!canSubmit || saveState === 'saving'}>
-                Submit reflection
+              <Button
+                size="sm"
+                onClick={() => void handleSubmit()}
+                disabled={!canSubmit || saveState === 'saving' || submitting || advancing}
+                trailingIcon={(submitting || advancing) ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+              >
+                {submitting || advancing ? 'Submitting…' : 'Submit reflection'}
               </Button>
             ) : currentStep.id === 'confirmation' ? (
-              <Button size="sm" onClick={onComplete}>
+              <Button size="sm" onClick={() => void onComplete()} disabled={advancing}>
                 Continue learning
               </Button>
             ) : (
               <Button
                 size="sm"
                 onClick={() => goToStep(currentStepIndex + 1)}
+                disabled={submitting || advancing}
                 trailingIcon={<ArrowRight className="h-4 w-4" />}
               >
                 {currentStep.id === 'intro'
@@ -579,13 +590,12 @@ const GuidedReflectionFlow = ({
           </div>
         </div>
 
-        {completionReady && currentStep.id !== 'confirmation' && (
-          <div className="flex justify-end border-t border-mist/60 pt-6">
-            <Button onClick={onComplete}>
-              Complete reflection lesson
-            </Button>
+        {saveState === 'error' && saveError && currentStep.id !== 'confirmation' && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+            {saveError}
           </div>
         )}
+
       </div>
     </Card>
   );

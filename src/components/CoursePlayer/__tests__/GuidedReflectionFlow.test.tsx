@@ -189,4 +189,58 @@ describe('GuidedReflectionFlow', () => {
     resolveFirstSave?.();
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(2), { timeout: 2500 });
   }, 15000);
+
+  it('does not signal completion when submit fails', async () => {
+    const onComplete = vi.fn();
+    mockSaveLearnerReflection
+      .mockResolvedValueOnce({
+        id: 'reflection-1',
+        organizationId: 'org-1',
+        courseId: 'course-1',
+        lessonId: 'lesson-1',
+        userId: 'local-user',
+        responseText: 'Initial reflection',
+        responseData: {
+          promptResponse: 'Initial reflection',
+          deeperReflection1: '',
+          deeperReflection2: '',
+          deeperReflection3: '',
+          actionCommitment: '',
+          currentStepId: 'initial',
+          submittedAt: null,
+        },
+        status: 'draft',
+        createdAt: '2026-04-08T12:00:00.000Z',
+        updatedAt: '2026-04-08T12:01:00.000Z',
+      })
+      .mockRejectedValueOnce(new Error('submit failed'));
+
+    const user = userEvent.setup();
+    render(
+      <GuidedReflectionFlow
+        courseId="course-1"
+        learnerId="local-user"
+        lessonId="lesson-1"
+        lessonTitle="Reflection Lesson"
+        lessonContent={{
+          prompt: 'What stood out to you most?',
+          deepenPrompts: ['What shaped this perspective?'],
+        }}
+        required={true}
+        onComplete={onComplete}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /begin reflection/i }));
+    await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
+    await user.type(await screen.findByPlaceholderText('Write your initial thoughts here…'), 'Initial reflection');
+    await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(1), { timeout: 2500 });
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /submit reflection/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Save failed. Your draft is still safe on this device.');
+    expect(onComplete).not.toHaveBeenCalled();
+  }, 12000);
 });
