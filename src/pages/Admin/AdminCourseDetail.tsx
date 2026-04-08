@@ -35,6 +35,7 @@ import {
   Search,
 } from 'lucide-react';
 import { reflectionService, type AdminReflectionRow } from '../../dal/reflections';
+import { buildReflectionSections } from '../../utils/reflectionPresentation';
 
 const AdminCourseDetail = () => {
   useNavTrace('AdminCourseDetail');
@@ -680,7 +681,9 @@ const AdminCourseDetail = () => {
               )}
               {!courseReflections.loading && !courseReflections.error && courseReflections.rows.length > 0 && (
                 <div className="space-y-4">
-                  {courseReflections.rows.map((row) => (
+                  {courseReflections.rows.map((row) => {
+                    const sections = buildReflectionSections(row);
+                    return (
                     <div key={row.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div>
@@ -698,13 +701,25 @@ const AdminCourseDetail = () => {
                           <p>Created {row.createdAt ? new Date(row.createdAt).toLocaleString() : 'Unknown'}</p>
                         </div>
                       </div>
-                      <div className="mt-4 rounded-2xl bg-gray-50 px-4 py-3">
-                        <p className="whitespace-pre-wrap break-words text-sm leading-6 text-gray-800">
-                          {row.responseText || 'No response text saved.'}
-                        </p>
+                      <div className="mt-4 space-y-3">
+                        {sections.length > 0 ? (
+                          sections.map((section) => (
+                            <div key={section.label} className="rounded-2xl bg-gray-50 px-4 py-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">{section.label}</p>
+                              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-gray-800">
+                                {section.value}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                            <p className="text-sm text-gray-600">No structured response saved yet.</p>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

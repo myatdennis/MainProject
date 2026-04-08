@@ -56,7 +56,7 @@ import { useUserProfile } from '../../hooks/useUserProfile';
 import useSignedMediaUrl from '../../hooks/useSignedMediaUrl';
 import { batchService } from '../../dal/batchService';
 import { progressService } from '../../dal/progress';
-import { reflectionService } from '../../dal/reflections';
+import GuidedReflectionFlow from './GuidedReflectionFlow';
 
 const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
 const AUTOPLAY_NEXT_PREF_KEY = 'courseplayer:autoplay-next-enabled';
@@ -79,51 +79,6 @@ const formatDurationLabel = (seconds: number): string => {
 interface CoursePlayerProps {
   namespace?: 'admin' | 'client' | 'lms';
 }
-
-type ReflectionDraftPayload = {
-  text: string;
-  updatedAt: string;
-};
-
-const getReflectionDraftStorageKey = (courseId: string, lessonId: string, learnerId: string) =>
-  `reflection-draft:${courseId}:${lessonId}:${learnerId}`;
-
-const readReflectionDraft = (courseId: string, lessonId: string, learnerId: string): ReflectionDraftPayload | null => {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(getReflectionDraftStorageKey(courseId, lessonId, learnerId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as ReflectionDraftPayload | null;
-    if (!parsed || typeof parsed.text !== 'string') return null;
-    return {
-      text: parsed.text,
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-    };
-  } catch {
-    return null;
-  }
-};
-
-const writeReflectionDraft = (courseId: string, lessonId: string, learnerId: string, text: string) => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(
-      getReflectionDraftStorageKey(courseId, lessonId, learnerId),
-      JSON.stringify({ text, updatedAt: new Date().toISOString() }),
-    );
-  } catch {
-    // no-op
-  }
-};
-
-const clearReflectionDraft = (courseId: string, lessonId: string, learnerId: string) => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.removeItem(getReflectionDraftStorageKey(courseId, lessonId, learnerId));
-  } catch {
-    // no-op
-  }
-};
 
 const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const { courseId, lessonId } = useParams();
@@ -2331,130 +2286,6 @@ const LessonContent: React.FC<{
     Boolean(lesson.content?.allowReflection) ||
     Boolean(reflectionPrompt);
   const reflectionRequired = lessonType === 'reflection' || lesson.content?.requireReflection === true;
-  const [reflectionText, setReflectionText] = useState('');
-  const [reflectionLoading, setReflectionLoading] = useState(false);
-  const [reflectionSaveState, setReflectionSaveState] = useState<'idle' | 'unsaved' | 'saving' | 'saved' | 'error'>('idle');
-  const [reflectionError, setReflectionError] = useState<string | null>(null);
-  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
-  const [draftRecovered, setDraftRecovered] = useState(false);
-  const hydratedReflectionRef = useRef(false);
-  const lastSyncedReflectionRef = useRef('');
-  const activeSaveRequestRef = useRef(0);
-
-  useEffect(() => {
-    hydratedReflectionRef.current = false;
-    setReflectionText('');
-    setReflectionSaveState('idle');
-    setReflectionError(null);
-    setLastSavedAt(null);
-    setDraftRecovered(false);
-    lastSyncedReflectionRef.current = '';
-
-    if (!reflectionEnabled || !courseId || !lesson?.id || !learnerId) {
-      hydratedReflectionRef.current = true;
-      return;
-    }
-
-    let isMounted = true;
-    setReflectionLoading(true);
-    reflectionService
-      .fetchLearnerReflection(courseId, lesson.id)
-      .then((record) => {
-        if (!isMounted) return;
-        const savedText = record?.responseText ?? '';
-        const draft = readReflectionDraft(courseId, lesson.id, learnerId);
-        const shouldPreferDraft =
-          Boolean(draft?.text) &&
-          (!record?.updatedAt || new Date(draft.updatedAt).getTime() >= new Date(record.updatedAt).getTime()) &&
-          draft?.text !== savedText;
-
-        lastSyncedReflectionRef.current = savedText;
-        setReflectionText(shouldPreferDraft ? draft?.text ?? '' : savedText);
-        setLastSavedAt(record?.updatedAt ?? null);
-        setDraftRecovered(Boolean(shouldPreferDraft));
-        if (shouldPreferDraft) {
-          setReflectionSaveState('unsaved');
-        }
-      })
-      .catch((error) => {
-        if (!isMounted) return;
-        console.warn('[CoursePlayer] Failed to load learner reflection', error);
-      })
-      .finally(() => {
-        if (!isMounted) return;
-        setReflectionLoading(false);
-        hydratedReflectionRef.current = true;
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [courseId, learnerId, lesson?.id, reflectionEnabled]);
-
-  const persistReflection = useCallback(async (nextText: string) => {
-    if (!reflectionEnabled || !courseId || !lesson?.id) {
-      return null;
-    }
-
-    const requestId = activeSaveRequestRef.current + 1;
-    activeSaveRequestRef.current = requestId;
-    setReflectionSaveState('saving');
-    setReflectionError(null);
-
-    try {
-      const saved = await reflectionService.saveLearnerReflection({
-        courseId,
-        lessonId: lesson.id,
-        responseText: nextText,
-      });
-      if (activeSaveRequestRef.current !== requestId) {
-        return saved;
-      }
-      const savedText = saved?.responseText ?? nextText;
-      lastSyncedReflectionRef.current = savedText;
-      setLastSavedAt(saved?.updatedAt ?? new Date().toISOString());
-      setReflectionSaveState('saved');
-      setDraftRecovered(false);
-      clearReflectionDraft(courseId, lesson.id, learnerId);
-      return saved;
-    } catch (error) {
-      if (activeSaveRequestRef.current !== requestId) {
-        return null;
-      }
-      console.warn('[CoursePlayer] Failed to save learner reflection', error);
-      setReflectionSaveState('error');
-      setReflectionError('Save failed. Your draft is safe on this device.');
-      writeReflectionDraft(courseId, lesson.id, learnerId, nextText);
-      return null;
-    }
-  }, [courseId, learnerId, lesson?.id, reflectionEnabled]);
-
-  useEffect(() => {
-    if (!reflectionEnabled || !hydratedReflectionRef.current || !courseId || !lesson?.id) {
-      return;
-    }
-
-    if (reflectionText === lastSyncedReflectionRef.current) {
-      if (reflectionSaveState === 'unsaved') {
-        setReflectionSaveState(lastSavedAt ? 'saved' : 'idle');
-      }
-      clearReflectionDraft(courseId, lesson.id, learnerId);
-      return;
-    }
-
-    setReflectionSaveState((current) => (current === 'saving' ? current : 'unsaved'));
-    writeReflectionDraft(courseId, lesson.id, learnerId, reflectionText);
-
-    const timer = window.setTimeout(async () => {
-      await persistReflection(reflectionText);
-    }, 1200);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [courseId, learnerId, lesson?.id, persistReflection, reflectionEnabled, reflectionSaveState, reflectionText, lastSavedAt]);
-
-  const canCompleteReflection = !reflectionRequired || reflectionText.trim().length > 0;
 
   const documentUrlCandidates = [
     (lesson.content as any)?.downloadUrl,
@@ -2491,18 +2322,6 @@ const LessonContent: React.FC<{
       );
     }
 
-    const statusLabel = reflectionLoading
-      ? 'Loading your saved response…'
-      : reflectionSaveState === 'saving'
-      ? 'Saving…'
-      : reflectionSaveState === 'saved'
-      ? `Saved${lastSavedAt ? ` at ${new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
-      : reflectionSaveState === 'error'
-      ? reflectionError || 'Save failed. Retry when ready.'
-      : reflectionSaveState === 'unsaved'
-      ? 'Unsaved changes'
-      : 'Ready to save';
-
     return (
       <div className="max-w-none text-charcoal">
         {lessonType === 'reflection' && (
@@ -2514,89 +2333,25 @@ const LessonContent: React.FC<{
           <div className="prose max-w-none text-charcoal" dangerouslySetInnerHTML={{ __html: textBody }} />
         )}
         {reflectionEnabled && (
-          <Card tone="muted" className="mt-8 space-y-5 border border-skyblue/20 bg-white p-5 sm:p-6">
-            <div className="space-y-3">
-              <div className="inline-flex rounded-full bg-skyblue/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-skyblue">
-                Reflection Prompt
-              </div>
-              <div className="rounded-2xl border border-skyblue/15 bg-skyblue/5 p-4 sm:p-5">
-                <div
-                  className="prose max-w-none text-lg font-semibold leading-8 text-charcoal prose-p:my-0"
-                  dangerouslySetInnerHTML={{
-                    __html: reflectionPrompt.trim() || 'No reflection prompt has been configured for this lesson yet.',
-                  }}
-                />
-                {reflectionInstructions.trim() && (
-                  <p className="mt-3 text-sm leading-6 text-slate/80">{reflectionInstructions}</p>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm font-semibold text-charcoal">Your response</p>
-                  <p className="text-xs text-slate/70">
-                    {reflectionRequired
-                      ? 'Write your response below. Saving should not block lesson completion.'
-                      : 'Write your reflection below. We autosave while you type.'}
-                  </p>
-                </div>
-                <span
-                  className={cn(
-                    'rounded-full px-3 py-1 text-xs font-medium',
-                    reflectionSaveState === 'saved' && 'bg-emerald-50 text-emerald-700',
-                    reflectionSaveState === 'saving' && 'bg-skyblue/10 text-skyblue',
-                    reflectionSaveState === 'error' && 'bg-red-50 text-red-700',
-                    reflectionSaveState === 'unsaved' && 'bg-amber-50 text-amber-700',
-                    (reflectionSaveState === 'idle' || reflectionLoading) && 'bg-slate-100 text-slate-700',
-                  )}
-                >
-                  {statusLabel}
-                </span>
-              </div>
-
-              <textarea
-                value={reflectionText}
-                onChange={(event) => setReflectionText(event.target.value)}
-                rows={8}
-                placeholder="Write your reflection here…"
-                className="w-full min-h-[240px] resize-y rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm leading-7 text-charcoal shadow-sm focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
-                disabled={reflectionLoading}
-              />
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-slate/70">
-                  {draftRecovered
-                    ? 'Recovered an unsaved draft from this device.'
-                    : reflectionSaveState === 'error'
-                    ? reflectionError
-                    : 'Responses are visible to you and authorized admins in your organization.'}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void persistReflection(reflectionText)}
-                    disabled={reflectionLoading || reflectionSaveState === 'saving'}
-                  >
-                    {reflectionSaveState === 'saving' ? 'Saving…' : 'Save response'}
-                  </Button>
-                  {reflectionSaveState === 'error' && (
-                    <Button size="sm" onClick={() => void persistReflection(reflectionText)}>
-                      Retry save
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </Card>
+          courseId && lesson?.id ? (
+            <GuidedReflectionFlow
+              courseId={courseId}
+              learnerId={learnerId}
+              lessonId={lesson.id}
+              lessonTitle={lesson.title}
+              lessonContent={lesson.content as Record<string, unknown>}
+              required={reflectionRequired}
+              onComplete={onComplete}
+            />
+          ) : null
         )}
-        <div className="mt-8 flex justify-end border-t border-mist/60 pt-6">
-          <Button onClick={onComplete} disabled={!canCompleteReflection} trailingIcon={<CheckCircle className="h-4 w-4" />}>
-            {lessonType === 'reflection' ? 'Complete reflection' : 'Mark as complete'}
-          </Button>
-        </div>
+        {!reflectionEnabled && (
+          <div className="mt-8 flex justify-end border-t border-mist/60 pt-6">
+            <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
+              {lessonType === 'reflection' ? 'Complete reflection' : 'Mark as complete'}
+            </Button>
+          </div>
+        )}
       </div>
     );
   }

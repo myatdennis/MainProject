@@ -243,6 +243,28 @@ function normalizeReflectionContent(out: Record<string, any>) {
     out.description,
     out.notes,
   );
+  const introText = firstNonEmptyString(
+    out.introText,
+    out.intro_text,
+    out.intro,
+  );
+  const thinkPrompt = firstNonEmptyString(
+    out.thinkPrompt,
+    out.think_prompt,
+  );
+  const actionPrompt = firstNonEmptyString(
+    out.actionPrompt,
+    out.action_prompt,
+  );
+  const confirmationMessage = firstNonEmptyString(
+    out.confirmationMessage,
+    out.confirmation_message,
+  );
+  const deepenPrompts = Array.isArray(out.deepenPrompts)
+    ? out.deepenPrompts.filter((entry: unknown) => typeof entry === 'string' && entry.trim().length > 0)
+    : Array.isArray(out.deepen_prompts)
+    ? out.deepen_prompts.filter((entry: unknown) => typeof entry === 'string' && entry.trim().length > 0)
+    : [];
   const shouldCollectResponse =
     out.collectResponse === true ||
     out.allowReflection === true ||
@@ -257,6 +279,22 @@ function normalizeReflectionContent(out: Record<string, any>) {
 
   if (instructions) {
     out.instructions = instructions;
+  }
+
+  if (introText) {
+    out.introText = introText;
+  }
+  if (thinkPrompt) {
+    out.thinkPrompt = thinkPrompt;
+  }
+  if (actionPrompt) {
+    out.actionPrompt = actionPrompt;
+  }
+  if (confirmationMessage) {
+    out.confirmationMessage = confirmationMessage;
+  }
+  if (deepenPrompts.length > 0) {
+    out.deepenPrompts = deepenPrompts;
   }
 
   if (shouldCollectResponse) {

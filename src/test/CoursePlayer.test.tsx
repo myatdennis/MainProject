@@ -16,7 +16,7 @@ vi.mock('../hooks/useUserProfile', () => ({
 const mockFetchLearnerReflection = vi.hoisted(() => vi.fn());
 const mockSaveLearnerReflection = vi.hoisted(() => vi.fn());
 
-vi.mock('../services/reflectionService', () => ({
+vi.mock('../dal/reflections', () => ({
   reflectionService: {
     fetchLearnerReflection: (...args: any[]) => mockFetchLearnerReflection(...args),
     saveLearnerReflection: (...args: any[]) => mockSaveLearnerReflection(...args),
@@ -373,6 +373,7 @@ describe('CoursePlayer progress integration', () => {
   });
 
   it('renders reflection prompts and download lessons as first-class learner content', async () => {
+    const user = userEvent.setup();
     mockLoadCourse.mockResolvedValue({
       course: {
         ...mockCourse,
@@ -516,12 +517,13 @@ describe('CoursePlayer progress integration', () => {
       </QueryClientProvider>
     );
 
-  expect(await screen.findByRole('button', { name: /complete reflection/i })).toBeInTheDocument();
-    expect(screen.getByText('Reflection Prompt')).toBeInTheDocument();
-    expect(screen.getByText('What stood out to you most?')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Write your reflection here…')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /begin reflection/i })).toBeInTheDocument();
+    expect(screen.getByText('Guided Reflection')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /begin reflection/i }));
+    expect((await screen.findAllByText('Reflection Prompt')).length).toBeGreaterThan(0);
+    expect(await screen.findByText((content) => content.includes('What stood out to you most?'))).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /Download Lesson/i }));
+    await user.click(screen.getByRole('button', { name: /Download Lesson/i }));
 
     expect(await screen.findByRole('link', { name: /download resource/i })).toHaveAttribute(
       'href',
@@ -624,18 +626,22 @@ describe('CoursePlayer progress integration', () => {
     const user = userEvent.setup();
     const view = renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
 
-    await screen.findByRole('button', { name: /complete reflection/i });
-    const input = await screen.findByPlaceholderText('Write your reflection here…');
+    await screen.findByRole('button', { name: /begin reflection/i });
+    await user.click(screen.getByRole('button', { name: /begin reflection/i }));
+    await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
+    const input = await screen.findByPlaceholderText('Write your initial thoughts here…');
     await user.type(input, 'Saved reflection text');
-    await user.click(screen.getByRole('button', { name: /save response/i }));
-
     await waitFor(() => {
       expect(mockSaveLearnerReflection).toHaveBeenCalledWith({
         courseId: 'course-1',
         lessonId: 'lesson-reflection',
         responseText: 'Saved reflection text',
+        responseData: expect.objectContaining({
+          promptResponse: 'Saved reflection text',
+        }),
+        status: 'draft',
       });
-    });
+    }, { timeout: 2500 });
 
     view.unmount();
     renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
@@ -647,7 +653,16 @@ describe('CoursePlayer progress integration', () => {
     window.localStorage.setItem(
       'reflection-draft:course-1:lesson-reflection:local-user',
       JSON.stringify({
-        text: 'Draft that never reached the server',
+        data: {
+          promptResponse: 'Draft that never reached the server',
+          deeperReflection1: '',
+          deeperReflection2: '',
+          deeperReflection3: '',
+          actionCommitment: '',
+          currentStepId: 'initial',
+          submittedAt: null,
+        },
+        currentStepId: 'initial',
         updatedAt: '2026-04-08T12:10:00.000Z',
       }),
     );
@@ -733,8 +748,8 @@ describe('CoursePlayer progress integration', () => {
 
     renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
 
-    await screen.findByRole('button', { name: /complete reflection/i });
+    await screen.findByRole('button', { name: /continue/i });
     expect(await screen.findByDisplayValue('Draft that never reached the server')).toBeInTheDocument();
-    expect(screen.getByText('Recovered an unsaved draft from this device.')).toBeInTheDocument();
+    expect(screen.getByText('Recovered your latest draft from this device.')).toBeInTheDocument();
   }, 10000);
 });

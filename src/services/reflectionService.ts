@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import type { ReflectionResponseData } from '../utils/reflectionFlow';
 
 export type LearnerReflection = {
   id: string;
@@ -8,6 +9,7 @@ export type LearnerReflection = {
   lessonId: string;
   userId: string;
   responseText: string;
+  responseData?: ReflectionResponseData | null;
   status?: 'draft' | 'submitted' | null;
   createdAt: string;
   updatedAt: string;
@@ -33,6 +35,8 @@ export const reflectionService = {
     courseId: string;
     lessonId: string;
     responseText: string;
+    responseData?: ReflectionResponseData;
+    status?: 'draft' | 'submitted';
   }): Promise<LearnerReflection | null> {
     const response = await apiRequest<{ data?: LearnerReflection | null }>(
       `/api/learner/lessons/${encodeURIComponent(payload.lessonId)}/reflection`,

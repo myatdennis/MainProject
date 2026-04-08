@@ -36,6 +36,9 @@ const isAnswered = (value: unknown): boolean => {
   return value !== null && value !== undefined;
 };
 
+const getEntrySurveyId = (entry: any): string | null =>
+  entry?.survey?.id ?? entry?.assignment?.surveyId ?? entry?.assignment?.survey_id ?? null;
+
 const ClientSurveyTake = () => {
   const { surveyId } = useParams<{ surveyId: string }>();
   const location = useLocation();
@@ -63,15 +66,26 @@ const ClientSurveyTake = () => {
     let active = true;
     setLoading(true);
     setError(null);
+    console.info('[learner-surveys] surveyOpenStarted', {
+      route: location.pathname,
+      surveyId,
+      assignmentId: assignmentId ?? null,
+    });
     fetchAssignedSurveysForLearner()
       .then((rows) => {
         if (!active) return;
-        const matching = rows.filter((entry) => String(entry?.survey?.id ?? '') === String(surveyId));
+        const matching = rows.filter((entry) => String(getEntrySurveyId(entry) ?? '') === String(surveyId));
         const selected =
           matching.find((entry) => (assignmentId ? String(entry.assignment?.id ?? '') === String(assignmentId) : true)) ??
           matching[0] ??
           null;
         if (!selected?.survey) {
+          console.error('[learner-surveys] surveyOpenFailed', {
+            surveyId,
+            assignmentId: assignmentId ?? null,
+            reason: 'survey_not_assigned_or_not_hydrated',
+            matchedAssignmentCount: matching.length,
+          });
           setError('This survey is not currently assigned to your account.');
           return;
         }
@@ -92,7 +106,12 @@ const ClientSurveyTake = () => {
       })
       .catch((err) => {
         if (!active) return;
-        console.error('[ClientSurveyTake] failed to load survey', err);
+        console.error('[learner-surveys] surveyOpenFailed', {
+          surveyId,
+          assignmentId: assignmentId ?? null,
+          reason: 'assigned_survey_fetch_failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
         setError('Unable to load this survey right now.');
       })
       .finally(() => {

@@ -132,6 +132,33 @@ describe('assignmentStorage session enforcement', () => {
     ] satisfies CourseAssignment[]);
   });
 
+  it('maps UUID-backed assignment rows that only expose user_id_uuid', async () => {
+    const now = new Date().toISOString();
+
+    const { mapAssignmentsFromApiRows } = await importModule();
+    const result = mapAssignmentsFromApiRows([
+      {
+        id: 'assign-survey-1',
+        survey_id: 'survey-1',
+        assignment_type: 'survey',
+        user_id_uuid: '00000000-0000-0000-0000-000000000123',
+        status: 'assigned',
+        progress: 0,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'assign-survey-1',
+        surveyId: 'survey-1',
+        userId: '00000000-0000-0000-0000-000000000123',
+        assignmentType: 'survey',
+      }),
+    ]);
+  });
+
   it('treats unauthorized errors from the API as empty responses', async () => {
     mockGetUserSession.mockReturnValue({ id: 'user-123' });
     mockApiRequest.mockRejectedValue(new MockApiError(401));

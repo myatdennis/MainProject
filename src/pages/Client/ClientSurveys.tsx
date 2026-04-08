@@ -60,6 +60,27 @@ const extractSurveyLink = (assignment: LearnerSurveyAssignment['assignment']) =>
   return null;
 };
 
+const getEntrySurveyId = (entry: LearnerSurveyAssignment) =>
+  entry.survey?.id ?? entry.assignment.surveyId ?? (entry.assignment as { survey_id?: string | null })?.survey_id ?? null;
+
+const getEntrySurveyTitle = (entry: LearnerSurveyAssignment) => {
+  if (entry.survey?.title) return entry.survey.title;
+  const metadata = entry.assignment.metadata && typeof entry.assignment.metadata === 'object'
+    ? (entry.assignment.metadata as Record<string, unknown>)
+    : null;
+  const fallbackTitle = metadata?.surveyTitle ?? metadata?.survey_title ?? metadata?.title ?? null;
+  return typeof fallbackTitle === 'string' && fallbackTitle.trim() ? fallbackTitle.trim() : 'Assigned survey';
+};
+
+const getEntrySurveyDescription = (entry: LearnerSurveyAssignment) => {
+  if (entry.survey?.description) return entry.survey.description;
+  const metadata = entry.assignment.metadata && typeof entry.assignment.metadata === 'object'
+    ? (entry.assignment.metadata as Record<string, unknown>)
+    : null;
+  const fallbackDescription = metadata?.surveyDescription ?? metadata?.survey_description ?? metadata?.description ?? null;
+  return typeof fallbackDescription === 'string' && fallbackDescription.trim() ? fallbackDescription.trim() : '';
+};
+
 const ClientSurveys = () => {
   const [assignments, setAssignments] = useState<LearnerSurveyAssignment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,22 +91,26 @@ const ClientSurveys = () => {
   const highlightAssignmentId = useMemo(() => new URLSearchParams(location.search).get('assignment'), [location.search]);
 
   const refresh = useCallback(async () => {
+    console.info('[learner-surveys] surveyListLoadStarted', {
+      route: location.pathname,
+    });
     setLoading(true);
     setError(null);
     try {
       const rows = await fetchAssignedSurveysForLearner();
-      console.info('[ClientSurveys] assignments fetched', {
+      console.info('[learner-surveys] surveyListLoadSucceeded', {
         fetchedCount: rows.length,
+        assignedSurveyIds: rows.map((entry) => getEntrySurveyId(entry)).filter(Boolean),
       });
       setAssignments(rows);
     } catch (err) {
-      console.error('Failed to load surveys:', err);
+      console.error('[learner-surveys] surveyListLoadFailed', err);
       setAssignments([]);
       setError('Unable to load surveys right now. Please retry soon.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [location.pathname]);
 
   useEffect(() => {
     void refresh();
@@ -93,7 +118,7 @@ const ClientSurveys = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeSurveyAssignmentsChanged((event) => {
-      console.info('[ClientSurveys] assignments invalidated', event);
+      console.info('[learner-surveys] assignments invalidated', event);
       void refresh();
     });
     return unsubscribe;
@@ -123,12 +148,20 @@ const ClientSurveys = () => {
   );
 
   useEffect(() => {
-    console.info('[ClientSurveys] assignments rendered', {
+    console.info('[learner-surveys] surveyListRenderedCount', {
       renderedTotal: assignments.length,
       renderedActive: pendingAssignments.length,
       renderedCompleted: completedAssignments.length,
     });
   }, [assignments.length, pendingAssignments.length, completedAssignments.length]);
+
+  useEffect(() => {
+    if (!loading && !error && assignments.length === 0) {
+      console.info('[learner-surveys] surveyListEmptyStateShown', {
+        route: location.pathname,
+      });
+    }
+  }, [assignments.length, error, loading, location.pathname]);
 
   const totalOverdue = assignments.filter((entry) => {
     const due = describeDueDate(entry.assignment.dueDate);
@@ -136,13 +169,20 @@ const ClientSurveys = () => {
   }).length;
 
   const handleOpenSurvey = (entry: LearnerSurveyAssignment) => {
-    if (entry.survey?.id && entry.assignment.status === 'completed') {
-      navigate(`${portalPath}/surveys/${entry.survey.id}/results?assignmentId=${entry.assignment.id}`);
+    const surveyId = getEntrySurveyId(entry);
+    console.info('[learner-surveys] surveyOpenStarted', {
+      assignmentId: entry.assignment.id,
+      surveyId,
+      status: entry.assignment.status,
+    });
+
+    if (surveyId && entry.assignment.status === 'completed') {
+      navigate(`${portalPath}/surveys/${surveyId}/results?assignmentId=${entry.assignment.id}`);
       return;
     }
 
-    if (entry.survey?.id) {
-      navigate(`${portalPath}/surveys/${entry.survey.id}/take?assignmentId=${entry.assignment.id}`);
+    if (surveyId) {
+      navigate(`${portalPath}/surveys/${surveyId}/take?assignmentId=${entry.assignment.id}`);
       return;
     }
 
@@ -151,10 +191,11 @@ const ClientSurveys = () => {
       window.open(surveyUrl, '_blank', 'noopener,noreferrer');
       return;
     }
+    console.error('[learner-surveys] surveyOpenFailed', {
+      assignmentId: entry.assignment.id,
+      reason: 'missing_survey_identifier',
+    });
     const params = new URLSearchParams({ assignment: entry.assignment.id });
-    if (entry.survey?.id) {
-      params.set('focus', entry.survey.id);
-    }
     navigate(`${portalPath}/surveys?${params.toString()}`);
   };
 
@@ -174,7 +215,7 @@ const ClientSurveys = () => {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="font-heading text-base font-semibold text-charcoal">
-              {survey?.title ?? 'Untitled survey'}
+              {getEntrySurveyTitle(entry)}
             </p>
             <p className="text-xs text-slate/70">{due.label}</p>
           </div>
@@ -182,7 +223,14 @@ const ClientSurveys = () => {
             {statusLabel(assignment.status)}
           </Badge>
         </div>
-        {survey?.description && <p className="mt-2 text-sm text-slate/70 line-clamp-3">{survey.description}</p>}
+        {getEntrySurveyDescription(entry) && (
+          <p className="mt-2 text-sm text-slate/70 line-clamp-3">{getEntrySurveyDescription(entry)}</p>
+        )}
+        {!survey && (
+          <p className="mt-2 text-sm text-amber-700">
+            Survey details are syncing. You can still open this assignment.
+          </p>
+        )}
         {assignment.note && (
           <p className="mt-2 text-sm text-slate/70 italic">{assignment.note}</p>
         )}

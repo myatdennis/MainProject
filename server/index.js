@@ -5631,6 +5631,68 @@ const resolveSurveyIdentifierToCanonicalId = async (identifier) => {
   return normalized;
 };
 
+const loadSurveyRecordsByAssignmentIds = async (surveyIds = []) => {
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(surveyIds) ? surveyIds : [])
+        .map((value) => (value === null || value === undefined ? '' : String(value).trim()))
+        .filter(Boolean),
+    ),
+  );
+  const emptyResult = {
+    surveyMap: new Map(),
+    requestedCount: normalizedIds.length,
+    resolvedIdCount: 0,
+    rawRowCount: 0,
+  };
+
+  if (!supabase || normalizedIds.length === 0) {
+    return emptyResult;
+  }
+
+  const canonicalIds = [];
+  for (const rawId of normalizedIds) {
+    const canonicalId = await resolveSurveyIdentifierToCanonicalId(rawId);
+    if (canonicalId) {
+      canonicalIds.push(canonicalId);
+    }
+  }
+
+  const resolvedIds = Array.from(new Set(canonicalIds.filter(Boolean)));
+  if (resolvedIds.length === 0) {
+    return emptyResult;
+  }
+
+  const { data: surveyRows, error: surveyError } = await supabase
+    .from('surveys')
+    .select('*')
+    .in('id', resolvedIds);
+  if (surveyError) throw surveyError;
+
+  const assignmentMap = await fetchSurveyAssignmentsMap(resolvedIds);
+  const hydratedRows = (surveyRows || []).map((row) => applyAssignmentToSurvey({ ...row }, assignmentMap.get(row.id)));
+  const surveyMap = new Map();
+  hydratedRows.forEach((survey) => {
+    if (!survey?.id) return;
+    surveyMap.set(String(survey.id), survey);
+  });
+  normalizedIds.forEach((rawId, index) => {
+    const canonicalId = canonicalIds[index];
+    if (!canonicalId) return;
+    const survey = surveyMap.get(String(canonicalId));
+    if (survey) {
+      surveyMap.set(String(rawId), survey);
+    }
+  });
+
+  return {
+    surveyMap,
+    requestedCount: normalizedIds.length,
+    resolvedIdCount: resolvedIds.length,
+    rawRowCount: Array.isArray(surveyRows) ? surveyRows.length : 0,
+  };
+};
+
 const updateDemoSurveyAssignments = (surveyId, assignedTo = createEmptyAssignedTo()) => {
   if (!surveyId) return;
   const payload = {
@@ -15569,6 +15631,16 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   }
 
   try {
+    logger.info('client_assigned_surveys_request_context', {
+      requestId: req.requestId ?? null,
+      route: '/api/client/surveys/assigned',
+      userId: context.userId,
+      activeOrgId: orgScope.orgId ?? null,
+      scopedOrgIdCount: scopedOrgIds.length,
+      membershipOrgIdCount: Array.isArray(context.organizationIds) ? context.organizationIds.length : 0,
+      authResolved: Boolean(context.userId),
+    });
+
     await ensureSurveyAssignmentsForUserFromOrgScope({
       userId: context.userId,
       orgIds: scopedOrgIds,
@@ -15602,35 +15674,46 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
     const assignments = assignmentRows || [];
     logger.info('client_assigned_surveys_fetched', {
       requestId: req.requestId ?? null,
+      route: '/api/client/surveys/assigned',
       userId: context.userId,
+      orgId: orgScope.orgId ?? null,
       orgIdCount: Array.isArray(context.organizationIds) ? context.organizationIds.length : 0,
       includeCompleted,
-      fetchedCount: assignments.length,
+      assignedSurveyCount: assignments.length,
+      rawDbRowCount: assignments.length,
     });
 
     const surveyIds = Array.from(new Set(assignments.map((row) => row?.survey_id).filter(Boolean)));
-    let surveys = [];
     let surveyMap = new Map();
+    let surveyResolution = {
+      requestedCount: surveyIds.length,
+      resolvedIdCount: 0,
+      rawRowCount: 0,
+    };
     if (surveyIds.length) {
-      const { data: surveyRows, error: surveyError } = await supabase
-        .from('surveys')
-        .select('*')
-        .in('id', surveyIds);
-      if (surveyError) throw surveyError;
-      const assignmentMap = await fetchSurveyAssignmentsMap(surveyIds);
-      surveys = (surveyRows || []).map((row) => applyAssignmentToSurvey({ ...row }, assignmentMap.get(row.id)));
-      surveyMap = new Map(surveys.map((survey) => [survey.id, survey]));
+      surveyResolution = await loadSurveyRecordsByAssignmentIds(surveyIds);
+      surveyMap = surveyResolution.surveyMap;
     }
 
     const shaped = assignments.map((assignment) => ({
       assignment,
-      survey: assignment.survey_id ? surveyMap.get(assignment.survey_id) ?? null : null,
+      survey: assignment.survey_id ? surveyMap.get(String(assignment.survey_id)) ?? null : null,
     }));
+    const transformedCount = shaped.length;
+    const missingSurveyCount = shaped.filter((entry) => entry.assignment?.survey_id && !entry.survey).length;
 
     logger.info('client_assigned_surveys_render_ready', {
       requestId: req.requestId ?? null,
+      route: '/api/client/surveys/assigned',
       userId: context.userId,
-      renderedCount: shaped.length,
+      orgId: orgScope.orgId ?? null,
+      assignedSurveyCount: assignments.length,
+      rawDbRowCount: assignments.length,
+      surveyLookupRequestedCount: surveyResolution.requestedCount,
+      surveyLookupResolvedIdCount: surveyResolution.resolvedIdCount,
+      surveyLookupRowCount: surveyResolution.rawRowCount,
+      transformResultCount: transformedCount,
+      missingSurveyCount,
     });
 
     res.json({ data: shaped });
@@ -19602,6 +19685,62 @@ const normalizeReflectionText = (value) => {
   return '';
 };
 
+const createEmptyReflectionResponseData = () => ({
+  prompt_response: '',
+  deeper_reflection_1: '',
+  deeper_reflection_2: '',
+  deeper_reflection_3: '',
+  action_commitment: '',
+  current_step_id: 'intro',
+  submitted_at: null,
+});
+
+const normalizeReflectionResponseData = (value) => {
+  const record = value && typeof value === 'object' ? value : {};
+  return {
+    prompt_response: normalizeReflectionText(record.prompt_response ?? record.promptResponse),
+    deeper_reflection_1: normalizeReflectionText(record.deeper_reflection_1 ?? record.deeperReflection1),
+    deeper_reflection_2: normalizeReflectionText(record.deeper_reflection_2 ?? record.deeperReflection2),
+    deeper_reflection_3: normalizeReflectionText(record.deeper_reflection_3 ?? record.deeperReflection3),
+    action_commitment: normalizeReflectionText(record.action_commitment ?? record.actionCommitment),
+    current_step_id: normalizeReflectionText(record.current_step_id ?? record.currentStepId) || 'intro',
+    submitted_at:
+      typeof (record.submitted_at ?? record.submittedAt) === 'string'
+        ? record.submitted_at ?? record.submittedAt
+        : null,
+  };
+};
+
+const mergeReflectionResponseData = ({ responseData, responseText, status }) => {
+  const normalized = {
+    ...createEmptyReflectionResponseData(),
+    ...normalizeReflectionResponseData(responseData),
+  };
+
+  if (normalizeReflectionText(responseText) && !normalized.prompt_response) {
+    normalized.prompt_response = normalizeReflectionText(responseText);
+  }
+  if (status === 'submitted' && !normalized.submitted_at) {
+    normalized.submitted_at = new Date().toISOString();
+  }
+  if (status !== 'submitted') {
+    normalized.submitted_at = normalized.submitted_at ?? null;
+  }
+  return normalized;
+};
+
+const summarizeReflectionResponseData = (responseData) =>
+  [
+    responseData?.prompt_response,
+    responseData?.deeper_reflection_1,
+    responseData?.deeper_reflection_2,
+    responseData?.deeper_reflection_3,
+    responseData?.action_commitment,
+  ]
+    .map((value) => normalizeReflectionText(value))
+    .filter(Boolean)
+    .join('\n\n');
+
 const buildReflectionStoreKey = ({ orgId, courseId, lessonId, userId }) =>
   `${String(orgId || 'no-org').toLowerCase()}:${String(courseId).toLowerCase()}:${String(lessonId).toLowerCase()}:${String(userId).toLowerCase()}`;
 
@@ -19612,7 +19751,12 @@ const shapeReflectionRecord = (row) => ({
   moduleId: row.module_id ?? row.moduleId ?? null,
   lessonId: row.lesson_id ?? row.lessonId ?? null,
   userId: row.user_id ?? row.userId ?? null,
-  responseText: row.response_text ?? row.responseText ?? '',
+  responseText:
+    row.response_text ??
+    row.responseText ??
+    summarizeReflectionResponseData(row.response_data ?? row.responseData) ??
+    '',
+  responseData: normalizeReflectionResponseData(row.response_data ?? row.responseData),
   status: row.status ?? null,
   createdAt: row.created_at ?? row.createdAt ?? null,
   updatedAt: row.updated_at ?? row.updatedAt ?? null,
@@ -19806,11 +19950,30 @@ const handleLearnerReflectionPost = async (req, res) => {
 
   const { courseId, lessonId } = extractLearnerReflectionRequest(req);
   const responseText = normalizeReflectionText(req.body?.responseText ?? req.body?.response_text);
+  const requestedStatus = normalizeReflectionText(req.body?.status);
+  const status = requestedStatus === 'submitted' ? 'submitted' : 'draft';
+  const responseData = mergeReflectionResponseData({
+    responseData: req.body?.responseData ?? req.body?.response_data,
+    responseText,
+    status,
+  });
   const orgId = orgScope.orgId ?? resolveOrgIdFromRequest(req, context) ?? DEFAULT_SANDBOX_ORG_ID;
   const userId = context.userId;
   const nowIso = new Date().toISOString();
+  const saveStartedAt = Date.now();
   const lessonContext = await resolveReflectionLessonContext({ req, res, orgId, courseId, lessonId });
   if (!lessonContext) return;
+
+  logger.info('learner_reflection_save_attempt', {
+    requestId: req.requestId ?? null,
+    route: '/api/learner/lessons/:lessonId/reflection',
+    userId,
+    orgId,
+    lessonId: lessonContext.lessonId,
+    courseId: lessonContext.courseId,
+    status,
+    responseSize: summarizeReflectionResponseData(responseData).length,
+  });
 
   if (isDemoOrTestMode) {
     const key = buildReflectionStoreKey({ orgId, courseId: lessonContext.courseId, lessonId: lessonContext.lessonId, userId });
@@ -19822,13 +19985,25 @@ const handleLearnerReflectionPost = async (req, res) => {
       module_id: lessonContext.moduleId,
       lesson_id: lessonContext.lessonId,
       user_id: userId,
-      response_text: responseText,
-      status: 'draft',
+      response_text: summarizeReflectionResponseData(responseData),
+      response_data: responseData,
+      status,
       created_at: existing?.created_at ?? nowIso,
       updated_at: nowIso,
     };
     e2eStore.lessonReflections.set(key, record);
     persistE2EStore();
+    logger.info('learner_reflection_save_success', {
+      requestId: req.requestId ?? null,
+      userId,
+      orgId,
+      lessonId: lessonContext.lessonId,
+      courseId: lessonContext.courseId,
+      status,
+      responseSize: record.response_text.length,
+      timingMs: Date.now() - saveStartedAt,
+      mode: 'demo',
+    });
     res.status(202).json({ data: shapeReflectionRecord(record), meta: { mode: 'demo' } });
     return;
   }
@@ -19839,8 +20014,9 @@ const handleLearnerReflectionPost = async (req, res) => {
     module_id: lessonContext.moduleId,
     lesson_id: lessonContext.lessonId,
     user_id: userId,
-    response_text: responseText,
-    status: 'draft',
+    response_text: summarizeReflectionResponseData(responseData),
+    response_data: responseData,
+    status,
     updated_at: nowIso,
   };
 
@@ -19861,8 +20037,9 @@ const handleLearnerReflectionPost = async (req, res) => {
           course_id: lessonContext.courseId,
           lesson_id: lessonContext.lessonId,
           user_id: userId,
-          response_text: responseText,
+          response_text: summarizeReflectionResponseData(responseData),
           updated_at: nowIso,
+          status,
         },
         { onConflict: 'organization_id,course_id,lesson_id,user_id' },
       )
@@ -19880,8 +20057,9 @@ const handleLearnerReflectionPost = async (req, res) => {
           moduleId: lessonContext.moduleId,
           lessonId: lessonContext.lessonId,
           userId,
-          responseText,
-          status: 'draft',
+          responseText: summarizeReflectionResponseData(responseData),
+          responseData: normalizeReflectionResponseData(responseData),
+          status,
           createdAt: nowIso,
           updatedAt: nowIso,
         },
@@ -19889,9 +20067,32 @@ const handleLearnerReflectionPost = async (req, res) => {
       });
       return;
     }
+    logger.error('learner_reflection_save_failure', {
+      requestId: req.requestId ?? null,
+      userId,
+      orgId,
+      lessonId: lessonContext.lessonId,
+      courseId: lessonContext.courseId,
+      status,
+      responseSize: summarizeReflectionResponseData(responseData).length,
+      timingMs: Date.now() - saveStartedAt,
+      code: error?.code ?? null,
+      message: error?.message ?? null,
+    });
     throw error;
   }
 
+  logger.info('learner_reflection_save_success', {
+    requestId: req.requestId ?? null,
+    userId,
+    orgId,
+    lessonId: lessonContext.lessonId,
+    courseId: lessonContext.courseId,
+    status,
+    responseSize: summarizeReflectionResponseData(responseData).length,
+    timingMs: Date.now() - saveStartedAt,
+    mode: 'db',
+  });
   res.status(202).json({ data: shapeReflectionRecord(data ?? payload) });
 };
 
@@ -19969,7 +20170,7 @@ const handleAdminLessonReflectionsGet = async (req, res) => {
     lessonContextById: new Map([[String(lessonContext.lessonId).toLowerCase(), lessonContext]]),
   });
 
-  res.json({ data: { rows: shaped, total: search ? shaped.length : (count ?? shaped.length) } });
+  res.json({ data: { rows: shaped, total: count ?? shaped.length } });
 };
 
 const handleAdminCourseReflectionsGet = async (req, res) => {
@@ -20026,7 +20227,18 @@ const handleAdminCourseReflectionsGet = async (req, res) => {
       })
       .filter((row) => {
         if (!search) return true;
-        const haystack = [row.learnerName, row.learnerEmail, row.responseText, row.lessonTitle, row.moduleTitle]
+        const haystack = [
+          row.learnerName,
+          row.learnerEmail,
+          row.responseText,
+          row.responseData?.promptResponse,
+          row.responseData?.deeperReflection1,
+          row.responseData?.deeperReflection2,
+          row.responseData?.deeperReflection3,
+          row.responseData?.actionCommitment,
+          row.lessonTitle,
+          row.moduleTitle,
+        ]
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
@@ -20108,7 +20320,18 @@ const handleAdminCourseReflectionsGet = async (req, res) => {
   const profileLookup = await fetchReflectionProfileLookup(rows.map((row) => row.user_id));
   const shaped = shapeAdminReflectionRows({ rows, profileLookup, lessonContextById }).filter((row) => {
     if (!search) return true;
-    const haystack = [row.learnerName, row.learnerEmail, row.responseText, row.lessonTitle, row.moduleTitle]
+    const haystack = [
+      row.learnerName,
+      row.learnerEmail,
+      row.responseText,
+      row.responseData?.promptResponse,
+      row.responseData?.deeperReflection1,
+      row.responseData?.deeperReflection2,
+      row.responseData?.deeperReflection3,
+      row.responseData?.actionCommitment,
+      row.lessonTitle,
+      row.moduleTitle,
+    ]
       .filter(Boolean)
       .join(' ')
       .toLowerCase();

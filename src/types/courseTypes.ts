@@ -153,6 +153,11 @@ export interface LessonContent {
   notes?: string; // For additional course notes
   prompt?: string; // canonical reflection prompt
   collectResponse?: boolean; // canonical reflection response flag
+  introText?: string;
+  thinkPrompt?: string;
+  deepenPrompts?: string[];
+  actionPrompt?: string;
+  confirmationMessage?: string;
   reflectionPrompt?: string; // for courseStore compatibility
   allowReflection?: boolean; // for courseStore compatibility
   requireReflection?: boolean; // for courseStore compatibility
