@@ -973,9 +973,11 @@ app.set('etag', false);
 app.use(corsMiddleware);
 console.log('[startup] CORS middleware registered');
 
-app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
+const JSON_BODY_LIMIT = process.env.API_JSON_BODY_LIMIT || '25mb';
+
 app.use(attachRequestId);
+app.use(cookieParser());
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // ---------------------------------------------------------------------------
 // API Response Normalizer — ensures every /api/* response includes the
@@ -26830,21 +26832,32 @@ const redactEnv = (input) => {
 log('info', 'Server started', { env: redactEnv(env) });
 
 app.use((err, req, res, next) => {
+  const isPayloadTooLarge =
+    err?.type === 'entity.too.large' ||
+    err?.name === 'PayloadTooLargeError' ||
+    Number(err?.status) === 413 ||
+    Number(err?.statusCode) === 413;
+  const statusCode = isPayloadTooLarge ? 413 : (err?.status || err?.statusCode || 500);
+  const errorCode = isPayloadTooLarge ? 'payload_too_large' : (err?.code || 'internal_error');
+  const errorMessage = isPayloadTooLarge
+    ? `Request entity too large. Reduce payload size or increase API_JSON_BODY_LIMIT (current ${JSON_BODY_LIMIT}).`
+    : (err?.message || 'Internal server error');
+
   const payload = {
     requestId: req.requestId || null,
     path: req.originalUrl,
     method: req.method,
-    message: err?.message || String(err),
-    code: err?.code || null,
+    message: errorMessage,
+    code: errorCode,
   };
   emitConsolePayload('[express] unhandled_error', payload);
   if (res.headersSent) {
     return next(err);
   }
-  res.status(err?.status || err?.statusCode || 500).json({
+  res.status(statusCode).json({
     ok: false,
-    code: err?.code || 'internal_error',
-    message: err?.message || 'Internal server error',
+    code: errorCode,
+    message: errorMessage,
     requestId: req.requestId || null,
   });
 });

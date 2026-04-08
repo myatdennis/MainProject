@@ -2338,9 +2338,9 @@ const LessonContent: React.FC<{
             <textarea
               value={reflectionText}
               onChange={(event) => setReflectionText(event.target.value)}
-              rows={5}
+              rows={8}
               placeholder="Write your reflection here…"
-              className="w-full rounded-lg border border-slate/20 bg-white px-3 py-2 text-sm text-charcoal focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
+              className="w-full min-h-[220px] resize-y rounded-lg border border-slate/20 bg-white px-3 py-2 text-sm leading-6 text-charcoal focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
               disabled={reflectionLoading}
             />
             <div className="text-xs text-slate/70">
