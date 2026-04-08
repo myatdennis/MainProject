@@ -37,6 +37,7 @@ const navigation = [
   { name: 'Certificates', href: '/lms/certificates', icon: Award },
   { name: 'Downloads', href: '/lms/downloads', icon: Download },
   { name: 'Surveys', href: '/lms/surveys', icon: ClipboardList },
+  { name: 'Team Huddle', href: '/lms/team-huddle', icon: Users },
   { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
   { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
   { name: 'Settings', href: '/lms/settings', icon: Settings },

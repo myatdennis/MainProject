@@ -23,6 +23,11 @@ const learnerHeaders = {
   'x-user-id': LEARNER_USER_ID,
 };
 
+const buildLearnerHeaders = (userId: string) => ({
+  ...learnerHeaders,
+  'x-user-id': userId,
+});
+
 const createPublishedSurvey = async (request: any, unique: number) => {
   const response = await request.post(`${apiBase}/api/admin/surveys`, {
     headers: adminHeaders,
@@ -80,9 +85,9 @@ const listSurveyAssignments = async (request: any, surveyId: string) => {
   return payload?.data ?? [];
 };
 
-const listLearnerAssignedSurveys = async (request: any) => {
+const listLearnerAssignedSurveys = async (request: any, userId: string = LEARNER_USER_ID) => {
   const response = await request.get(`${apiBase}/api/client/surveys/assigned`, {
-    headers: learnerHeaders,
+    headers: buildLearnerHeaders(userId),
     failOnStatusCode: false,
   });
   const text = await response.text();
@@ -92,9 +97,9 @@ const listLearnerAssignedSurveys = async (request: any) => {
   return payload?.data ?? [];
 };
 
-const submitSurveyAsLearner = async (request: any, surveyId: string, assignmentId: string) => {
+const submitSurveyAsLearner = async (request: any, surveyId: string, assignmentId: string, userId: string = LEARNER_USER_ID) => {
   const response = await request.post(`${apiBase}/api/client/surveys/${encodeURIComponent(surveyId)}/submit`, {
-    headers: learnerHeaders,
+    headers: buildLearnerHeaders(userId),
     failOnStatusCode: false,
     data: {
       assignmentId,
@@ -266,6 +271,80 @@ test.describe('Survey assignment runtime proof', () => {
           }, { learnerUserId: LEARNER_USER_ID, orgId: TEST_ORG_ID });
         }, { timeout: 30_000 })
         .toContain(String(surveyId));
+    } finally {
+      await deleteSurvey(request, surveyId);
+    }
+  });
+
+  test('learner can save progress and restore draft responses on reload', async ({ request }) => {
+    const unique = Date.now();
+    const surveyId = await createPublishedSurvey(request, unique);
+
+    try {
+      await assignSurveyToOrg(request, surveyId);
+      const learnerBeforeSave = await listLearnerAssignedSurveys(request);
+      const matchingEntry = learnerBeforeSave.find(
+        (entry: any) => String(entry?.survey?.id ?? entry?.assignment?.survey_id ?? '') === String(surveyId),
+      );
+      expect(matchingEntry?.assignment?.id).toBeTruthy();
+
+      const saveResponse = await request.post(`${apiBase}/api/client/surveys/${encodeURIComponent(surveyId)}/submit`, {
+        headers: learnerHeaders,
+        failOnStatusCode: false,
+        data: {
+          assignmentId: matchingEntry.assignment.id,
+          status: 'in-progress',
+          responses: {
+            q1: 'I am still filling this out',
+          },
+          metadata: {
+            source: 'e2e-save-progress',
+          },
+        },
+      });
+      const saveText = await saveResponse.text();
+      expect(saveResponse.status(), saveText).toBe(200);
+
+      const learnerAfterSave = await listLearnerAssignedSurveys(request);
+      const savedEntry = learnerAfterSave.find(
+        (entry: any) => String(entry?.assignment?.id ?? '') === String(matchingEntry.assignment.id),
+      );
+      expect(savedEntry).toBeTruthy();
+      expect(String(savedEntry?.assignment?.status ?? '')).toBe('in-progress');
+      expect(savedEntry?.assignment?.metadata?.draft_response?.q1).toBe('I am still filling this out');
+
+      await submitSurveyAsLearner(request, surveyId, matchingEntry.assignment.id);
+    } finally {
+      await deleteSurvey(request, surveyId);
+    }
+  });
+
+  test('unauthenticated learner cannot submit survey responses', async ({ request }) => {
+    const unique = Date.now();
+    const surveyId = await createPublishedSurvey(request, unique);
+
+    try {
+      await assignSurveyToOrg(request, surveyId);
+      const learnerAssignments = await listLearnerAssignedSurveys(request, LEARNER_USER_ID);
+      const ownEntry = learnerAssignments.find(
+        (entry: any) => String(entry?.survey?.id ?? entry?.assignment?.survey_id ?? '') === String(surveyId),
+      );
+      expect(ownEntry?.assignment?.id).toBeTruthy();
+
+      const unauthenticatedSubmitResponse = await request.post(
+        `${apiBase}/api/client/surveys/${encodeURIComponent(surveyId)}/submit`,
+        {
+          failOnStatusCode: false,
+          data: {
+            assignmentId: ownEntry.assignment.id,
+            responses: {
+              q1: { value: 4, label: 'Agree' },
+            },
+          },
+        },
+      );
+      const unauthenticatedText = await unauthenticatedSubmitResponse.text();
+      expect(unauthenticatedSubmitResponse.status(), unauthenticatedText).toBe(401);
     } finally {
       await deleteSurvey(request, surveyId);
     }

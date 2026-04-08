@@ -24,6 +24,8 @@ import ClientCourseDetail from './pages/Client/ClientCourseDetail';
 import ClientLessonView from './pages/Client/ClientLessonView';
 import ClientCourseCompletion from './pages/Client/ClientCourseCompletion';
 import ClientSurveys from './pages/Client/ClientSurveys';
+import ClientTeamHuddle from './pages/Client/ClientTeamHuddle';
+import ClientTeamHuddlePostDetail from './pages/Client/ClientTeamHuddlePostDetail';
 import ClientSurveyTake from './pages/Client/ClientSurveyTake';
 import ClientSurveyResults from './pages/Client/ClientSurveyResults';
 import ClientSurveyProgress from './pages/Client/ClientSurveyProgress';
@@ -44,6 +46,8 @@ import LMSMeeting from './pages/LMS/LMSMeeting';
 import LMSModule from './pages/LMS/LMSModule';
 import LMSCourseCompletion from './pages/LMS/LMSCourseCompletion';
 import LMSLessonView from './pages/LMS/LMSLessonView';
+import LMSTeamHuddle from './pages/LMS/LMSTeamHuddle';
+import LMSTeamHuddlePostDetail from './pages/LMS/LMSTeamHuddlePostDetail';
 import NotFound from './pages/NotFound';
 import AIBot from './components/AIBot/AIBot';
 import InviteAccept from './pages/InviteAccept';
@@ -96,6 +100,7 @@ const AdminReports = lazy(() => import('./pages/Admin/AdminReports'));
 const AdminIntegrations = lazy(() => import('./pages/Admin/AdminIntegrations'));
 const AdminIntegrationConfig = lazy(() => import('./pages/Admin/AdminIntegrationConfig'));
 const AdminCertificates = lazy(() => import('./pages/Admin/AdminCertificates'));
+const AdminTeamHuddleModeration = lazy(() => import('./pages/Admin/AdminTeamHuddleModeration'));
 
 const AdminProtectedLayout = () => {
   const loc = useLocation();
@@ -431,6 +436,8 @@ function AppContent() {
             <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
             <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
             <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="team-huddle" element={<ClientTeamHuddle />} />
+            <Route path="team-huddle/post/:postId" element={<ClientTeamHuddlePostDetail />} />
             <Route path="surveys/:surveyId/take" element={<ClientSurveyTake />} />
             <Route path="surveys/:surveyId/results" element={<ClientSurveyResults />} />
             <Route path="surveys/:surveyId/progress" element={<ClientSurveyProgress />} />
@@ -470,6 +477,8 @@ function AppContent() {
             <Route path="course/:courseId" element={<LMSModule />} />
             <Route path="module/:moduleId" element={<LMSModule />} />
             <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="team-huddle" element={<LMSTeamHuddle />} />
+            <Route path="team-huddle/post/:postId" element={<LMSTeamHuddlePostDetail />} />
             <Route path="surveys/:surveyId/take" element={<ClientSurveyTake />} />
             <Route path="surveys/:surveyId/results" element={<ClientSurveyResults />} />
             <Route path="surveys/:surveyId/progress" element={<ClientSurveyProgress />} />
@@ -546,6 +555,7 @@ function AppContent() {
             <Route path="performance" element={<AdminPerformanceDashboard />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="reports" element={<AdminReports />} />
+            <Route path="team-huddle/moderation" element={<AdminTeamHuddleModeration />} />
             <Route path="integrations" element={<AdminIntegrations />} />
             <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
             <Route path="certificates" element={<AdminCertificates />} />

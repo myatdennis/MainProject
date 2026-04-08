@@ -63,6 +63,7 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
   { id: 'admin-nav-surveys', label: 'Surveys', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/surveys', created: true, status: 'working' },
   { id: 'admin-nav-analytics', label: 'Analytics', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/analytics', created: true, status: 'working' },
   { id: 'admin-nav-reports', label: 'Reports', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/reports', created: true, status: 'working' },
+  { id: 'admin-nav-team-huddle', label: 'Team Huddle', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/team-huddle/moderation', created: true, status: 'working' },
   { id: 'admin-nav-documents', label: 'Documents', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/documents', created: true, status: 'working' },
   { id: 'admin-nav-certificates', label: 'Certificates', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/certificates', created: true, status: 'working' },
   { id: 'admin-nav-settings', label: 'Settings', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/settings', created: true, status: 'working' },
@@ -130,6 +131,7 @@ export const LMS_ROUTES: ButtonRouteEntry[] = [
   { id: 'lms-nav-courses', label: 'Courses', roles: ['learner', 'facilitator'], location: 'LMS Sidebar', targetRoute: '/lms/courses', created: true, status: 'working' },
   { id: 'lms-nav-downloads', label: 'Downloads', roles: ['learner', 'facilitator'], location: 'LMS Sidebar', targetRoute: '/lms/downloads', created: true, status: 'working' },
   { id: 'lms-nav-feedback', label: 'Feedback', roles: ['learner', 'facilitator'], location: 'LMS Sidebar', targetRoute: '/lms/feedback', created: true, status: 'working' },
+  { id: 'lms-nav-team-huddle', label: 'Team Huddle', roles: ['learner', 'facilitator'], location: 'LMS Sidebar', targetRoute: '/lms/team-huddle', created: true, status: 'working' },
   { id: 'lms-nav-contact', label: 'Contact', roles: ['learner', 'facilitator'], location: 'LMS Sidebar', targetRoute: '/lms/contact', created: true, status: 'working' },
 
   // LMS Dashboard Quick Actions

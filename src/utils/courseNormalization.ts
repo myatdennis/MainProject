@@ -86,7 +86,7 @@ const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: numbe
     .map((lesson: Lesson, lessonIndex: number) => {
       const canonicalOrder = toNumericOrder(
         lesson.order_index,
-        toNumericOrder(lesson.order, lessonIndex)
+        toNumericOrder(lesson.order, lessonIndex + 1)
       );
       const estimatedMinutes =
         lesson.estimatedDuration ?? parseDurationToMinutes(lesson.duration);
@@ -131,7 +131,7 @@ const normalizeModules = (course: Course): Module[] => {
 
   return modules
     .map((module: Module, index: number) => {
-      const canonicalOrder = toNumericOrder((module as any)?.order_index, toNumericOrder(module.order, index));
+      const canonicalOrder = toNumericOrder((module as any)?.order_index, toNumericOrder(module.order, index + 1));
       const lessons = normalizeLessons(module, course.id, index);
       const moduleMinutes = lessons.reduce((sum: number, lesson: Lesson) => {
         return sum + (lesson.estimatedDuration ?? 0);

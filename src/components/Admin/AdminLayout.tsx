@@ -66,6 +66,7 @@ const iconMap: Record<string, LucideIcon> = {
   'Survey Creator': PenSquare,
   'Analytics': BarChart3,
   'Reports': BarChart2,
+  'Team Huddle': UsersIcon,
   'Documents': FileText,
   'Certificates': Award,
   'Performance': TrendingUp,

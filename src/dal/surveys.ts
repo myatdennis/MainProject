@@ -363,6 +363,7 @@ export async function submitLearnerSurveyResponse(
     assignmentId?: string | null;
     responses: Record<string, unknown>;
     metadata?: Record<string, unknown>;
+    status?: 'completed' | 'in-progress';
   },
 ) {
   const body: Record<string, unknown> = {
@@ -374,11 +375,28 @@ export async function submitLearnerSurveyResponse(
   if (payload.metadata) {
     body.metadata = payload.metadata;
   }
+  if (payload.status) {
+    body.status = payload.status;
+  }
   const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/submit`, {
     method: 'POST',
     body,
   });
   return json.data ?? null;
+}
+
+export async function saveLearnerSurveyProgress(
+  surveyId: string,
+  payload: {
+    assignmentId?: string | null;
+    responses: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  return submitLearnerSurveyResponse(surveyId, {
+    ...payload,
+    status: 'in-progress',
+  });
 }
 
 export async function fetchAdminSurveyResults(

@@ -151,6 +151,8 @@ const LMSModule = () => {
   const [lessonPositions, setLessonPositions] = useState<Record<string, number>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [completionRedirected, setCompletionRedirected] = useState(false);
+  const lastCourseProgressRef = useRef<number | null>(null);
+  const hasInitializedProgressRef = useRef(false);
   const lastCelebratedMilestoneRef = useRef(0);
   const progressAvailability = useMemo(() => progressService.getAvailability(), []);
   const progressDisabled = !progressAvailability.enabled;
@@ -445,8 +447,25 @@ const LMSModule = () => {
   }, [persistProgress]);
 
   useEffect(() => {
+    setCompletionRedirected(false);
+    hasInitializedProgressRef.current = false;
+    lastCourseProgressRef.current = null;
+  }, [courseContext?.course?.id]);
+
+  useEffect(() => {
     if (!courseContext?.course?.id) return;
-    if (courseProgressPercent >= 100 && !completionRedirected) {
+
+    if (!hasInitializedProgressRef.current) {
+      hasInitializedProgressRef.current = true;
+      lastCourseProgressRef.current = courseProgressPercent;
+      return;
+    }
+
+    const previousProgress = lastCourseProgressRef.current ?? 0;
+    const newlyCompleted = previousProgress < 100 && courseProgressPercent >= 100;
+    lastCourseProgressRef.current = courseProgressPercent;
+
+    if (newlyCompleted && !completionRedirected) {
       setCompletionRedirected(true);
       const completionCourseId = courseContext.course.slug || courseContext.course.id;
       navigate(`/lms/courses/${completionCourseId}/completion`, {

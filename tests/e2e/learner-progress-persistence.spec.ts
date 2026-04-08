@@ -325,7 +325,8 @@ test.describe('Learner progress persistence regression (isolated)', () => {
       ).toBe(true);
 
       // 8-9) re-enter course and assert resume/progress state remains.
-      await refreshedCard.getByRole('button', { name: /Start course|Continue/i }).click();
+  await expect(refreshedCard.getByText('Completed')).toBeVisible({ timeout: 10_000 });
+  await refreshedCard.getByRole('button', { name: /Start course|Continue|Review course/i }).click();
       await page.waitForTimeout(1500);
 
       const lessonUrlPattern = new RegExp(`/client/courses/${created.slug}/lessons/`);
@@ -341,7 +342,12 @@ test.describe('Learner progress persistence regression (isolated)', () => {
           ? false
           : await completionHeading.isVisible({ timeout: 6000 }).catch(() => false);
         expect(landedOnLesson || landedOnCompletion).toBe(true);
-        await expect(page.getByText(/Completed|100% complete/i)).toBeVisible({ timeout: 20_000 });
+        await expect
+          .poll(async () => page.locator('text=/Completed|100% complete/i').count(), {
+            timeout: 20_000,
+            intervals: [500, 1000],
+          })
+          .toBeGreaterThan(0);
       } else {
         const fallbackCard = await waitForAssignedCourseCard(page, created.title);
         const percentAfterReentryClick = await extractCardPercent(fallbackCard, created.title);

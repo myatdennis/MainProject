@@ -485,7 +485,7 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
         const courseId = row.course_id ?? row.courseId;
         const userIdRaw = row.user_id ?? row.userId ?? '';
         const dueDate = row.due_date ?? row.dueAt ?? row.due_at ?? null;
-        const organizationId = row.organization_id ?? row.organizationId ?? null;
+  const organizationId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
         return mapSupabaseAssignment({
           id: row.id,
           course_id: courseId,

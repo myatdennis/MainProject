@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import ClientCourses from '../ClientCourses';
 
 const mockNavigate = vi.fn();
@@ -144,5 +144,32 @@ describe('ClientCourses', () => {
     expect(await screen.findByText('Course 1')).toBeInTheDocument();
     const progressBar = screen.getByRole('progressbar', { name: 'Course 1 progress' });
     expect(progressBar).toHaveAttribute('aria-valuenow', '75');
+  });
+
+  it('shows completed status with a review CTA for completed learners', async () => {
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-1',
+        courseId: 'course-1',
+        userId: 'user-123',
+        status: 'completed',
+        progress: 100,
+      },
+    ] as any);
+
+    buildLearnerProgressSnapshotMock.mockReturnValue({ overallProgress: 1 });
+    loadStoredCourseProgressMock.mockReturnValue({
+      completedLessonIds: ['lesson-1', 'lesson-2', 'lesson-3', 'lesson-4'],
+      lessonProgress: { 'lesson-1': 100, 'lesson-2': 100, 'lesson-3': 100, 'lesson-4': 100 },
+      lessonPositions: {},
+    } as any);
+
+    renderCourses();
+
+  const courseTitle = await screen.findByText('Course 1');
+  const card = courseTitle.closest('[data-test="client-course-card"]') as HTMLElement | null;
+  expect(card).not.toBeNull();
+  expect(within(card as HTMLElement).getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review course' })).toBeInTheDocument();
   });
 });

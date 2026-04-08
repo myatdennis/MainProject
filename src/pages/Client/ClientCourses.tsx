@@ -386,7 +386,7 @@ const ClientCourses = () => {
                             }}
                             data-test="client-course-primary"
                           >
-                            {status === 'not-started' ? 'Start course' : 'Continue'}
+                            {status === 'completed' ? 'Review course' : status === 'not-started' ? 'Start course' : 'Continue'}
                           </Button>
                           <Button variant="ghost" size="sm" asChild>
                             <Link to={`/client/courses/${course.slug}`}>Details</Link>

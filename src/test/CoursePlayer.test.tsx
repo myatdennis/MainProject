@@ -208,6 +208,20 @@ const renderCoursePlayer = (initialEntry = '/lms/courses/course-1/lesson/lesson-
   );
 };
 
+const renderClientCoursePlayer = (initialEntry = '/client/courses/course-1/lessons/lesson-1') => {
+  const queryClient = new QueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/client/courses/:courseId/lessons/:lessonId" element={<CoursePlayer namespace="client" />} />
+          <Route path="/client/courses/:courseId/completion" element={<div data-testid="client-completion-screen">Completion screen</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+};
+
 describe('CoursePlayer progress integration', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -314,6 +328,24 @@ describe('CoursePlayer progress integration', () => {
       expect(mockUpdateAssignmentProgress).toHaveBeenCalledWith('course-1', 'local-user', expect.any(Number));
       expect(mockSaveStoredCourseProgress).toHaveBeenCalled();
       expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'user_progress' }));
+    });
+  });
+
+  it('does not auto-redirect to completion when reopening an already completed course', async () => {
+    mockLoadStoredCourseProgress.mockReturnValue({
+      completedLessonIds: ['lesson-1', 'lesson-2'],
+      lessonProgress: { 'lesson-1': 100, 'lesson-2': 100 },
+      lessonPositions: {},
+      lastLessonId: 'lesson-2',
+    });
+
+    renderClientCoursePlayer('/client/courses/course-1/lessons/lesson-2');
+
+    await waitFor(() => {
+      expect(mockLoadCourse).toHaveBeenCalledWith('course-1', { includeDrafts: false, preferRemote: true });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('client-completion-screen')).not.toBeInTheDocument();
     });
   });
 

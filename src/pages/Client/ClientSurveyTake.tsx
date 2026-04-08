@@ -5,7 +5,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { LoadingSpinner } from '../../components/LoadingComponents';
-import { fetchAssignedSurveysForLearner, submitLearnerSurveyResponse } from '../../dal/surveys';
+import { fetchAssignedSurveysForLearner, saveLearnerSurveyProgress, submitLearnerSurveyResponse } from '../../dal/surveys';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 import type { SurveyQuestion } from '../../types/survey';
 
@@ -51,6 +51,7 @@ const ClientSurveyTake = () => {
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
@@ -76,6 +77,18 @@ const ClientSurveyTake = () => {
         }
         setSurvey(selected.survey);
         setResolvedAssignmentId(selected.assignment?.id ?? assignmentId ?? undefined);
+        const draftResponse =
+          selected.assignment?.metadata && typeof selected.assignment.metadata === 'object'
+            ? (selected.assignment.metadata as Record<string, unknown>).draft_response
+            : null;
+        if (draftResponse && typeof draftResponse === 'object') {
+          setAnswers(draftResponse as Record<string, unknown>);
+          console.info('[ClientSurveyTake] survey_progress_restored', {
+            surveyId,
+            assignmentId: selected.assignment?.id ?? null,
+            restoredFieldCount: Object.keys(draftResponse as Record<string, unknown>).length,
+          });
+        }
       })
       .catch((err) => {
         if (!active) return;
@@ -115,6 +128,11 @@ const ClientSurveyTake = () => {
 
     setValidationError(null);
     setSubmitting(true);
+    console.info('[ClientSurveyTake] survey_submit_started', {
+      surveyId,
+      assignmentId: resolvedAssignmentId ?? null,
+      answerCount: Object.keys(answers).length,
+    });
     try {
       await submitLearnerSurveyResponse(surveyId, {
         assignmentId: resolvedAssignmentId,
@@ -123,12 +141,46 @@ const ClientSurveyTake = () => {
           source: 'learner_survey_take',
         },
       });
+      console.info('[ClientSurveyTake] survey_submit_succeeded', {
+        surveyId,
+        assignmentId: resolvedAssignmentId ?? null,
+      });
       setSubmitted(true);
     } catch (err) {
       console.error('[ClientSurveyTake] submit failed', err);
       setValidationError('Unable to submit your survey right now. Please try again.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSaveProgress = async () => {
+    if (!surveyId) return;
+    setValidationError(null);
+    setSaving(true);
+    console.info('[ClientSurveyTake] survey_progress_save_started', {
+      surveyId,
+      assignmentId: resolvedAssignmentId ?? null,
+      answerCount: Object.keys(answers).length,
+    });
+    try {
+      await saveLearnerSurveyProgress(surveyId, {
+        assignmentId: resolvedAssignmentId,
+        responses: answers,
+        metadata: {
+          source: 'learner_survey_take',
+        },
+      });
+      setValidationError('Progress saved. You can safely return and finish later.');
+      console.info('[ClientSurveyTake] survey_progress_save_succeeded', {
+        surveyId,
+        assignmentId: resolvedAssignmentId ?? null,
+      });
+    } catch (err) {
+      console.error('[ClientSurveyTake] save progress failed', err);
+      setValidationError('Unable to save progress right now. Please try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -303,7 +355,10 @@ const ClientSurveyTake = () => {
             <Button variant="ghost" asChild>
               <Link to={`${portalPath}/surveys`}>Cancel</Link>
             </Button>
-            <Button onClick={handleSubmit} disabled={submitting || questions.length === 0}>
+            <Button variant="ghost" onClick={handleSaveProgress} disabled={saving || submitting || questions.length === 0}>
+              {saving ? 'Saving…' : 'Save progress'}
+            </Button>
+            <Button onClick={handleSubmit} disabled={submitting || saving || questions.length === 0}>
               {submitting ? 'Submitting…' : 'Submit survey'}
             </Button>
           </div>

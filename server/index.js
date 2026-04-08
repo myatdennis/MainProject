@@ -924,7 +924,16 @@ function loadPersistedData() {
               const stat = fs.statSync(STORAGE_FILE);
               if (stat.size > MAX_DEMO_FILE_BYTES) {
                 logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
-                return { courses: [], surveys: [], surveyAssignments: [], lessonReflections: [] };
+                return {
+                  courses: [],
+                  surveys: [],
+                  surveyAssignments: [],
+                  lessonReflections: [],
+                  huddlePosts: [],
+                  huddleComments: [],
+                  huddleReactions: [],
+                  huddleReports: [],
+                };
               }
             } catch {}
             const data = fs.readFileSync(STORAGE_FILE, 'utf8');
@@ -940,6 +949,10 @@ function loadPersistedData() {
           surveys: new Map(),
           surveyAssignments: new Map(),
           lessonReflections: new Map(),
+          huddlePosts: new Map(),
+          huddleComments: new Map(),
+          huddleReactions: new Map(),
+          huddleReports: new Map(),
         };
 }
 
@@ -972,6 +985,10 @@ function savePersistedData(data) {
       surveys: Array.from((data.surveys || new Map()).entries()),
       surveyAssignments: Array.from((data.surveyAssignments || new Map()).entries()),
       lessonReflections: Array.from((data.lessonReflections || new Map()).entries()),
+      huddlePosts: Array.from((data.huddlePosts || new Map()).entries()),
+      huddleComments: Array.from((data.huddleComments || new Map()).entries()),
+      huddleReactions: Array.from((data.huddleReactions || new Map()).entries()),
+      huddleReports: Array.from((data.huddleReports || new Map()).entries()),
     };
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
     const strippedCount = data.courses.size - filteredCourseEntries.length;
@@ -3924,7 +3941,16 @@ const checkSupabaseHealth = async () => {
 const _loadCoursesFromDisk = Boolean(isDemoMode);
 const persistedData = _loadCoursesFromDisk
   ? loadPersistedData()
-  : { courses: [], surveys: [], surveyAssignments: [], lessonReflections: [] };
+  : {
+      courses: [],
+      surveys: [],
+      surveyAssignments: [],
+      lessonReflections: [],
+      huddlePosts: [],
+      huddleComments: [],
+      huddleReactions: [],
+      huddleReports: [],
+    };
 if (supabaseServerConfigured && !_loadCoursesFromDisk && (persistedData.courses || []).length > 0) {
   logger.warn('persistent_storage_courses_ignored', {
     message: 'demo-data.json contains courses but Supabase is configured — disk courses will NOT be loaded. Supabase is the sole source of truth.',
@@ -3950,6 +3976,10 @@ const e2eStore = {
   surveys: new Map(persistedData.surveys || []),
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
   lessonReflections: new Map(persistedData.lessonReflections || []), // key `${org_id}:${course_id}:${lesson_id}:${user_id}`
+  huddlePosts: new Map(persistedData.huddlePosts || []),
+  huddleComments: new Map(persistedData.huddleComments || []),
+  huddleReactions: new Map(persistedData.huddleReactions || []),
+  huddleReports: new Map(persistedData.huddleReports || []),
   auditLogs: [],
 };
 
@@ -6050,37 +6080,53 @@ const loadSurveyAssignmentForUser = async (
 ) => {
   if (!supabase || !surveyId || !userId) return null;
   try {
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    const isUserIdUuid = isUuid(userId);
+
     if (assignmentId) {
-      const { data, error } = await supabase
+      let assignmentByIdQuery = supabase
         .from('assignments')
         .select(SURVEY_ASSIGNMENT_SELECT)
         .eq('id', assignmentId)
         .eq('survey_id', surveyId)
-        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-        .maybeSingle();
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE);
+      if (assignmentsSupportUserIdUuid && isUserIdUuid) {
+        assignmentByIdQuery = assignmentByIdQuery.or(`user_id.eq.${userId},user_id_uuid.eq.${userId}`);
+      } else {
+        assignmentByIdQuery = assignmentByIdQuery.eq('user_id', userId);
+      }
+      const { data, error } = await assignmentByIdQuery.maybeSingle();
       if (error) throw error;
       if (data) return data;
     }
 
-    const { data: existing, error: existingError } = await supabase
+    let existingQuery = supabase
       .from('assignments')
       .select(SURVEY_ASSIGNMENT_SELECT)
       .eq('survey_id', surveyId)
-      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-      .eq('user_id', userId)
-      .maybeSingle();
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE);
+    if (assignmentsSupportUserIdUuid && isUserIdUuid) {
+      existingQuery = existingQuery.or(`user_id.eq.${userId},user_id_uuid.eq.${userId}`);
+    } else {
+      existingQuery = existingQuery.eq('user_id', userId);
+    }
+    const { data: existing, error: existingError } = await existingQuery.maybeSingle();
     if (existingError) throw existingError;
     if (existing) return existing;
 
     if (Array.isArray(orgIds) && orgIds.length > 0) {
       await ensureSurveyAssignmentsForUserFromOrgScope({ userId, orgIds, surveyFilter: [surveyId] });
-      const { data: hydrated, error: hydratedError } = await supabase
+      let hydratedQuery = supabase
         .from('assignments')
         .select(SURVEY_ASSIGNMENT_SELECT)
         .eq('survey_id', surveyId)
-        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-        .eq('user_id', userId)
-        .maybeSingle();
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE);
+      if (assignmentsSupportUserIdUuid && isUserIdUuid) {
+        hydratedQuery = hydratedQuery.or(`user_id.eq.${userId},user_id_uuid.eq.${userId}`);
+      } else {
+        hydratedQuery = hydratedQuery.eq('user_id', userId);
+      }
+      const { data: hydrated, error: hydratedError } = await hydratedQuery.maybeSingle();
       if (hydratedError) throw hydratedError;
       if (hydrated) return hydrated;
     }
@@ -12098,6 +12144,820 @@ app.post('/api/broadcast', async (req, res) => {
 // Expose broadcast helper to other server modules
 app.locals.broadcastToTopic = broadcastToTopic;
 
+const TEAM_HUDDLE_TABLES = {
+  posts: 'team_huddle_posts',
+  comments: 'team_huddle_comments',
+  reactions: 'team_huddle_reactions',
+  reports: 'team_huddle_reports',
+};
+const TEAM_HUDDLE_REACTIONS = new Set(['like', 'dislike', 'love']);
+const TEAM_HUDDLE_WRITE_LIMITER = createRateLimiter({ tokensPerInterval: 15, intervalMs: 60 * 1000 });
+
+const sanitizeTeamHuddleText = (value, maxLength = 4000) => {
+  if (typeof value !== 'string') return '';
+  const stripped = value.replace(/<[^>]+>/g, '').trim();
+  if (!stripped) return '';
+  return stripped.slice(0, maxLength);
+};
+
+const normalizeTeamHuddleTopics = (value) => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value
+    .map((topic) => sanitizeTeamHuddleText(String(topic || ''), 40).toLowerCase())
+    .filter((topic) => {
+      if (!topic || seen.has(topic)) return false;
+      seen.add(topic);
+      return true;
+    })
+    .slice(0, 8);
+};
+
+const enforceTeamHuddleWriteLimit = (req, res, userId) => {
+  const key = `team-huddle:${userId ?? 'anonymous'}:${req.path}`;
+  const allowed = TEAM_HUDDLE_WRITE_LIMITER(key);
+  if (!allowed) {
+    res.status(429).json({
+      ok: false,
+      code: 'team_huddle_rate_limited',
+      message: 'You are posting too quickly. Please wait a moment and try again.',
+      requestId: req.requestId ?? null,
+    });
+    return false;
+  }
+  return true;
+};
+
+const buildTeamHuddleReactionSummary = (postId) => {
+  const summary = { like: 0, dislike: 0, love: 0 };
+  const byUser = {};
+  for (const reaction of e2eStore.huddleReactions.values()) {
+    if (!reaction || reaction.post_id !== postId) continue;
+    if (TEAM_HUDDLE_REACTIONS.has(reaction.reaction_type)) {
+      summary[reaction.reaction_type] += 1;
+    }
+    if (reaction.user_id) {
+      byUser[reaction.user_id] = reaction.reaction_type;
+    }
+  }
+  return { summary, byUser };
+};
+
+const listTeamHuddleCommentsDemo = (postId) => {
+  return Array.from(e2eStore.huddleComments.values())
+    .filter((comment) => comment.post_id === postId && !comment.deleted_at)
+    .sort((a, b) => Date.parse(a.created_at || '') - Date.parse(b.created_at || ''));
+};
+
+const listTeamHuddlePostsDemo = ({ orgId, includeHidden = false, search = '', topic = '' } = {}) => {
+  const searchTerm = String(search || '').trim().toLowerCase();
+  const topicTerm = String(topic || '').trim().toLowerCase();
+  return Array.from(e2eStore.huddlePosts.values())
+    .filter((post) => {
+      if (!post || post.organization_id !== orgId) return false;
+      if (post.deleted_at) return false;
+      if (!includeHidden && post.hidden_at) return false;
+      if (topicTerm && !(Array.isArray(post.topics) && post.topics.includes(topicTerm))) return false;
+      if (!searchTerm) return true;
+      const haystack = `${post.title || ''} ${post.body || ''} ${(post.topics || []).join(' ')}`.toLowerCase();
+      return haystack.includes(searchTerm);
+    })
+    .sort((a, b) => {
+      if (a.pinned_at && !b.pinned_at) return -1;
+      if (!a.pinned_at && b.pinned_at) return 1;
+      return Date.parse(b.created_at || '') - Date.parse(a.created_at || '');
+    });
+};
+
+const mapTeamHuddlePostEnvelope = (post, { includeComments = false, viewerUserId = null } = {}) => {
+  const { summary, byUser } = buildTeamHuddleReactionSummary(post.id);
+  const comments = includeComments ? listTeamHuddleCommentsDemo(post.id) : [];
+  return {
+    ...post,
+    reactionSummary: summary,
+    viewerReaction: viewerUserId ? byUser[viewerUserId] ?? null : null,
+    commentCount: includeComments ? comments.length : Array.from(e2eStore.huddleComments.values()).filter((item) => item.post_id === post.id && !item.deleted_at).length,
+    comments,
+  };
+};
+
+const teamHuddleReadiness = async () => {
+  if (!supabase) return { ok: true };
+  return ensureTablesReady('team_huddle', [
+    { table: TEAM_HUDDLE_TABLES.posts, columns: ['id', 'organization_id', 'title', 'body', 'author_user_id', 'created_at'] },
+    { table: TEAM_HUDDLE_TABLES.comments, columns: ['id', 'post_id', 'organization_id', 'body', 'author_user_id', 'created_at'] },
+    { table: TEAM_HUDDLE_TABLES.reactions, columns: ['id', 'post_id', 'organization_id', 'user_id', 'reaction_type'] },
+    { table: TEAM_HUDDLE_TABLES.reports, columns: ['id', 'post_id', 'organization_id', 'reported_by_user_id', 'reason'] },
+  ]);
+};
+
+app.get('/api/team-huddle/posts', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection || !orgScope.orgId) {
+    res.status(400).json({ error: 'org_required', message: 'Select an organization to view Team Huddle posts.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, orgScope.orgId, { write: false });
+  if (!access) return;
+
+  const search = typeof req.query.search === 'string' ? req.query.search : '';
+  const topic = typeof req.query.topic === 'string' ? req.query.topic : '';
+  const includeHidden = String(req.query.includeHidden || '').toLowerCase() === 'true' && hasOrgAdminRole(access.role);
+  const limit = clampNumber(parseInt(req.query.limit, 10) || 30, 1, 100);
+
+  if (isDemoOrTestMode || !supabase) {
+    const rows = listTeamHuddlePostsDemo({ orgId: orgScope.orgId, includeHidden, search, topic })
+      .slice(0, limit)
+      .map((post) => mapTeamHuddlePostEnvelope(post, { includeComments: false, viewerUserId: context.userId }));
+    res.json({ ok: true, data: rows, requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  let query = supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .select('*')
+    .eq('organization_id', orgScope.orgId)
+    .is('deleted_at', null)
+    .order('pinned_at', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (!includeHidden) query = query.is('hidden_at', null);
+  if (search) {
+    const term = sanitizeIlike(search);
+    query = query.or(`title.ilike.%${term}%,body.ilike.%${term}%`);
+  }
+  if (topic) {
+    query = query.contains('topics', [topic.toLowerCase()]);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  const posts = Array.isArray(data) ? data : [];
+  const postIds = posts.map((row) => row.id).filter(Boolean);
+
+  const reactionByPost = new Map();
+  if (postIds.length) {
+    const { data: reactionRows, error: reactionError } = await supabase
+      .from(TEAM_HUDDLE_TABLES.reactions)
+      .select('post_id,user_id,reaction_type')
+      .in('post_id', postIds)
+      .eq('organization_id', orgScope.orgId);
+    if (reactionError) throw reactionError;
+    (reactionRows || []).forEach((reaction) => {
+      if (!reaction || !reaction.post_id) return;
+      if (!reactionByPost.has(reaction.post_id)) {
+        reactionByPost.set(reaction.post_id, { like: 0, dislike: 0, love: 0, viewerReaction: null });
+      }
+      const bucket = reactionByPost.get(reaction.post_id);
+      if (TEAM_HUDDLE_REACTIONS.has(reaction.reaction_type)) {
+        bucket[reaction.reaction_type] += 1;
+      }
+      if (reaction.user_id === context.userId) {
+        bucket.viewerReaction = reaction.reaction_type;
+      }
+    });
+  }
+
+  const commentCountByPost = new Map();
+  if (postIds.length) {
+    const { data: commentRows, error: commentError } = await supabase
+      .from(TEAM_HUDDLE_TABLES.comments)
+      .select('post_id')
+      .in('post_id', postIds)
+      .eq('organization_id', orgScope.orgId)
+      .is('deleted_at', null);
+    if (commentError) throw commentError;
+    (commentRows || []).forEach((comment) => {
+      const count = commentCountByPost.get(comment.post_id) || 0;
+      commentCountByPost.set(comment.post_id, count + 1);
+    });
+  }
+
+  res.json({
+    ok: true,
+    data: posts.map((post) => {
+      const reactions = reactionByPost.get(post.id) || { like: 0, dislike: 0, love: 0, viewerReaction: null };
+      return {
+        ...post,
+        reactionSummary: { like: reactions.like, dislike: reactions.dislike, love: reactions.love },
+        viewerReaction: reactions.viewerReaction,
+        commentCount: commentCountByPost.get(post.id) || 0,
+      };
+    }),
+    requestId: req.requestId ?? null,
+  });
+}));
+
+app.post('/api/team-huddle/posts', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!enforceTeamHuddleWriteLimit(req, res, context.userId)) return;
+
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  const orgId = normalizeOrgIdValue(req.body?.organizationId ?? req.body?.organization_id ?? orgScope.orgId);
+  if (!orgId) {
+    res.status(400).json({ error: 'org_required', message: 'Organization is required to create a post.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  const title = sanitizeTeamHuddleText(req.body?.title, 160);
+  const body = sanitizeTeamHuddleText(req.body?.body, 4000);
+  if (!title || !body) {
+    res.status(400).json({ error: 'title_body_required', message: 'Post title and body are required.' });
+    return;
+  }
+  const payload = {
+    id: randomUUID(),
+    organization_id: orgId,
+    author_user_id: context.userId,
+    title,
+    body,
+    topics: normalizeTeamHuddleTopics(req.body?.topics),
+    locked_at: null,
+    locked_by_user_id: null,
+    pinned_at: null,
+    pinned_by_user_id: null,
+    hidden_at: null,
+    hidden_by_user_id: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    deleted_at: null,
+  };
+
+  if (isDemoOrTestMode || !supabase) {
+    e2eStore.huddlePosts.set(payload.id, payload);
+    persistE2EStore();
+    res.status(201).json({ ok: true, data: mapTeamHuddlePostEnvelope(payload, { viewerUserId: context.userId }), requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .insert(payload)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  res.status(201).json({ ok: true, data, requestId: req.requestId ?? null });
+}));
+
+app.get('/api/team-huddle/posts/:postId', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const { postId } = req.params;
+
+  if (isDemoOrTestMode || !supabase) {
+    const post = e2eStore.huddlePosts.get(postId);
+    if (!post || post.deleted_at) {
+      res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+      return;
+    }
+    const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
+    if (!access) return;
+    if (post.hidden_at && !hasOrgAdminRole(access.role) && post.author_user_id !== context.userId) {
+      res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+      return;
+    }
+    res.json({ ok: true, data: mapTeamHuddlePostEnvelope(post, { includeComments: true, viewerUserId: context.userId }), requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data: post, error } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .select('*')
+    .eq('id', postId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (error) throw error;
+  if (!post) {
+    res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
+  if (!access) return;
+  if (post.hidden_at && !hasOrgAdminRole(access.role) && post.author_user_id !== context.userId) {
+    res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+    return;
+  }
+
+  const [{ data: comments, error: commentError }, { data: reactions, error: reactionError }] = await Promise.all([
+    supabase
+      .from(TEAM_HUDDLE_TABLES.comments)
+      .select('*')
+      .eq('post_id', postId)
+      .eq('organization_id', post.organization_id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from(TEAM_HUDDLE_TABLES.reactions)
+      .select('user_id,reaction_type')
+      .eq('post_id', postId)
+      .eq('organization_id', post.organization_id),
+  ]);
+  if (commentError) throw commentError;
+  if (reactionError) throw reactionError;
+
+  const reactionSummary = { like: 0, dislike: 0, love: 0 };
+  let viewerReaction = null;
+  (reactions || []).forEach((reaction) => {
+    if (TEAM_HUDDLE_REACTIONS.has(reaction.reaction_type)) reactionSummary[reaction.reaction_type] += 1;
+    if (reaction.user_id === context.userId) viewerReaction = reaction.reaction_type;
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      ...post,
+      comments: comments || [],
+      commentCount: (comments || []).length,
+      reactionSummary,
+      viewerReaction,
+    },
+    requestId: req.requestId ?? null,
+  });
+}));
+
+app.post('/api/team-huddle/posts/:postId/comments', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!enforceTeamHuddleWriteLimit(req, res, context.userId)) return;
+  const { postId } = req.params;
+  const body = sanitizeTeamHuddleText(req.body?.body, 2000);
+  const parentCommentId = sanitizeTeamHuddleText(req.body?.parentCommentId, 80) || null;
+  if (!body) {
+    res.status(400).json({ error: 'comment_body_required', message: 'Comment body is required.' });
+    return;
+  }
+
+  if (isDemoOrTestMode || !supabase) {
+    const post = e2eStore.huddlePosts.get(postId);
+    if (!post || post.deleted_at) {
+      res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+      return;
+    }
+    const access = await requireOrgAccess(req, res, post.organization_id, { write: true });
+    if (!access) return;
+    if (post.locked_at && !hasOrgAdminRole(access.role)) {
+      res.status(423).json({ error: 'post_locked', message: 'This post is locked for comments.' });
+      return;
+    }
+    const row = {
+      id: randomUUID(),
+      post_id: postId,
+      organization_id: post.organization_id,
+      parent_comment_id: parentCommentId,
+      author_user_id: context.userId,
+      body,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      deleted_at: null,
+    };
+    e2eStore.huddleComments.set(row.id, row);
+    persistE2EStore();
+    if (parentCommentId) {
+      const parent = e2eStore.huddleComments.get(parentCommentId);
+      if (parent?.author_user_id && parent.author_user_id !== context.userId && notificationService) {
+        await notificationService.createNotification({
+          title: 'New Team Huddle reply',
+          body: `Someone replied to your comment in "${post.title}".`,
+          userId: parent.author_user_id,
+          organizationId: post.organization_id,
+          type: 'team_huddle_reply',
+          metadata: { postId: post.id, commentId: row.id },
+        });
+      }
+    }
+    res.status(201).json({ ok: true, data: row, requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data: post, error: postError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .select('id,title,organization_id,locked_at')
+    .eq('id', postId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (postError) throw postError;
+  if (!post) {
+    res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, post.organization_id, { write: true });
+  if (!access) return;
+  if (post.locked_at && !hasOrgAdminRole(access.role)) {
+    res.status(423).json({ error: 'post_locked', message: 'This post is locked for comments.' });
+    return;
+  }
+
+  const payload = {
+    id: randomUUID(),
+    post_id: post.id,
+    organization_id: post.organization_id,
+    parent_comment_id: parentCommentId,
+    author_user_id: context.userId,
+    body,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const { data: inserted, error: insertError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.comments)
+    .insert(payload)
+    .select('*')
+    .maybeSingle();
+  if (insertError) throw insertError;
+
+  if (parentCommentId && notificationService) {
+    const { data: parentComment } = await supabase
+      .from(TEAM_HUDDLE_TABLES.comments)
+      .select('author_user_id')
+      .eq('id', parentCommentId)
+      .eq('organization_id', post.organization_id)
+      .maybeSingle();
+    if (parentComment?.author_user_id && parentComment.author_user_id !== context.userId) {
+      await notificationService.createNotification({
+        title: 'New Team Huddle reply',
+        body: `Someone replied to your comment in "${post.title}".`,
+        userId: parentComment.author_user_id,
+        organizationId: post.organization_id,
+        type: 'team_huddle_reply',
+        metadata: { postId: post.id, commentId: inserted?.id ?? null },
+      });
+    }
+  }
+
+  res.status(201).json({ ok: true, data: inserted, requestId: req.requestId ?? null });
+}));
+
+app.post('/api/team-huddle/posts/:postId/reactions', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const reactionType = String(req.body?.reactionType || '').toLowerCase();
+  if (!TEAM_HUDDLE_REACTIONS.has(reactionType)) {
+    res.status(400).json({ error: 'invalid_reaction', message: 'Reaction must be one of like, dislike, or love.' });
+    return;
+  }
+  const { postId } = req.params;
+
+  if (isDemoOrTestMode || !supabase) {
+    const post = e2eStore.huddlePosts.get(postId);
+    if (!post || post.deleted_at) {
+      res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+      return;
+    }
+    const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
+    if (!access) return;
+    const key = `${postId}:${context.userId}`;
+    const existing = e2eStore.huddleReactions.get(key);
+    if (existing?.reaction_type === reactionType) {
+      e2eStore.huddleReactions.delete(key);
+    } else {
+      e2eStore.huddleReactions.set(key, {
+        id: randomUUID(),
+        post_id: postId,
+        organization_id: post.organization_id,
+        user_id: context.userId,
+        reaction_type: reactionType,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    persistE2EStore();
+    const next = mapTeamHuddlePostEnvelope(post, { viewerUserId: context.userId });
+    res.json({ ok: true, data: { reactionSummary: next.reactionSummary, viewerReaction: next.viewerReaction }, requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data: post, error: postError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .select('id,organization_id')
+    .eq('id', postId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (postError) throw postError;
+  if (!post) {
+    res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
+  if (!access) return;
+
+  const { data: existing, error: existingError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.reactions)
+    .select('id,reaction_type')
+    .eq('post_id', postId)
+    .eq('organization_id', post.organization_id)
+    .eq('user_id', context.userId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  if (existing?.reaction_type === reactionType) {
+    const { error: deleteError } = await supabase
+      .from(TEAM_HUDDLE_TABLES.reactions)
+      .delete()
+      .eq('id', existing.id);
+    if (deleteError) throw deleteError;
+  } else {
+    const upsertPayload = {
+      id: existing?.id ?? randomUUID(),
+      post_id: postId,
+      organization_id: post.organization_id,
+      user_id: context.userId,
+      reaction_type: reactionType,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: upsertError } = await supabase
+      .from(TEAM_HUDDLE_TABLES.reactions)
+      .upsert(upsertPayload, { onConflict: 'post_id,user_id' });
+    if (upsertError) throw upsertError;
+  }
+
+  const { data: reactions, error: reactionError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.reactions)
+    .select('user_id,reaction_type')
+    .eq('post_id', postId)
+    .eq('organization_id', post.organization_id);
+  if (reactionError) throw reactionError;
+  const summary = { like: 0, dislike: 0, love: 0 };
+  let viewerReaction = null;
+  (reactions || []).forEach((row) => {
+    if (TEAM_HUDDLE_REACTIONS.has(row.reaction_type)) summary[row.reaction_type] += 1;
+    if (row.user_id === context.userId) viewerReaction = row.reaction_type;
+  });
+  res.json({ ok: true, data: { reactionSummary: summary, viewerReaction }, requestId: req.requestId ?? null });
+}));
+
+app.post('/api/team-huddle/posts/:postId/report', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!enforceTeamHuddleWriteLimit(req, res, context.userId)) return;
+  const reason = sanitizeTeamHuddleText(req.body?.reason, 1200);
+  if (!reason) {
+    res.status(400).json({ error: 'report_reason_required', message: 'Please include a reason for reporting this post.' });
+    return;
+  }
+  const { postId } = req.params;
+
+  if (isDemoOrTestMode || !supabase) {
+    const post = e2eStore.huddlePosts.get(postId);
+    if (!post || post.deleted_at) {
+      res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+      return;
+    }
+    const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
+    if (!access) return;
+    const row = {
+      id: randomUUID(),
+      post_id: postId,
+      organization_id: post.organization_id,
+      comment_id: null,
+      reported_by_user_id: context.userId,
+      reason,
+      status: 'open',
+      resolved_at: null,
+      resolved_by_user_id: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    e2eStore.huddleReports.set(row.id, row);
+    persistE2EStore();
+    res.status(201).json({ ok: true, data: row, requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data: post, error: postError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .select('id,organization_id')
+    .eq('id', postId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (postError) throw postError;
+  if (!post) {
+    res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
+  if (!access) return;
+
+  const payload = {
+    id: randomUUID(),
+    post_id: postId,
+    organization_id: post.organization_id,
+    comment_id: null,
+    reported_by_user_id: context.userId,
+    reason,
+    status: 'open',
+    resolved_at: null,
+    resolved_by_user_id: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await supabase
+    .from(TEAM_HUDDLE_TABLES.reports)
+    .insert(payload)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  res.status(201).json({ ok: true, data, requestId: req.requestId ?? null });
+}));
+
+app.get('/api/admin/team-huddle/reports', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (!orgScope.orgId) {
+    res.status(400).json({ error: 'org_required', message: 'Organization is required.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, orgScope.orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  if (isDemoOrTestMode || !supabase) {
+    const reports = Array.from(e2eStore.huddleReports.values())
+      .filter((report) => report.organization_id === orgScope.orgId)
+      .sort((a, b) => Date.parse(b.created_at || '') - Date.parse(a.created_at || ''))
+      .map((report) => ({
+        ...report,
+        post: e2eStore.huddlePosts.get(report.post_id) ?? null,
+      }));
+    res.json({ ok: true, data: reports, requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from(TEAM_HUDDLE_TABLES.reports)
+    .select('*, post:team_huddle_posts(*)')
+    .eq('organization_id', orgScope.orgId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  res.json({ ok: true, data: data || [], requestId: req.requestId ?? null });
+}));
+
+app.post('/api/admin/team-huddle/posts/:postId/moderate', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  if (!action) {
+    res.status(400).json({ error: 'action_required', message: 'Moderation action is required.' });
+    return;
+  }
+  const { postId } = req.params;
+  const validActions = new Set(['hide', 'unhide', 'lock', 'unlock', 'pin', 'unpin', 'remove']);
+  if (!validActions.has(action)) {
+    res.status(400).json({ error: 'invalid_action', message: 'Unsupported moderation action.' });
+    return;
+  }
+
+  const applyModerationMutation = (post) => {
+    const nowIso = new Date().toISOString();
+    const next = { ...post, updated_at: nowIso };
+    if (action === 'hide') {
+      next.hidden_at = nowIso;
+      next.hidden_by_user_id = context.userId;
+    }
+    if (action === 'unhide') {
+      next.hidden_at = null;
+      next.hidden_by_user_id = null;
+    }
+    if (action === 'lock') {
+      next.locked_at = nowIso;
+      next.locked_by_user_id = context.userId;
+    }
+    if (action === 'unlock') {
+      next.locked_at = null;
+      next.locked_by_user_id = null;
+    }
+    if (action === 'pin') {
+      next.pinned_at = nowIso;
+      next.pinned_by_user_id = context.userId;
+    }
+    if (action === 'unpin') {
+      next.pinned_at = null;
+      next.pinned_by_user_id = null;
+    }
+    if (action === 'remove') {
+      next.deleted_at = nowIso;
+    }
+    return next;
+  };
+
+  if (isDemoOrTestMode || !supabase) {
+    const post = e2eStore.huddlePosts.get(postId);
+    if (!post || post.deleted_at) {
+      res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+      return;
+    }
+    const access = await requireOrgAccess(req, res, post.organization_id, { write: true, requireOrgAdmin: true });
+    if (!access) return;
+    const next = applyModerationMutation(post);
+    e2eStore.huddlePosts.set(postId, next);
+    for (const report of e2eStore.huddleReports.values()) {
+      if (report.post_id === postId && report.status === 'open') {
+        report.status = 'resolved';
+        report.resolved_at = new Date().toISOString();
+        report.resolved_by_user_id = context.userId;
+      }
+    }
+    persistE2EStore();
+    res.json({ ok: true, data: mapTeamHuddlePostEnvelope(next, { viewerUserId: context.userId }), requestId: req.requestId ?? null });
+    return;
+  }
+
+  const readiness = await teamHuddleReadiness();
+  if (!readiness.ok) {
+    respondSchemaUnavailable(res, 'team_huddle', readiness);
+    return;
+  }
+
+  const { data: post, error: postError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .select('*')
+    .eq('id', postId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (postError) throw postError;
+  if (!post) {
+    res.status(404).json({ error: 'not_found', message: 'Post not found.' });
+    return;
+  }
+  const access = await requireOrgAccess(req, res, post.organization_id, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  const patch = applyModerationMutation(post);
+  const { data: updated, error: updateError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.posts)
+    .update(patch)
+    .eq('id', postId)
+    .select('*')
+    .maybeSingle();
+  if (updateError) throw updateError;
+
+  const { error: reportUpdateError } = await supabase
+    .from(TEAM_HUDDLE_TABLES.reports)
+    .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolved_by_user_id: context.userId })
+    .eq('post_id', postId)
+    .eq('organization_id', post.organization_id)
+    .eq('status', 'open');
+  if (reportUpdateError) throw reportUpdateError;
+
+  if (action === 'pin' && notificationService) {
+    await notificationService.createNotification({
+      title: 'Team Huddle post pinned',
+      body: `A moderator pinned "${updated?.title || post.title}" in Team Huddle.`,
+      organizationId: post.organization_id,
+      type: 'team_huddle_pin',
+      metadata: { postId },
+    });
+  }
+
+  res.json({ ok: true, data: updated, requestId: req.requestId ?? null });
+}));
+
 app.get('/api/admin/courses', authenticate, async (req, res) => {
   console.debug('[ADMIN COURSES HANDLER HIT]', { url: req.url, method: req.method });
   const context = requireUserContext(req, res);
@@ -14637,9 +15497,64 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
 
   if (!supabase) {
     if (isDemoOrTestMode) {
+      const allAssignments = Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [];
+      const scopedOrgIds = new Set(
+        (Array.isArray(context.organizationIds) ? context.organizationIds : [])
+          .map((value) => String(value || '').trim())
+          .filter(Boolean),
+      );
+      const existingUserSurveySet = new Set(
+        allAssignments
+          .filter((assignment) => {
+            if (!assignment) return false;
+            if ((assignment.assignment_type ?? assignment.assignmentType ?? null) !== SURVEY_ASSIGNMENT_TYPE) return false;
+            const rowUserId = assignment.user_id ?? assignment.userId ?? null;
+            return rowUserId && String(rowUserId).toLowerCase() === String(context.userId).toLowerCase();
+          })
+          .map((assignment) => String(assignment.survey_id ?? assignment.surveyId ?? ''))
+          .filter(Boolean),
+      );
+
+      const materializedRows = [];
+      for (const assignment of allAssignments) {
+        if (!assignment) continue;
+        if ((assignment.assignment_type ?? assignment.assignmentType ?? null) !== SURVEY_ASSIGNMENT_TYPE) continue;
+        const surveyId = assignment.survey_id ?? assignment.surveyId ?? null;
+        if (!surveyId) continue;
+        const rowUserId = assignment.user_id ?? assignment.userId ?? null;
+        if (rowUserId) continue;
+        const rowOrgId = assignment.organization_id ?? assignment.organizationId ?? assignment.org_id ?? assignment.orgId ?? null;
+        if (rowOrgId && scopedOrgIds.size > 0 && !scopedOrgIds.has(String(rowOrgId))) continue;
+        if (existingUserSurveySet.has(String(surveyId))) continue;
+
+        const nowIso = new Date().toISOString();
+        const userScopedAssignment = {
+          ...assignment,
+          id: `survey-asn-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          user_id: context.userId,
+          status: assignment.status ?? 'assigned',
+          active: true,
+          metadata: {
+            ...(assignment.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {}),
+            assigned_via: 'org_rollup',
+          },
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        materializedRows.push(userScopedAssignment);
+        existingUserSurveySet.add(String(surveyId));
+      }
+
+      if (materializedRows.length > 0) {
+        e2eStore.assignments.push(...materializedRows);
+        persistE2EStore();
+      }
+
       const rows = (e2eStore.assignments || []).filter((assignment) => {
-        if (assignment.assignment_type !== SURVEY_ASSIGNMENT_TYPE) return false;
-        if (assignment.user_id && assignment.user_id !== context.userId) return false;
+        if (!assignment) return false;
+        if ((assignment.assignment_type ?? assignment.assignmentType ?? null) !== SURVEY_ASSIGNMENT_TYPE) return false;
+        const rowUserId = assignment.user_id ?? assignment.userId ?? null;
+        if (!rowUserId || String(rowUserId).toLowerCase() !== String(context.userId).toLowerCase()) return false;
         if (!includeCompleted && assignment.status === 'completed') return false;
         return true;
       });
@@ -14739,6 +15654,9 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   let surveyIdForLogs = id;
 
   const responses = req.body?.responses;
+  const submissionStatusRaw = typeof req.body?.status === 'string' ? req.body.status.trim().toLowerCase() : 'completed';
+  const submissionStatus = submissionStatusRaw === 'in-progress' ? 'in-progress' : 'completed';
+  const isDraftSave = submissionStatus === 'in-progress';
   if (!responses || typeof responses !== 'object') {
     res.status(400).json({ error: 'responses_required', message: 'Provide structured responses payload.' });
     return;
@@ -14758,33 +15676,59 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
       assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+      allowSelfEnroll: false,
     });
 
     let resolvedAssignment = assignment;
     if (!supabase && isDemoOrTestMode) {
       e2eStore.assignments = Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [];
+      const requestedAssignmentId = req.body?.assignmentId ?? req.body?.assignment_id ?? null;
 
       const contextOrgIds = Array.isArray(context.organizationIds)
         ? context.organizationIds.map((value) => String(value))
         : [];
 
-      const findMatchingAssignment = () =>
-        e2eStore.assignments.find((row) => {
+      const findMatchingAssignment = () => {
+        const rows = e2eStore.assignments.filter((row) => {
           if (!row) return false;
           const assignmentType = row.assignment_type ?? row.assignmentType ?? null;
           if (assignmentType && assignmentType !== SURVEY_ASSIGNMENT_TYPE) return false;
           const assignmentSurveyId = row.survey_id ?? row.surveyId ?? null;
           if (String(assignmentSurveyId) !== String(surveyId)) return false;
           if (row.active === false) return false;
-          const rowUserId = row.user_id ?? row.userId ?? null;
-          if (rowUserId && String(rowUserId).toLowerCase() === String(context.userId).toLowerCase()) {
-            return true;
+          return true;
+        });
+
+        if (requestedAssignmentId) {
+          const direct = rows.find((row) => String(row?.id ?? '') === String(requestedAssignmentId));
+          if (!direct) return null;
+          const directUserId = direct.user_id ?? direct.userId ?? null;
+          if (directUserId && String(directUserId).toLowerCase() !== String(context.userId).toLowerCase()) {
+            return null;
           }
-          if (rowUserId !== null) return false;
-          const rowOrgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
-          if (!rowOrgId) return true;
-          return contextOrgIds.includes(String(rowOrgId));
-        }) || null;
+          const directOrgId = direct.organization_id ?? direct.organizationId ?? direct.org_id ?? direct.orgId ?? null;
+          if (directOrgId && contextOrgIds.length > 0 && !contextOrgIds.includes(String(directOrgId))) {
+            return null;
+          }
+          return direct;
+        }
+
+        const userScoped = rows.find((row) => {
+          const rowUserId = row.user_id ?? row.userId ?? null;
+          return rowUserId && String(rowUserId).toLowerCase() === String(context.userId).toLowerCase();
+        });
+        if (userScoped) return userScoped;
+
+        return (
+          rows.find((row) => {
+            const rowUserId = row.user_id ?? row.userId ?? null;
+            if (rowUserId !== null) return false;
+            const rowOrgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            if (!rowOrgId) return true;
+            return contextOrgIds.includes(String(rowOrgId));
+          }) || null
+        );
+      };
 
       resolvedAssignment = findMatchingAssignment();
 
@@ -14810,6 +15754,14 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       }
     }
 
+    if ((req.body?.assignmentId || req.body?.assignment_id) && !resolvedAssignment) {
+      res.status(404).json({
+        error: 'assignment_not_found',
+        message: 'Assignment not found for this survey and learner.',
+      });
+      return;
+    }
+
     const metadataInput = typeof req.body?.metadata === 'object' && req.body.metadata !== null ? req.body.metadata : {};
     const assignmentMetadata =
       resolvedAssignment?.metadata && typeof resolvedAssignment.metadata === 'object' ? resolvedAssignment.metadata : {};
@@ -14820,7 +15772,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       String(metadataInput.assessmentType ?? '').toLowerCase() === 'hdi' ||
       String(assignmentMetadata.assessmentType ?? '').toLowerCase() === 'hdi';
 
-    if (isHdiSubmission) {
+    if (isHdiSubmission && !isDraftSave) {
       const administrationType = normalizeHdiAdministrationType(
         req.body?.administrationType ??
           metadataInput.administrationType ??
@@ -14990,9 +15942,9 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       question_id: null,
       rating: null,
       metadata: enrichedMetadata,
-      status: 'completed',
+      status: submissionStatus,
       assignment_id: resolvedAssignment?.id ?? null,
-      completed_at: nowIso,
+      completed_at: isDraftSave ? null : nowIso,
     };
     delete responsePayload.org_id;
 
@@ -15010,19 +15962,28 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       if (resolvedAssignment?.id) {
         const assignmentRow = (e2eStore.assignments || []).find((row) => row?.id === resolvedAssignment.id);
         if (assignmentRow) {
-          assignmentRow.status = 'completed';
+          assignmentRow.status = submissionStatus;
           assignmentRow.active = true;
           assignmentRow.metadata = {
             ...(assignmentRow.metadata && typeof assignmentRow.metadata === 'object' ? assignmentRow.metadata : {}),
-            last_completed_at: nowIso,
-            completion_audit: {
-              completed_by: context.userId,
-              completed_at: nowIso,
-            },
+            ...(isDraftSave
+              ? {
+                  last_progress_saved_at: nowIso,
+                  draft_response: responses,
+                  last_response_status: 'in-progress',
+                }
+              : {
+                  last_completed_at: nowIso,
+                  completion_audit: {
+                    completed_by: context.userId,
+                    completed_at: nowIso,
+                  },
+                  last_response_status: 'completed',
+                }),
           };
           assignmentRow.updated_at = nowIso;
         }
-        logSurveyAssignmentEvent('survey_assignment_completed', {
+        logSurveyAssignmentEvent(isDraftSave ? 'survey_assignment_progress_saved' : 'survey_assignment_completed', {
           requestId: req.requestId ?? null,
           surveyId: surveyId,
           organizationCount: resolvedAssignment.organization_id ? 1 : 0,
@@ -15053,7 +16014,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       updateDemoSurveyAssignments(surveyId, assignedTo);
       persistE2EStore();
 
-      res.status(201).json({ data: inserted });
+      res.status(isDraftSave ? 200 : 201).json({ data: inserted });
       return;
     }
 
@@ -15137,15 +16098,24 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       submitStage = 'update_assignment';
       const mergedMetadata = {
         ...(resolvedAssignment.metadata && typeof resolvedAssignment.metadata === 'object' ? resolvedAssignment.metadata : {}),
-        last_completed_at: nowIso,
-        completion_audit: {
-          completed_by: context.userId,
-          completed_at: nowIso,
-        },
+        ...(isDraftSave
+          ? {
+              last_progress_saved_at: nowIso,
+              draft_response: responses,
+              last_response_status: 'in-progress',
+            }
+          : {
+              last_completed_at: nowIso,
+              completion_audit: {
+                completed_by: context.userId,
+                completed_at: nowIso,
+              },
+              last_response_status: 'completed',
+            }),
       };
       const assignmentUpdateResult = await supabase
         .from('assignments')
-        .update({ status: 'completed', active: true, metadata: mergedMetadata })
+        .update({ status: submissionStatus, active: true, metadata: mergedMetadata })
         .eq('id', resolvedAssignment.id)
         .select('id,status,active,metadata')
         .maybeSingle();
@@ -15154,12 +16124,11 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       }
       const updatedAssignment = assignmentUpdateResult.data;
       const completionAuditAt = updatedAssignment?.metadata?.completion_audit?.completed_at ?? null;
-      if (
-        !updatedAssignment ||
-        updatedAssignment.status !== 'completed' ||
-        updatedAssignment.active !== true ||
-        !completionAuditAt
-      ) {
+      const saveAuditAt = updatedAssignment?.metadata?.last_progress_saved_at ?? null;
+      const assignmentUpdateVerified = isDraftSave
+        ? Boolean(updatedAssignment && updatedAssignment.status === 'in-progress' && updatedAssignment.active === true && saveAuditAt)
+        : Boolean(updatedAssignment && updatedAssignment.status === 'completed' && updatedAssignment.active === true && completionAuditAt);
+      if (!assignmentUpdateVerified) {
         const assignmentUpdateVerificationError = new Error('survey_assignment_completion_verification_failed');
         assignmentUpdateVerificationError.code = 'survey_assignment_completion_verification_failed';
         assignmentUpdateVerificationError.statusCode = 503;
@@ -15169,7 +16138,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         };
         throw assignmentUpdateVerificationError;
       }
-      logSurveyAssignmentEvent('survey_assignment_completed', {
+      logSurveyAssignmentEvent(isDraftSave ? 'survey_assignment_progress_saved' : 'survey_assignment_completed', {
         requestId: req.requestId ?? null,
         surveyId: surveyId,
         organizationCount: resolvedAssignment.organization_id ? 1 : 0,
@@ -15193,7 +16162,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
     }
 
     submitStage = 'complete_success';
-    res.status(201).json({ data: inserted });
+    res.status(isDraftSave ? 200 : 201).json({ data: inserted });
   } catch (error) {
     console.error('[client.surveys.submit] failed', { stage: submitStage, error });
     logSurveyAssignmentEvent('survey_assignment_failed', {
@@ -23829,8 +24798,7 @@ const REQUIRED_ADMIN_SURVEY_TABLES = [
 
 const OPTIONAL_ADMIN_SURVEY_TABLES = [{ table: 'survey_assignments', columns: ['survey_id', 'organization_id'] }];
 const SURVEY_ASSIGNMENT_TYPE = 'survey';
-const SURVEY_ASSIGNMENT_SELECT =
-  'id,survey_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at';
+const SURVEY_ASSIGNMENT_SELECT = '*';
 
 const findLatestHdiPreRecord = (records = [], currentRecord = null) => {
   if (!Array.isArray(records) || records.length === 0 || !currentRecord) return null;

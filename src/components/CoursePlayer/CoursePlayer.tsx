@@ -110,6 +110,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [completionTimestamp, setCompletionTimestamp] = useState<number | null>(null);
   const [hasLoggedCourseCompletion, setHasLoggedCourseCompletion] = useState(false);
   const hasNavigatedToClientCompletionRef = useRef(false);
+  const previousCompletionStateRef = useRef<boolean | null>(null);
 
   const handleRetry = () => setReloadToken((token) => token + 1);
 
@@ -231,6 +232,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
   const courseLessons = courseData?.lessons ?? [];
   const course = courseData?.course ?? null;
+
+  useEffect(() => {
+    previousCompletionStateRef.current = null;
+    hasNavigatedToClientCompletionRef.current = false;
+  }, [course?.id]);
+
   const currentLessonPlayback = useMemo(
     () => resolveLessonVideoPlayback((currentLesson as any)?.content || {}),
     [currentLesson],
@@ -289,11 +296,22 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   );
 
   useEffect(() => {
+    if (isLoading) return;
     if (!course || courseLessons.length === 0) return;
 
     const allLessonsCompleted = completedLessons.size === courseLessons.length;
+    const previousCompletionState = previousCompletionStateRef.current;
 
-    if (allLessonsCompleted) {
+    if (previousCompletionState === null) {
+      previousCompletionStateRef.current = allLessonsCompleted;
+      // Learner reopened an already-completed course: keep them in review mode.
+      return;
+    }
+
+    const hasJustCompleted = !previousCompletionState && allLessonsCompleted;
+    previousCompletionStateRef.current = allLessonsCompleted;
+
+    if (hasJustCompleted) {
       if (!hasLoggedCourseCompletion) {
         const totalTimeSeconds = Object.values(lessonPositions).reduce(
           (sum, value) => sum + Math.max(0, Math.round(value ?? 0)),
@@ -344,7 +362,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
         setCompletionTimestamp(Date.now());
         setShowCompletionScreen(true);
       }
-    } else {
+      return;
+    }
+
+    if (!allLessonsCompleted) {
       if (hasLoggedCourseCompletion) {
         setHasLoggedCourseCompletion(false);
       }
@@ -371,6 +392,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     isClientNamespace,
     coursePathBase,
     navigate,
+    isLoading,
   ]);
 
   const persistProgress = useCallback(
