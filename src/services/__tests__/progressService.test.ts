@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockApiRequest = vi.fn();
 const mockGetUserSession = vi.fn();
+const mockEnqueueProgressSnapshot = vi.fn();
+const mockHasPendingItems = vi.fn(() => false);
+const mockProcessOfflineQueue = vi.fn();
+const mockInitializeOfflineQueue = vi.fn();
 
 class MockApiError extends Error {
   status?: number;
@@ -29,10 +33,10 @@ vi.mock('../../utils/NetworkErrorHandler', () => ({
 }));
 
 vi.mock('../offlineQueue', () => ({
-  enqueueProgressSnapshot: vi.fn(),
-  hasPendingItems: vi.fn(() => false),
-  processOfflineQueue: vi.fn(),
-  initializeOfflineQueue: vi.fn(),
+  enqueueProgressSnapshot: mockEnqueueProgressSnapshot,
+  hasPendingItems: mockHasPendingItems,
+  processOfflineQueue: mockProcessOfflineQueue,
+  initializeOfflineQueue: mockInitializeOfflineQueue,
 }));
 
 vi.mock('react-hot-toast', () => ({
@@ -52,6 +56,12 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
     vi.resetModules();
     mockApiRequest.mockReset();
     mockGetUserSession.mockReset();
+    mockEnqueueProgressSnapshot.mockReset();
+    mockHasPendingItems.mockReset();
+    mockHasPendingItems.mockReturnValue(false);
+    mockProcessOfflineQueue.mockReset();
+    mockInitializeOfflineQueue.mockReset();
+    mockInitializeOfflineQueue.mockResolvedValue(undefined);
   });
 
   it('skips remote fetch when no session is available', async () => {
@@ -132,5 +142,93 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
 
     expect(result).toEqual([]);
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('progressService.syncProgressSnapshot coalescing', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    mockApiRequest.mockReset();
+    mockGetUserSession.mockReset();
+    mockEnqueueProgressSnapshot.mockReset();
+    mockHasPendingItems.mockReset();
+    mockHasPendingItems.mockReturnValue(false);
+    mockProcessOfflineQueue.mockReset();
+    mockInitializeOfflineQueue.mockReset();
+    mockInitializeOfflineQueue.mockResolvedValue(undefined);
+  });
+
+  it('coalesces overlapping snapshot saves for the same user/course', async () => {
+    let firstRequestResolve!: (value: { ok: boolean }) => void;
+    mockApiRequest
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            firstRequestResolve = resolve as (value: { ok: boolean }) => void;
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true });
+
+    const service = await importService();
+
+    const first = service.syncProgressSnapshot({
+      userId: 'user-1',
+      courseId: 'course-1',
+      lessonIds: ['l1'],
+      lessons: [{ lessonId: 'l1', progressPercent: 10, completed: false, positionSeconds: 5 }],
+      overallPercent: 10,
+      totalTimeSeconds: 5,
+      lastLessonId: 'l1',
+    });
+
+    const second = service.syncProgressSnapshot({
+      userId: 'user-1',
+      courseId: 'course-1',
+      lessonIds: ['l1'],
+      lessons: [{ lessonId: 'l1', progressPercent: 65, completed: false, positionSeconds: 45 }],
+      overallPercent: 65,
+      totalTimeSeconds: 45,
+      lastLessonId: 'l1',
+    });
+
+    await Promise.resolve();
+    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    firstRequestResolve({ ok: true });
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toBe(true);
+    expect(secondResult).toBe(true);
+    expect(mockApiRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not trigger immediate duplicate retry requests after a failed in-flight save', async () => {
+    mockApiRequest.mockRejectedValue(new MockApiError(500));
+    const service = await importService();
+
+    const first = service.syncProgressSnapshot({
+      userId: 'user-2',
+      courseId: 'course-2',
+      lessonIds: ['l2'],
+      lessons: [{ lessonId: 'l2', progressPercent: 20, completed: false, positionSeconds: 12 }],
+      overallPercent: 20,
+      totalTimeSeconds: 12,
+      lastLessonId: 'l2',
+    });
+
+    const second = service.syncProgressSnapshot({
+      userId: 'user-2',
+      courseId: 'course-2',
+      lessonIds: ['l2'],
+      lessons: [{ lessonId: 'l2', progressPercent: 30, completed: false, positionSeconds: 18 }],
+      overallPercent: 30,
+      totalTimeSeconds: 18,
+      lastLessonId: 'l2',
+    });
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toBe(false);
+    expect(secondResult).toBe(false);
+    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueProgressSnapshot).toHaveBeenCalledTimes(1);
   });
 });

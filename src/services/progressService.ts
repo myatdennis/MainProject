@@ -48,6 +48,8 @@ let isDraining = false;
 let eventRetryTimer: number | null = null;
 let isDrainingEvents = false;
 let serverErrorBackoffUntil: number | null = null;
+const inFlightSnapshots = new Map<string, Promise<boolean>>();
+const queuedSnapshots = new Map<string, ProgressSnapshot>();
 const SERVER_ERROR_BACKOFF_MS = 60000;
 const RATE_LIMIT_BACKOFF_MS = 30000;
 
@@ -104,6 +106,8 @@ const scheduleRetry = (delayMs: number = 5000) => {
     await flushPendingSnapshots();
   }, delayMs);
 };
+
+const snapshotKeyFor = (snapshot: ProgressSnapshot) => `${snapshot.userId}::${snapshot.courseId}`;
 
 const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { showFailureToast: boolean }) => {
   try {
@@ -366,8 +370,7 @@ export const progressService = {
       return false;
     }
 
-    await initializeOfflineQueue();
-    await flushPendingSnapshots();
+  await initializeOfflineQueue();
 
     const snapshot = buildSnapshotPayload({
       userId,
@@ -380,16 +383,57 @@ export const progressService = {
       lastLessonId,
     });
 
-    const success = await postSnapshot(snapshot, { showFailureToast: true });
-
-    if (!success) {
-      await enqueueProgressSnapshot(snapshot as unknown as Record<string, unknown>);
-      scheduleRetry();
-    } else if (hasPendingItems('progress-snapshot')) {
-      scheduleRetry(2000);
+    const snapshotKey = snapshotKeyFor(snapshot);
+    const existingInFlight = inFlightSnapshots.get(snapshotKey);
+    if (existingInFlight) {
+      queuedSnapshots.set(snapshotKey, snapshot);
+      return existingInFlight;
     }
 
-    return success;
+    const runSnapshotSync = async (): Promise<boolean> => {
+      let current = snapshot;
+      let latestSuccess = true;
+
+      while (true) {
+        const success = await postSnapshot(current, { showFailureToast: true });
+        latestSuccess = success;
+
+        if (!success) {
+          const queued = queuedSnapshots.get(snapshotKey);
+          queuedSnapshots.delete(snapshotKey);
+          await enqueueProgressSnapshot((queued ?? current) as unknown as Record<string, unknown>);
+          scheduleRetry();
+          break;
+        }
+
+        if (hasPendingItems('progress-snapshot')) {
+          scheduleRetry(2000);
+        }
+
+        const queued = queuedSnapshots.get(snapshotKey);
+        if (!queued) {
+          break;
+        }
+
+        queuedSnapshots.delete(snapshotKey);
+        current = queued;
+      }
+
+      return latestSuccess;
+    };
+
+    const inFlightPromise = runSnapshotSync().finally(() => {
+      inFlightSnapshots.delete(snapshotKey);
+      queuedSnapshots.delete(snapshotKey);
+    });
+
+    inFlightSnapshots.set(snapshotKey, inFlightPromise);
+
+    if (hasPendingItems('progress-snapshot') && !isDraining) {
+      void flushPendingSnapshots();
+    }
+
+    return inFlightPromise;
   },
 };
 

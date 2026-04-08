@@ -96,6 +96,11 @@ import {
   buildLessonProgressConflictTargets,
   upsertWithConflictFallback,
 } from './lib/progressConflictResolver.js';
+import {
+  createSnapshotSeedAttemptCache,
+  buildSnapshotSeedKey,
+  normalizeSnapshotLessonIds as normalizeSnapshotLessonIdsFromBody,
+} from './lib/learnerProgressHotPath.js';
 import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from './utils/authHelpers.js';
 import { deriveSurveyAssignmentOrgScope } from './utils/surveyAssignmentOrgScope.js';
 
@@ -3620,6 +3625,19 @@ let loggedMissingSupabaseConfig = false;
 let assignmentsUserIdUuidColumnAvailable = null;
 let assignmentsOrganizationIdColumnAvailable = null;
 let userCourseProgressUserIdUuidColumnAvailable = null;
+const PROGRESS_SNAPSHOT_SEED_CACHE_TTL_MS = Number(process.env.PROGRESS_SNAPSHOT_SEED_CACHE_TTL_MS || 15 * 60 * 1000);
+const progressSnapshotSeedAttemptCache = createSnapshotSeedAttemptCache({
+  ttlMs: PROGRESS_SNAPSHOT_SEED_CACHE_TTL_MS,
+});
+
+const buildProgressSnapshotSeedKey = ({ userId, orgId, courseId }) =>
+  buildSnapshotSeedKey({ userId, orgId, courseId });
+
+const shouldAttemptProgressSnapshotSeed = (seedKey) =>
+  progressSnapshotSeedAttemptCache.shouldAttempt(seedKey);
+
+const markProgressSnapshotSeedAttempt = (seedKey) =>
+  progressSnapshotSeedAttemptCache.markAttempt(seedKey);
 
 await runStorageDoctor();
 
@@ -3673,6 +3691,24 @@ const detectUserCourseProgressUserIdUuidColumnAvailability = async () => {
   }
 
   return userCourseProgressUserIdUuidColumnAvailable;
+};
+
+const getCachedUserCourseProgressUuidSupport = () => userCourseProgressUserIdUuidColumnAvailable === true;
+
+const warmUserCourseProgressUuidSupport = async () => {
+  if (!supabase) {
+    userCourseProgressUserIdUuidColumnAvailable = false;
+    return;
+  }
+  try {
+    await detectUserCourseProgressUserIdUuidColumnAvailability();
+  } catch (error) {
+    userCourseProgressUserIdUuidColumnAvailable = false;
+    logger.warn('user_course_progress_uuid_support_warm_failed', {
+      code: error?.code ?? null,
+      message: error?.message ?? String(error),
+    });
+  }
 };
 
 const isConflictConstraintMissing = (error) => {
@@ -3769,6 +3805,7 @@ const auditUserCourseProgressUuid = async () => {
 };
 
 if (supabase) {
+  warmUserCourseProgressUuidSupport();
   auditUserCourseProgressUuid();
   detectAssignmentsUserIdUuidColumnAvailability().catch((error) => {
     logger.warn('assignments_user_id_uuid_audit_failed', {
@@ -6162,6 +6199,9 @@ const parseLessonIdsParam = (raw) => {
     .filter(Boolean);
 };
 
+const normalizeSnapshotLessonIds = (body = {}) =>
+  normalizeSnapshotLessonIdsFromBody(body, parseLessonIdsParam, coerceString);
+
 const normalizeLessonSnapshot = (input) => {
   if (!input) return null;
   const lessonId = coerceString(input.lessonId, input.lesson_id, input.id);
@@ -6203,6 +6243,7 @@ const normalizeSnapshotPayload = (body = {}, fallbackUserId) => {
   return {
     userId,
     courseId,
+    lessonIds: normalizeSnapshotLessonIds(body),
     lessons,
     course: {
       percent:
@@ -17594,11 +17635,130 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     lessonCount: lessonList.length,
     payloadBytes,
   };
+  const requestStartedAt = Date.now();
+  const stepTimings = {
+    authMs: 0,
+    orgResolutionMs: 0,
+    snapshotInitMs: 0,
+    schemaDetectionMs: 0,
+    dbWriteMs: 0,
+    totalMs: 0,
+  };
   let failingFunction = 'learner_progress_snapshot.init';
+  let currentOperation = {
+    operationName: 'init',
+    table: null,
+    conflictTargets: null,
+    payloadSummary: null,
+  };
 
+  const setCurrentOperation = ({ operationName, table = null, conflictTargets = null, payloadSummary = null } = {}) => {
+    currentOperation = {
+      operationName: operationName || currentOperation.operationName,
+      table,
+      conflictTargets,
+      payloadSummary,
+    };
+  };
+
+  const toErrorObject = (error) => {
+    if (!error) return null;
+    if (error instanceof Error) {
+      return {
+        message: error.message,
+        stack: error.stack,
+        code: error.code ?? null,
+        details: error.details ?? null,
+        hint: error.hint ?? null,
+      };
+    }
+    if (typeof error === 'object') {
+      return {
+        message: error?.message ?? JSON.stringify(error),
+        stack: null,
+        code: error?.code ?? null,
+        details: error?.details ?? null,
+        hint: error?.hint ?? null,
+      };
+    }
+    return {
+      message: String(error),
+      stack: null,
+      code: null,
+      details: null,
+      hint: null,
+    };
+  };
+
+  const logProgressTiming = (event, extra = {}) => {
+    stepTimings.totalMs = Date.now() - requestStartedAt;
+    logger.info('learner_progress_snapshot_timing', {
+      event,
+      ...baseLogMeta,
+      ...stepTimings,
+      ...extra,
+    });
+  };
+
+  const respondWithError = (status, code, message, error, queryName = 'learner_progress_snapshot') => {
+    const normalizedError = toErrorObject(error);
+    if (normalizedError) {
+      logger.error('learner_progress_snapshot_failed', {
+        ...baseLogMeta,
+        route: '/api/learner/progress',
+        failingFunction,
+        operationName: currentOperation.operationName,
+        table: currentOperation.table,
+        conflictTargets: currentOperation.conflictTargets,
+        payloadSummary: currentOperation.payloadSummary,
+        dbErrorCode: normalizedError.code,
+        dbErrorMessage: normalizedError.message,
+        dbErrorDetails: normalizedError.details,
+        dbErrorHint: normalizedError.hint,
+        errorMessage: normalizedError.message,
+        stack: normalizedError.stack ?? undefined,
+      });
+      writeErrorDiagnostics(req, error instanceof Error ? error : new Error(normalizedError.message), {
+        meta: {
+          surface: 'learner_progress_snapshot',
+          route: '/api/learner/progress',
+          requestId,
+          userId,
+          orgId: baseLogMeta.orgId ?? null,
+          failingFunction,
+          dbErrorCode: normalizedError.code,
+          dbErrorMessage: normalizedError.message,
+        },
+      });
+    }
+
+    logProgressTiming('error', {
+      status,
+      code,
+      failingFunction,
+      operationName: currentOperation.operationName,
+      table: currentOperation.table,
+      dbErrorCode: normalizedError?.code ?? null,
+    });
+
+    res.status(status).json({
+      ok: false,
+      code,
+      message,
+      hint: normalizedError?.hint ?? null,
+      requestId,
+      queryName,
+      details: normalizedError?.details ?? null,
+    });
+  };
+
+  stepTimings.authMs = Date.now() - requestStartedAt;
+
+  const orgResolutionStartedAt = Date.now();
   const context = requireUserContext(req, res);
   if (!context) return;
   const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  stepTimings.orgResolutionMs = Date.now() - orgResolutionStartedAt;
   if (orgScope.requiresExplicitSelection) {
     respondWithError(403, 'org_selection_required', 'Select an organization before saving progress.', null);
     return;
@@ -17617,43 +17777,6 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
 
   logger.debug('learner_progress_snapshot_received', baseLogMeta);
 
-  const respondWithError = (status, code, message, error, queryName = 'learner_progress_snapshot') => {
-    if (error) {
-      logger.error('learner_progress_snapshot_failed', {
-        ...baseLogMeta,
-        route: '/api/learner/progress',
-        failingFunction,
-        dbErrorCode: error?.code ?? null,
-        dbErrorMessage: error?.message ?? (error instanceof Error ? error.message : String(error)),
-        dbErrorDetails: error?.details ?? null,
-        dbErrorHint: error?.hint ?? null,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      writeErrorDiagnostics(req, error instanceof Error ? error : new Error(String(error)), {
-        meta: {
-          surface: 'learner_progress_snapshot',
-          route: '/api/learner/progress',
-          requestId,
-          userId,
-          orgId: baseLogMeta.orgId ?? null,
-          failingFunction,
-          dbErrorCode: error?.code ?? null,
-          dbErrorMessage: error?.message ?? null,
-        },
-      });
-    }
-    res.status(status).json({
-      ok: false,
-      code,
-      message,
-      hint: error?.hint ?? null,
-      requestId,
-      queryName,
-      details: error?.details ?? null,
-    });
-  };
-
   if (isTestMode) {
     // Only log in E2E test mode, not on every isDemoMode request — too chatty.
     console.log('Progress sync request:', {
@@ -17666,6 +17789,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
 
   // Demo/E2E path: persist to in-memory store
   if (isDemoOrTestMode) {
+    const demoWriteStartedAt = Date.now();
     try {
       lessonList.forEach((lesson) => {
         const key = `${userId}:${lesson.lessonId}`;
@@ -17714,6 +17838,11 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       }
 
       logSnapshotSuccess('demo');
+      stepTimings.dbWriteMs = Date.now() - demoWriteStartedAt;
+      logProgressTiming('success', {
+        mode: 'demo',
+        supportsCourseProgressUserIdUuid: false,
+      });
 
       res.status(202).json({
         ok: true,
@@ -17735,7 +17864,30 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
 
   if (!ensureSupabase(res)) return;
 
+  const snapshotInitStartedAt = Date.now();
   if (lessonList.length === 0 && courseId) {
+    const payloadLessonIds = Array.isArray(snapshot.lessonIds) ? snapshot.lessonIds : [];
+    if (payloadLessonIds.length > 0) {
+      lessonList = payloadLessonIds.map((lessonId) => ({
+        lessonId,
+        progressPercent: 0,
+        completed: false,
+        positionSeconds: 0,
+        lastAccessedAt: null,
+      }));
+      baseLogMeta.lessonCount = lessonList.length;
+      logger.debug('learner_progress_seeded_from_payload_lesson_ids', {
+        requestId,
+        userId,
+        courseId,
+        seededLessonCount: lessonList.length,
+      });
+    }
+  }
+
+  if (lessonList.length === 0 && courseId) {
+    const snapshotSeedKey = buildProgressSnapshotSeedKey({ userId, orgId: resolvedOrgId, courseId });
+    if (shouldAttemptProgressSnapshotSeed(snapshotSeedKey)) {
     const seedLessonListFromCourse = async () => {
       const extractLessonIds = (modules = []) => {
         const ids = [];
@@ -17784,24 +17936,33 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       return [];
     };
 
-    const seededLessonIds = await seedLessonListFromCourse();
-    if (seededLessonIds.length > 0) {
-      lessonList = seededLessonIds.map((lessonId) => ({
-        lessonId,
-        progressPercent: 0,
-        completed: false,
-        positionSeconds: 0,
-        lastAccessedAt: null,
-      }));
-      baseLogMeta.lessonCount = lessonList.length;
-      logger.info('learner_progress_seeded_empty_snapshot', {
+      const seededLessonIds = await seedLessonListFromCourse();
+      markProgressSnapshotSeedAttempt(snapshotSeedKey);
+      if (seededLessonIds.length > 0) {
+        lessonList = seededLessonIds.map((lessonId) => ({
+          lessonId,
+          progressPercent: 0,
+          completed: false,
+          positionSeconds: 0,
+          lastAccessedAt: null,
+        }));
+        baseLogMeta.lessonCount = lessonList.length;
+        logger.info('learner_progress_seeded_empty_snapshot', {
+          requestId,
+          userId,
+          courseId,
+          seededLessonCount: lessonList.length,
+        });
+      }
+    } else {
+      logger.debug('learner_progress_seed_skipped_recent_attempt', {
         requestId,
         userId,
         courseId,
-        seededLessonCount: lessonList.length,
       });
     }
   }
+  stepTimings.snapshotInitMs = Date.now() - snapshotInitStartedAt;
 
   try {
     const normalizeLessonRecord = (row) => ({
@@ -17858,6 +18019,17 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         orgColumn: getLessonProgressOrgColumn(),
         includeOrgScope: Boolean(resolvedOrgId),
       });
+      setCurrentOperation({
+        operationName: 'upsert_lesson_progress_modern',
+        table: 'user_lesson_progress',
+        conflictTargets,
+        payloadSummary: {
+          rowCount: payload.length,
+          includesCourseId: Boolean(courseId),
+          includesOrgScope: Boolean(resolvedOrgId),
+          schemaMode: 'modern',
+        },
+      });
       try {
         const { data } = await upsertWithConflictFallback({
           supabase,
@@ -17891,6 +18063,17 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         includeCourseId: Boolean(courseId),
         orgColumn: getLessonProgressOrgColumn(),
         includeOrgScope: Boolean(resolvedOrgId),
+      });
+      setCurrentOperation({
+        operationName: 'upsert_lesson_progress_legacy',
+        table: 'user_lesson_progress',
+        conflictTargets,
+        payloadSummary: {
+          rowCount: payload.length,
+          includesCourseId: Boolean(courseId),
+          includesOrgScope: Boolean(resolvedOrgId),
+          schemaMode: 'legacy',
+        },
       });
       try {
         const { data } = await upsertWithConflictFallback({
@@ -17938,8 +18121,21 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       }
     }
 
-    failingFunction = 'learner_progress_snapshot.detectCourseUuidSupport';
-    const supportsCourseProgressUserIdUuid = await detectUserCourseProgressUserIdUuidColumnAvailability();
+  const schemaDetectionStartedAt = Date.now();
+  failingFunction = 'learner_progress_snapshot.resolveCachedCourseUuidSupport';
+  setCurrentOperation({
+    operationName: 'resolve_cached_course_uuid_support',
+    table: null,
+    conflictTargets: null,
+    payloadSummary: {
+      lessonCount: lessonList.length,
+      hasCourseProgress: Boolean(courseId),
+    },
+  });
+  const supportsCourseProgressUserIdUuid = getCachedUserCourseProgressUuidSupport();
+  stepTimings.schemaDetectionMs = Date.now() - schemaDetectionStartedAt;
+
+  const dbWriteStartedAt = Date.now();
 
     const upsertCourseProgressModern = async () => {
       failingFunction = 'learner_progress_snapshot.upsertCourseProgressModern';
@@ -17953,16 +18149,27 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       if (supportsCourseProgressUserIdUuid) {
         payload.user_id_uuid = userId;
       }
+      const conflictTargets = buildCourseProgressConflictTargets({
+        includeUserIdUuid: supportsCourseProgressUserIdUuid,
+        includeOrgScope: Boolean(resolvedOrgId),
+        orgColumn: 'organization_id',
+      });
+      setCurrentOperation({
+        operationName: 'upsert_course_progress_modern',
+        table: 'user_course_progress',
+        conflictTargets,
+        payloadSummary: {
+          includesUserIdUuid: Boolean(payload.user_id_uuid),
+          includesOrgScope: Boolean(resolvedOrgId),
+          schemaMode: 'modern',
+        },
+      });
       try {
         const { data } = await upsertWithConflictFallback({
           supabase,
           table: 'user_course_progress',
           payload,
-          conflictTargets: buildCourseProgressConflictTargets({
-            includeUserIdUuid: supportsCourseProgressUserIdUuid,
-            includeOrgScope: Boolean(resolvedOrgId),
-            orgColumn: 'organization_id',
-          }),
+          conflictTargets,
           logger,
           context: {
             requestId,
@@ -17980,15 +18187,26 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           });
           const fallbackPayload = { ...payload };
           delete fallbackPayload.user_id_uuid;
+          const fallbackConflictTargets = buildCourseProgressConflictTargets({
+            includeUserIdUuid: false,
+            includeOrgScope: Boolean(resolvedOrgId),
+            orgColumn: 'organization_id',
+          });
+          setCurrentOperation({
+            operationName: 'upsert_course_progress_modern_uuid_fallback',
+            table: 'user_course_progress',
+            conflictTargets: fallbackConflictTargets,
+            payloadSummary: {
+              includesUserIdUuid: false,
+              includesOrgScope: Boolean(resolvedOrgId),
+              schemaMode: 'modern_fallback',
+            },
+          });
           const { data } = await upsertWithConflictFallback({
             supabase,
             table: 'user_course_progress',
             payload: fallbackPayload,
-            conflictTargets: buildCourseProgressConflictTargets({
-              includeUserIdUuid: false,
-              includeOrgScope: Boolean(resolvedOrgId),
-              orgColumn: 'organization_id',
-            }),
+            conflictTargets: fallbackConflictTargets,
             logger,
             context: {
               requestId,
@@ -18022,16 +18240,29 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       if (includeTime) {
         payload.time_spent_s = Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0));
       }
+      const conflictTargets = buildCourseProgressConflictTargets({
+        includeUserIdUuid: supportsCourseProgressUserIdUuid,
+        includeOrgScope: Boolean(resolvedOrgId),
+        orgColumn: 'organization_id',
+      });
+      setCurrentOperation({
+        operationName: 'upsert_course_progress_legacy',
+        table: 'user_course_progress',
+        conflictTargets,
+        payloadSummary: {
+          includesUserIdUuid: Boolean(payload.user_id_uuid),
+          includesOrgScope: Boolean(resolvedOrgId),
+          includesPercent: includePercent,
+          includesTimeSpent: includeTime,
+          schemaMode: 'legacy',
+        },
+      });
       try {
         const { data } = await upsertWithConflictFallback({
           supabase,
           table: 'user_course_progress',
           payload,
-          conflictTargets: buildCourseProgressConflictTargets({
-            includeUserIdUuid: supportsCourseProgressUserIdUuid,
-            includeOrgScope: Boolean(resolvedOrgId),
-            orgColumn: 'organization_id',
-          }),
+          conflictTargets,
           logger,
           context: {
             requestId,
@@ -18070,15 +18301,28 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           });
           const fallbackPayload = { ...payload };
           delete fallbackPayload.user_id_uuid;
+          const fallbackConflictTargets = buildCourseProgressConflictTargets({
+            includeUserIdUuid: false,
+            includeOrgScope: Boolean(resolvedOrgId),
+            orgColumn: 'organization_id',
+          });
+          setCurrentOperation({
+            operationName: 'upsert_course_progress_legacy_uuid_fallback',
+            table: 'user_course_progress',
+            conflictTargets: fallbackConflictTargets,
+            payloadSummary: {
+              includesUserIdUuid: false,
+              includesOrgScope: Boolean(resolvedOrgId),
+              includesPercent: includePercent,
+              includesTimeSpent: includeTime,
+              schemaMode: 'legacy_fallback',
+            },
+          });
           const { data } = await upsertWithConflictFallback({
             supabase,
             table: 'user_course_progress',
             payload: fallbackPayload,
-            conflictTargets: buildCourseProgressConflictTargets({
-              includeUserIdUuid: false,
-              includeOrgScope: Boolean(resolvedOrgId),
-              orgColumn: 'organization_id',
-            }),
+            conflictTargets: fallbackConflictTargets,
             logger,
             context: {
               requestId,
@@ -18164,7 +18408,15 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       });
     }
 
+    stepTimings.dbWriteMs = Date.now() - dbWriteStartedAt;
+
     logSnapshotSuccess('supabase');
+    logProgressTiming('success', {
+      mode: 'supabase',
+      supportsCourseProgressUserIdUuid,
+      courseProgressSchema: schemaSupportFlags.courseProgress,
+      lessonProgressSchema: schemaSupportFlags.lessonProgress,
+    });
 
     res.status(202).json({
       ok: true,
@@ -18179,6 +18431,20 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       },
     });
   } catch (error) {
+    const isUserForeignKeyMissing =
+      error?.code === '23503' &&
+      /user_lesson_progress_user_id_fkey|user_course_progress_user_id_fkey/i.test(
+        `${error?.message || ''} ${error?.details || ''}`,
+      );
+    if (isUserForeignKeyMissing) {
+      respondWithError(
+        401,
+        'progress_user_not_provisioned',
+        'Authenticated user is not provisioned for progress writes.',
+        error,
+      );
+      return;
+    }
     if (isMissingColumnError(error)) {
       const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error)) || 'unknown_column';
       logger.warn('learner_progress_schema_missing', {
@@ -18209,6 +18475,10 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           reason: 'schema_missing_column',
           missingColumn,
         },
+      });
+      logProgressTiming('degraded_success', {
+        missingColumn,
+        mode: 'supabase',
       });
       return;
     }
