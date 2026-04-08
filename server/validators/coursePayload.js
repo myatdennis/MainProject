@@ -12,6 +12,7 @@ const allowedLessonTypes = [
   'document',
   'scenario',
   'download',
+  'survey',
 ];
 
 const stringField = (min = 1, max = 1000) =>

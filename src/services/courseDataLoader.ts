@@ -31,9 +31,6 @@ if (typeof window !== 'undefined') {
   });
 }
 
-const isSupabaseConfigured = () =>
-  Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
-
 const ensureCourseStoreReady = async () => {
   if (courseStore.getAllCourses().length > 0) {
     return;
@@ -126,9 +123,7 @@ export const loadCourse = async (
   }
 
   const { includeDrafts = false, preferRemote = true } = options;
-  const supabaseAvailable = isSupabaseConfigured();
-
-  if (supabaseAvailable && preferRemote) {
+  if (preferRemote) {
     try {
       const remoteCourse = await fetchCourse(normalizedIdentifier, {
         includeDrafts
@@ -162,8 +157,8 @@ export const loadCourse = async (
     }
   }
 
-  if (supabaseAvailable && !preferRemote) {
-          const remoteCourse = await fetchCourse(normalizedIdentifier, {
+  if (!preferRemote) {
+    const remoteCourse = await fetchCourse(normalizedIdentifier, {
       includeDrafts
     });
 

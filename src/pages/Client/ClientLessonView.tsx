@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Clock } from 'lucide-react';
 import Card from '../../components/ui/Card';
@@ -10,19 +10,60 @@ import { normalizeCourse, slugify } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress, buildLearnerProgressSnapshot } from '../../utils/courseProgress';
 import CoursePlayer from '../../components/CoursePlayer/CoursePlayer';
 import { evaluateCourseAvailability } from '../../utils/courseAvailability';
+import { loadCourse } from '../../dal/courseData';
 
 const ClientLessonView = () => {
   const navigate = useNavigate();
   const { courseId } = useParams();
+  const [remoteCourse, setRemoteCourse] = useState<any | null>(null);
+  const [remoteCourseLoading, setRemoteCourseLoading] = useState(false);
 
   const resolvedCourse = useMemo(() => {
     if (!courseId) return null;
     return courseStore.resolveCourse(courseId);
   }, [courseId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!courseId || resolvedCourse) {
+      setRemoteCourse(null);
+      setRemoteCourseLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setRemoteCourseLoading(true);
+    void loadCourse(courseId, { includeDrafts: false, preferRemote: true })
+      .then((result) => {
+        if (cancelled) return;
+        setRemoteCourse(result?.course ?? null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn('[ClientLessonView] failed to load course from remote source', {
+          courseId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        setRemoteCourse(null);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setRemoteCourseLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId, resolvedCourse]);
+
+  const displayCourse = resolvedCourse ?? remoteCourse;
+
   const normalizedCourse = useMemo(() => {
-    return resolvedCourse ? normalizeCourse(resolvedCourse) : null;
-  }, [resolvedCourse]);
+    return displayCourse ? normalizeCourse(displayCourse) : null;
+  }, [displayCourse]);
 
   const courseSlug = useMemo(() => {
     if (normalizedCourse?.slug) return normalizedCourse.slug;
@@ -52,10 +93,12 @@ const ClientLessonView = () => {
     () =>
       evaluateCourseAvailability({
         course: normalizedCourse,
-        assignmentStatus: resolvedCourse?.assignmentStatus ?? null,
+        assignmentStatus:
+          displayCourse?.assignmentStatus ??
+          (remoteCourse && !resolvedCourse ? 'assigned' : null),
         storedProgress,
       }),
-    [normalizedCourse, resolvedCourse, storedProgress]
+    [displayCourse, normalizedCourse, remoteCourse, resolvedCourse, storedProgress]
   );
 
   const handleBackToCourse = () => {
@@ -65,6 +108,17 @@ const ClientLessonView = () => {
     }
     navigate('/client/courses');
   };
+
+  if (remoteCourseLoading && !normalizedCourse) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-3xl flex-col justify-center px-6 py-12 lg:px-12">
+        <Card tone="muted" className="space-y-3">
+          <h1 className="font-heading text-2xl font-bold text-charcoal">Loading lesson</h1>
+          <p className="text-sm text-slate/80">We’re loading your course details.</p>
+        </Card>
+      </div>
+    );
+  }
 
   if (availability.isUnavailable || !normalizedCourse) {
     const reasonCopy: Record<string, { title: string; body: string }> = {

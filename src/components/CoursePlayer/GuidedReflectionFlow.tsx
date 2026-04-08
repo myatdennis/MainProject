@@ -205,8 +205,14 @@ const GuidedReflectionFlow = ({
         const serverTime = record?.updatedAt ? new Date(record.updatedAt).getTime() : 0;
         const shouldPreferDraft = Boolean(draft) && draftTime >= serverTime;
         const nextData = shouldPreferDraft ? draft?.data ?? serverData : serverData;
-        const nextStepId =
+        const rawNextStepId =
           (shouldPreferDraft ? draft?.currentStepId : serverData.currentStepId) ?? serverData.currentStepId ?? 'intro';
+        const nextStepId =
+          rawNextStepId === 'intro' && summarizeReflectionResponse(nextData).trim().length > 0
+            ? record?.status === 'submitted' || nextData.submittedAt
+              ? 'review'
+              : 'initial'
+            : rawNextStepId;
 
         setReflectionData(nextData);
         latestDraftRef.current = nextData;
@@ -248,9 +254,13 @@ const GuidedReflectionFlow = ({
 
   const persistReflection = useCallback(
     async (data: ReflectionResponseData, status: 'draft' | 'submitted') => {
-      const serialized = JSON.stringify(data);
+      const payloadData: ReflectionResponseData = {
+        ...data,
+        currentStepId: status === 'submitted' ? 'review' : currentStepId,
+      };
+      const serialized = JSON.stringify(payloadData);
       if (inFlightRef.current) {
-        queuedSaveRef.current = { data, status };
+        queuedSaveRef.current = { data: payloadData, status };
         return inFlightRef.current;
       }
 
@@ -261,11 +271,11 @@ const GuidedReflectionFlow = ({
           const saved = await reflectionService.saveLearnerReflection({
             courseId,
             lessonId,
-            responseText: data.promptResponse,
-            responseData: data,
+            responseText: payloadData.promptResponse,
+            responseData: payloadData,
             status,
           });
-          const savedData = normalizeReflectionResponseData(saved?.responseData ?? data);
+          const savedData = normalizeReflectionResponseData(saved?.responseData ?? payloadData);
           syncedSerializedRef.current = JSON.stringify(savedData);
           setLastSavedAt(saved?.updatedAt ?? new Date().toISOString());
           console.info('[guided-reflection] reflectionSaved', {
@@ -303,7 +313,7 @@ const GuidedReflectionFlow = ({
       inFlightRef.current = promise;
       return promise;
     },
-    [courseId, learnerId, lessonId],
+    [courseId, currentStepId, learnerId, lessonId],
   );
 
   useEffect(() => {

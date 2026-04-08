@@ -1,7 +1,7 @@
 export type UUID = string;
 
 export interface LessonContent {
-  type: 'video' | 'quiz' | 'reflection' | 'text' | 'resource';
+  type: 'video' | 'quiz' | 'reflection' | 'text' | 'resource' | 'survey';
   body?: Record<string, unknown>;
   resources?: Array<{ label: string; url: string }>;
 }
@@ -12,7 +12,7 @@ export interface Lesson {
   title: string;
   description?: string | null;
   orderIndex: number;
-  type: 'video' | 'quiz' | 'reflection' | 'text' | 'resource';
+  type: 'video' | 'quiz' | 'reflection' | 'text' | 'resource' | 'survey';
   durationSeconds?: number | null;
   content: LessonContent;
   completionRule?: {

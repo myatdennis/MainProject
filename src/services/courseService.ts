@@ -225,6 +225,8 @@ const mapLessonTypeFromSupabase = (type: string): Lesson['type'] => {
     case 'video':
     case 'quiz':
     case 'text':
+    case 'reflection':
+    case 'survey':
       return type;
     case 'resource':
       return 'document';
@@ -430,6 +432,10 @@ const mapLessonTypeForApi = (type: Lesson['type']): LessonDto['type'] => {
       return 'quiz';
     case 'text':
       return 'text';
+    case 'reflection':
+      return 'reflection';
+    case 'survey':
+      return 'survey' as LessonDto['type'];
     case 'scenario':
     case 'interactive':
       return 'resource';

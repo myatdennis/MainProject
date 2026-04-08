@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const lessonContentSchema = z
   .object({
-    type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource']),
+    type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource', 'survey']),
     body: z.record(z.any()).optional(),
     resources: z
       .array(
@@ -23,7 +23,7 @@ export const completionRuleSchema = z.object({
 const lessonSchemaObject = z.object({
   moduleId: z.string().uuid(),
   title: z.string().min(1, 'Title is required'),
-  type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource']),
+  type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource', 'survey']),
   description: z.string().optional().nullable(),
   orderIndex: z.number().int().nonnegative().optional(),
   durationSeconds: z.number().int().nonnegative().nullable().optional(),

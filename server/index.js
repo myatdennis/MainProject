@@ -19774,14 +19774,19 @@ const extractLearnerReflectionRequest = (req) => ({
 });
 
 const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lessonId }) => {
-  if (!courseId || !lessonId) {
-    res.status(400).json({ error: 'validation_failed', message: 'courseId and lessonId are required.' });
+  if (!lessonId) {
+    res.status(400).json({ error: 'validation_failed', message: 'lessonId is required.' });
     return null;
   }
 
   if (isDemoOrTestMode) {
+    let fallbackMatch = null;
+    let matchedCourse = null;
     for (const course of e2eStore.courses.values()) {
-      if (!course || String(course.id) !== String(courseId)) continue;
+      if (!course) continue;
+      if (courseId && String(course.id) === String(courseId)) {
+        matchedCourse = course;
+      }
       const courseOrgId = pickOrgId(course.organization_id, course.organizationId, course.org_id) || orgId;
       if (String(courseOrgId || '').toLowerCase() !== String(orgId || '').toLowerCase()) {
         continue;
@@ -19790,7 +19795,7 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
       for (const module of modules) {
         const lesson = (Array.isArray(module.lessons) ? module.lessons : []).find((candidate) => String(candidate.id) === String(lessonId));
         if (lesson) {
-          return {
+          const match = {
             courseId: String(courseId),
             lessonId: String(lessonId),
             moduleId: coerceString(lesson.module_id, lesson.moduleId, module.id),
@@ -19798,8 +19803,33 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
             moduleTitle: coerceString(module.title),
             orgId: courseOrgId,
           };
+          if (!courseId || String(course.id) === String(courseId)) {
+            return {
+              ...match,
+              courseId: String(course.id),
+            };
+          }
+          fallbackMatch = {
+            ...match,
+            courseId: String(course.id),
+          };
         }
       }
+    }
+    if (matchedCourse) {
+      const modules = Array.isArray(matchedCourse.modules) ? matchedCourse.modules : [];
+      const firstModule = modules[0] ?? null;
+      return {
+        courseId: String(matchedCourse.id),
+        lessonId: String(lessonId),
+        moduleId: coerceString(firstModule?.id),
+        lessonTitle: null,
+        moduleTitle: coerceString(firstModule?.title),
+        orgId: pickOrgId(matchedCourse.organization_id, matchedCourse.organizationId, matchedCourse.org_id) || orgId,
+      };
+    }
+    if (fallbackMatch) {
+      return fallbackMatch;
     }
     res.status(404).json({ error: 'lesson_not_found', message: 'The requested reflection lesson was not found in this course.' });
     return null;
@@ -19807,10 +19837,45 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
 
   if (!ensureSupabase(res)) return null;
 
+  let lessonResult = await supabase
+    .from('lessons')
+    .select('id,course_id,module_id,title')
+    .eq('id', lessonId)
+    .maybeSingle();
+  if (lessonResult.error) {
+    if (isMissingRelationError(lessonResult.error) || isMissingColumnError(lessonResult.error)) {
+      res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
+      return null;
+    }
+    throw lessonResult.error;
+  }
+  if (!lessonResult.data) {
+    res.status(404).json({ error: 'lesson_not_found', message: 'The requested reflection lesson was not found.' });
+    return null;
+  }
+
+  if (courseId && String(lessonResult.data.course_id) !== String(courseId)) {
+    const strictLessonResult = await supabase
+      .from('lessons')
+      .select('id,course_id,module_id,title')
+      .eq('id', lessonId)
+      .eq('course_id', courseId)
+      .maybeSingle();
+    if (!strictLessonResult.error && strictLessonResult.data) {
+      lessonResult = strictLessonResult;
+    }
+  }
+
+  const resolvedCourseId = lessonResult.data.course_id ?? courseId ?? null;
+  if (!resolvedCourseId) {
+    res.status(404).json({ error: 'course_not_found', message: 'Course not found.' });
+    return null;
+  }
+
   const courseResult = await supabase
     .from('courses')
     .select('id,organization_id,org_id,title')
-    .eq('id', courseId)
+    .eq('id', resolvedCourseId)
     .maybeSingle();
   if (courseResult.error) {
     if (isMissingRelationError(courseResult.error) || isMissingColumnError(courseResult.error)) {
@@ -19832,24 +19897,6 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
     return null;
   }
 
-  const lessonResult = await supabase
-    .from('lessons')
-    .select('id,course_id,module_id,title')
-    .eq('id', lessonId)
-    .eq('course_id', courseId)
-    .maybeSingle();
-  if (lessonResult.error) {
-    if (isMissingRelationError(lessonResult.error) || isMissingColumnError(lessonResult.error)) {
-      res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
-      return null;
-    }
-    throw lessonResult.error;
-  }
-  if (!lessonResult.data) {
-    res.status(404).json({ error: 'lesson_not_found', message: 'The requested reflection lesson was not found in this course.' });
-    return null;
-  }
-
   let moduleTitle = null;
   if (lessonResult.data.module_id) {
     const moduleResult = await supabase
@@ -19863,7 +19910,7 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
   }
 
   return {
-    courseId: String(courseId),
+    courseId: String(resolvedCourseId),
     lessonId: String(lessonId),
     moduleId: lessonResult.data.module_id ?? null,
     lessonTitle: lessonResult.data.title ?? null,
