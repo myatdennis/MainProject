@@ -47,7 +47,7 @@
     "prestart:server": "npm run build:server && node scripts/check_ports.cjs",
     "start": "node index.js",
     "start:server": "node index.js",
-    "start:server:e2e": "npm run build:server && E2E_TEST_MODE=true node server/index.js",
+    "start:server:e2e": "npm run build:server && NODE_ENV=test E2E_TEST_MODE=true node server/index.js",
     "import:courses": "node scripts/import_courses.js import/courses-template.json",
     "import:courses:publish": "node scripts/import_courses.js import/courses-template.json --publish",
     "import:analytics:history": "node scripts/import_analytics_history.mjs",

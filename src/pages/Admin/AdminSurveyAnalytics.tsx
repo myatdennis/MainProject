@@ -29,6 +29,7 @@ import {
   fetchHdiParticipantReport,
   fetchAdminSurveyResults,
 } from '../../dal/surveys';
+import { useActiveOrganization } from '../../hooks/useActiveOrganization';
 
 const RANGE_OPTIONS: { label: string; value: AnalyticsDateRange }[] = [
   { label: '7 days', value: 'last-7-days' },
@@ -60,6 +61,8 @@ const AdminSurveyAnalytics = () => {
   const [submissionRows, setSubmissionRows] = useState<any[]>([]);
   const [submissionLoading, setSubmissionLoading] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const { activeOrgId, organizations, isMultiOrg } = useActiveOrganization({ surface: 'admin' });
+  const effectiveOrgId = activeOrgId ?? (!isMultiOrg && organizations[0]?.id ? organizations[0].id : undefined);
 
   useEffect(() => {
     if (!surveyId) return;
@@ -90,10 +93,15 @@ const AdminSurveyAnalytics = () => {
       setSubmissionError(null);
       return;
     }
+    if (!effectiveOrgId && isMultiOrg) {
+      setSubmissionRows([]);
+      setSubmissionError('Select an organization to review survey results.');
+      return;
+    }
     let active = true;
     setSubmissionLoading(true);
     setSubmissionError(null);
-    fetchAdminSurveyResults(surveyId, { limit: 100 })
+    fetchAdminSurveyResults(surveyId, { limit: 100, organizationId: effectiveOrgId })
       .then((rows) => {
         if (!active) return;
         setSubmissionRows(Array.isArray(rows) ? rows : []);
@@ -110,7 +118,7 @@ const AdminSurveyAnalytics = () => {
     return () => {
       active = false;
     };
-  }, [surveyId]);
+  }, [effectiveOrgId, isMultiOrg, surveyId]);
 
   useEffect(() => {
     if (!surveyId || !isHdiSurvey) {
@@ -119,12 +127,21 @@ const AdminSurveyAnalytics = () => {
       setHdiError(null);
       return;
     }
+    if (!effectiveOrgId && isMultiOrg) {
+      setHdiParticipants([]);
+      setHdiCohort(null);
+      setHdiError('Select an organization to review HDI analytics.');
+      return;
+    }
 
     let active = true;
     setHdiLoading(true);
     setHdiError(null);
 
-    Promise.all([fetchHdiCohortAnalytics(surveyId), fetchHdiParticipantReport(surveyId, { limit: 500 })])
+    Promise.all([
+      fetchHdiCohortAnalytics(surveyId, { orgId: effectiveOrgId }),
+      fetchHdiParticipantReport(surveyId, { limit: 500, orgId: effectiveOrgId }),
+    ])
       .then(([cohort, participants]) => {
         if (!active) return;
         setHdiCohort(cohort);
@@ -142,7 +159,7 @@ const AdminSurveyAnalytics = () => {
     return () => {
       active = false;
     };
-  }, [surveyId, isHdiSurvey]);
+  }, [effectiveOrgId, isHdiSurvey, isMultiOrg, surveyId]);
 
   const displayTitle = surveyTitle
     ? surveyTitle
@@ -355,7 +372,13 @@ const AdminSurveyAnalytics = () => {
                 {submissionRows.slice(0, 100).map((row, index) => (
                   <tr key={`${row.id ?? row.assignment_id ?? index}`} className="border-b border-gray-100">
                     <td className="py-2 pr-3 text-gray-700">
-                      {row.submitted_at ? new Date(row.submitted_at).toLocaleString() : row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                      {row.completed_at
+                        ? new Date(row.completed_at).toLocaleString()
+                        : row.submitted_at
+                        ? new Date(row.submitted_at).toLocaleString()
+                        : row.created_at
+                        ? new Date(row.created_at).toLocaleString()
+                        : '—'}
                     </td>
                     <td className="py-2 pr-3 text-gray-700 font-mono text-xs">{row.user_id ?? '—'}</td>
                     <td className="py-2 pr-3 text-gray-700 font-mono text-xs">{row.assignment_id ?? '—'}</td>

@@ -4,6 +4,7 @@ import documentService, { DocumentMeta, Visibility } from '../../dal/documents';
 import { extractDalErrorDetail } from '../../dal/http';
 import notificationService from '../../dal/notifications';
 import { useToast } from '../../context/ToastContext';
+import useActiveOrganization from '../../hooks/useActiveOrganization';
 
 type FieldErrors = Record<string, string>;
 
@@ -27,6 +28,7 @@ const AdminDocuments: React.FC = () => {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { showToast } = useToast();
+  const { organizations, activeOrgId, isMultiOrg } = useActiveOrganization({ surface: 'admin' });
 
   const load = async () => {
     setIsLoading(true);
@@ -43,17 +45,27 @@ const AdminDocuments: React.FC = () => {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (orgId) return;
+    if (activeOrgId) {
+      setOrgId(activeOrgId);
+      return;
+    }
+    if (organizations.length === 1) {
+      setOrgId(organizations[0].id);
+    }
+  }, [activeOrgId, organizations, orgId]);
 
   const validateForm = (): FieldErrors => {
     const errors: FieldErrors = {};
     if (!name.trim()) errors.name = 'Name is required.';
     if (!category.trim()) errors.category = 'Category is required.';
-    if (visibility === 'org') {
-      if (!orgId.trim()) {
-        errors.orgId = 'Organization ID is required for org-scoped documents.';
-      } else if (!isValidUuid(orgId)) {
-        errors.orgId = 'Organization ID must be a valid UUID (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).';
-      }
+    if (!orgId.trim()) {
+      errors.orgId = organizations.length > 1
+        ? 'Select the organization that owns this document.'
+        : 'Organization is required for document uploads.';
+    } else if (!isValidUuid(orgId)) {
+      errors.orgId = 'Organization ID must be a valid UUID (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).';
     }
     if (visibility === 'user') {
       if (!userId.trim()) {
@@ -68,7 +80,7 @@ const AdminDocuments: React.FC = () => {
   // Derived: is the form currently in a submittable state?
   const isFormValid = (() => {
     if (!name.trim() || !category.trim()) return false;
-    if (visibility === 'org' && (!orgId.trim() || !isValidUuid(orgId))) return false;
+    if (!orgId.trim() || !isValidUuid(orgId)) return false;
     if (visibility === 'user' && (!userId.trim() || !isValidUuid(userId))) return false;
     return true;
   })();
@@ -95,9 +107,8 @@ const AdminDocuments: React.FC = () => {
         tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         fileType: file?.type,
         visibility,
-        organizationId: visibility === 'org' ? orgId.trim() : undefined,
+        organizationId: orgId.trim(),
         userId: visibility === 'user' ? userId.trim() : undefined,
-        createdBy: 'Admin',
       }, file || undefined);
 
       if (visibility === 'org' && orgId) {
@@ -110,7 +121,7 @@ const AdminDocuments: React.FC = () => {
       setName(''); setFile(null); setTags(''); setOrgId(''); setUserId('');
       setFormError(null);
       setFieldErrors({});
-      load();
+      await load();
       showToast('Document uploaded successfully', 'success');
     } catch (error: any) {
       const { message, fields } = extractDalErrorDetail(error);
@@ -150,10 +161,12 @@ const AdminDocuments: React.FC = () => {
       <div className="card-md mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">
+            <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-name">
               Name <span className="text-red-500">*</span>
             </label>
             <input
+              id="admin-documents-name"
+              aria-label="Name"
               className={`input${fieldErrors.name ? ' border-red-500' : ''}`}
               value={name}
               onChange={e => { setName(e.target.value); setFieldErrors(p => ({ ...p, name: '' })); }}
@@ -161,10 +174,12 @@ const AdminDocuments: React.FC = () => {
             {fieldErrors.name && <p className="text-xs text-red-600 mt-1">{fieldErrors.name}</p>}
           </div>
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">
+            <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-category">
               Category <span className="text-red-500">*</span>
             </label>
             <input
+              id="admin-documents-category"
+              aria-label="Category"
               className={`input${fieldErrors.category ? ' border-red-500' : ''}`}
               value={category}
               onChange={e => { setCategory(e.target.value); setFieldErrors(p => ({ ...p, category: '' })); }}
@@ -172,19 +187,20 @@ const AdminDocuments: React.FC = () => {
             {fieldErrors.category && <p className="text-xs text-red-600 mt-1">{fieldErrors.category}</p>}
           </div>
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">Subcategory</label>
-            <input className="input" value={subcategory} onChange={e => setSubcategory(e.target.value)} />
+            <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-subcategory">Subcategory</label>
+            <input id="admin-documents-subcategory" className="input" value={subcategory} onChange={e => setSubcategory(e.target.value)} />
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">Tags (comma separated)</label>
-            <input className="input" value={tags} onChange={e => setTags(e.target.value)} />
+            <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-tags">Tags (comma separated)</label>
+            <input id="admin-documents-tags" className="input" value={tags} onChange={e => setTags(e.target.value)} />
           </div>
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">Visibility</label>
+            <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-visibility">Visibility</label>
             <select
+              id="admin-documents-visibility"
               className="input"
               value={visibility}
               onChange={e => { setVisibility(e.target.value as Visibility); setFieldErrors({}); }}
@@ -195,29 +211,56 @@ const AdminDocuments: React.FC = () => {
             </select>
           </div>
           <div>
-            {visibility === 'org' && (
-              <>
-                <label className="text-sm font-medium muted-text block mb-2">
-                  Organization ID <span className="text-red-500">*</span>
-                </label>
+            <>
+              <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-org">
+                Owning organization <span className="text-red-500">*</span>
+              </label>
+              {organizations.length > 0 ? (
+                <select
+                  id="admin-documents-org"
+                  aria-label="Owning organization"
+                  className={`input${fieldErrors.orgId ? ' border-red-500' : ''}`}
+                  value={orgId}
+                  onChange={e => { setOrgId(e.target.value); setFieldErrors(p => ({ ...p, orgId: '' })); }}
+                >
+                  <option value="">Select organization</option>
+                  {organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
                 <input
+                  id="admin-documents-org"
+                  aria-label="Owning organization"
                   className={`input${fieldErrors.orgId ? ' border-red-500' : (!fieldErrors.orgId && orgId && isValidUuid(orgId)) ? ' border-green-500' : ''}`}
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                   value={orgId}
                   onChange={e => { setOrgId(e.target.value); setFieldErrors(p => ({ ...p, orgId: '' })); }}
                 />
-                {fieldErrors.orgId && <p className="text-xs text-red-600 mt-1">{fieldErrors.orgId}</p>}
-                {!fieldErrors.orgId && orgId && isValidUuid(orgId) && (
-                  <p className="text-xs text-green-700 mt-1">✓ Scoped to organization <code className="font-mono">{orgId}</code></p>
-                )}
-              </>
-            )}
+              )}
+              {fieldErrors.orgId && <p className="text-xs text-red-600 mt-1">{fieldErrors.orgId}</p>}
+              {!fieldErrors.orgId && orgId && isValidUuid(orgId) && (
+                <p className="text-xs text-green-700 mt-1">✓ Document will be owned by <code className="font-mono">{orgId}</code></p>
+              )}
+              {isMultiOrg && !orgId && (
+                <p className="text-xs muted-text mt-1">Select the organization before uploading. Multi-org admins cannot upload into an ambiguous scope.</p>
+              )}
+            </>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+          <div>
             {visibility === 'user' && (
               <>
-                <label className="text-sm font-medium muted-text block mb-2">
+                <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-user">
                   User ID <span className="text-red-500">*</span>
                 </label>
                 <input
+                  id="admin-documents-user"
+                  aria-label="User ID"
                   className={`input${fieldErrors.userId ? ' border-red-500' : (!fieldErrors.userId && userId && isValidUuid(userId)) ? ' border-green-500' : ''}`}
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                   value={userId}
@@ -230,15 +273,15 @@ const AdminDocuments: React.FC = () => {
               </>
             )}
             {visibility === 'global' && (
-              <div className="text-xs muted-text mt-6">Visible to all authenticated users</div>
+              <div className="text-xs muted-text mt-6">Visible to all authenticated users, but still owned by the selected organization for admin scoping and auditing.</div>
             )}
           </div>
         </div>
 
         <div className="mt-4">
-          <label className="text-sm font-medium muted-text block mb-2">File <span className="text-xs muted-text">(optional — document record can exist without a file)</span></label>
+          <label className="text-sm font-medium muted-text block mb-2" htmlFor="admin-documents-file">File <span className="text-xs muted-text">(optional — document record can exist without a file)</span></label>
           <div className="border-dashed p-6 rounded-lg" style={{border: '2px dashed var(--input-border)'}}>
-            <input ref={inputRef} type="file" onChange={e => onFile(e.target.files?.[0] || null)} style={{display: 'none'}} />
+            <input id="admin-documents-file" ref={inputRef} type="file" onChange={e => onFile(e.target.files?.[0] || null)} style={{display: 'none'}} />
             <div className="flex items-center justify-center gap-3">
               <UploadCloud className="w-5 h-5 muted-text" />
               <button type="button" onClick={() => inputRef.current?.click()} className="text-sm text-primary">Choose file</button>

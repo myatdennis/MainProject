@@ -1903,7 +1903,7 @@ const QuizModal: React.FC<{
                       <label
                         key={option.id}
                         className={cn(
-                          "flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all",
+                          "flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition",
                           answers[question.id] === option.id
                             ? "border-skyblue bg-skyblue/10"
                             : "border-mist bg-white hover:border-skyblue/50"
@@ -2031,7 +2031,7 @@ const QuizModal: React.FC<{
 const CourseOutline: React.FC<{
   course: Course;
   currentLesson: Lesson;
-  progress: LearnerProgress | null;
+   progress: LearnerProgress | null;
   onLessonSelect: (lesson: Lesson) => void;
 }> = ({ course, currentLesson, progress, onLessonSelect }) => {
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(() => {
@@ -2285,23 +2285,20 @@ const LessonContent: React.FC<{
   onSubmitAndAdvance?: () => Promise<void>;
   onShowQuizModal: (show: boolean) => void;
 }> = ({ lesson, courseId, learnerId, onComplete, onSubmitAndAdvance, onShowQuizModal }) => {
-  const lessonType = (lesson as any).type as string;
+  const lessonType = lesson.type;
+  const isReflectionLesson = lessonType === 'reflection';
+  const isTextLesson = lessonType === 'text';
   const reflectionPrompt =
     lesson.content?.prompt ||
     lesson.content?.reflectionPrompt ||
     (lesson.content as any)?.question ||
     '';
-  const reflectionInstructions =
-    lesson.content?.instructions ||
-    lesson.content?.description ||
-    lesson.description ||
-    '';
   const reflectionEnabled =
-    lessonType === 'reflection' ||
+    isReflectionLesson ||
     lesson.content?.collectResponse === true ||
     Boolean(lesson.content?.allowReflection) ||
     Boolean(reflectionPrompt);
-  const reflectionRequired = lessonType === 'reflection' || lesson.content?.requireReflection === true;
+  const reflectionRequired = isReflectionLesson || lesson.content?.requireReflection === true;
   const linkedSurveyId =
     (lesson.content as any)?.surveyId ||
     (lesson.content as any)?.survey_id ||
@@ -2334,11 +2331,11 @@ const LessonContent: React.FC<{
   if (!lesson.content || (typeof lesson.content === 'object' && Object.keys(lesson.content).length === 0)) {
     return renderFallback('Lesson content unavailable. Please check back later.');
   }
-  if (lessonType === 'text' || lessonType === 'reflection') {
+  if (isTextLesson || isReflectionLesson) {
     const textBody = lesson.content.textContent || lesson.content.content || lesson.description || '';
-    if (!textBody.trim() && lessonType !== 'reflection' && !reflectionPrompt.trim()) {
+    if (!textBody.trim() && !isReflectionLesson && !reflectionPrompt.trim()) {
       return renderFallback(
-        lessonType === 'reflection'
+        isReflectionLesson
           ? 'Reflection prompt will appear here once your facilitator adds it.'
           : 'Lesson notes will appear here once your facilitator adds them.',
       );
@@ -2346,11 +2343,11 @@ const LessonContent: React.FC<{
 
     return (
       <div className="max-w-none text-charcoal">
-        {lessonType === 'reflection' && (
-          <Badge tone="info" className="mb-4 bg-sunrise/10 text-sunrise">
-            Reflection
-          </Badge>
-        )}
+          {isReflectionLesson && (
+             <Badge tone="info" className="mb-4 bg-sunrise/10 text-sunrise">
+               Reflection
+             </Badge>
+           )}
         {textBody.trim() && (
           <div className="prose max-w-none text-charcoal" dangerouslySetInnerHTML={{ __html: textBody }} />
         )}
@@ -2370,7 +2367,7 @@ const LessonContent: React.FC<{
         {!reflectionEnabled && (
           <div className="mt-8 flex justify-end border-t border-mist/60 pt-6">
             <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
-              {lessonType === 'reflection' ? 'Complete reflection' : 'Mark as complete'}
+              {isReflectionLesson ? 'Complete reflection' : 'Mark as complete'}
             </Button>
           </div>
         )}
@@ -2397,7 +2394,9 @@ const LessonContent: React.FC<{
   if (lessonType === 'quiz') {
     return (
       <Card tone="muted" className="space-y-3">
-        <h3 className="font-heading text-lg font-semibold text-charcoal">Quiz: {lesson.title}</h3>
+        <h3 className="font-heading text-lg font-semibold text-charcoal mb-4">
+          Quiz: {lesson.title}
+        </h3>
         <p className="text-sm text-slate/80">{lesson.description || 'Check your understanding before moving on.'}</p>
         <Button onClick={() => onShowQuizModal(true)}>Start quiz</Button>
       </Card>

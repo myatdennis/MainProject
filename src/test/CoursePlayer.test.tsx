@@ -1202,4 +1202,120 @@ describe('CoursePlayer progress integration', () => {
     expect(screen.queryByText('Next lesson content')).not.toBeInTheDocument();
     expect(mockUpdateAssignmentProgress).not.toHaveBeenCalledWith('course-1', 'local-user', 100);
   }, 12000);
+
+  it('renders a wide reflection textarea and exposes a manual Save draft button', async () => {
+    mockFetchLearnerReflection.mockResolvedValue(null);
+    mockSaveLearnerReflection.mockResolvedValue({
+      id: 'reflection-1',
+      organizationId: 'org-1',
+      courseId: 'course-1',
+      lessonId: 'lesson-reflection',
+      userId: 'local-user',
+      responseText: 'Saved reflection text',
+      responseData: {
+        promptResponse: 'Saved reflection text',
+        deeperReflection1: '',
+        deeperReflection2: '',
+        deeperReflection3: '',
+        actionCommitment: '',
+        currentStepId: 'initial',
+        submittedAt: null,
+      },
+      status: 'draft',
+      createdAt: '2026-04-08T12:00:00.000Z',
+      updatedAt: '2026-04-08T12:00:00.000Z',
+    });
+
+    mockLoadCourse.mockResolvedValue({
+      ...mockLoadCourseResult,
+      course: {
+        ...mockLoadCourseResult.course,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-reflection',
+                title: 'Reflection Lesson',
+                type: 'reflection',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  prompt: 'What stood out to you most?',
+                  collectResponse: true,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-reflection',
+              title: 'Reflection Lesson',
+              type: 'reflection',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                prompt: 'What stood out to you most?',
+                collectResponse: true,
+              },
+            },
+          ],
+        },
+      ],
+      lessons: [
+        {
+          id: 'lesson-reflection',
+          title: 'Reflection Lesson',
+          type: 'reflection',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            prompt: 'What stood out to you most?',
+            collectResponse: true,
+          },
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
+
+    await screen.findByRole('button', { name: /begin reflection/i });
+    await user.click(screen.getByRole('button', { name: /begin reflection/i }));
+    await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
+
+    const textarea = await screen.findByPlaceholderText('Write your initial thoughts here…');
+    expect(textarea).toHaveClass('w-full');
+    expect(textarea).toHaveClass('min-h-[280px]');
+
+    await user.type(textarea, 'Wide response text');
+    await user.click(await screen.findByRole('button', { name: /save draft/i }));
+
+    await waitFor(() => {
+      expect(mockSaveLearnerReflection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          courseId: 'course-1',
+          lessonId: 'lesson-reflection',
+          status: 'draft',
+          responseData: expect.objectContaining({ promptResponse: 'Wide response text' }),
+        }),
+      );
+    });
+  });
 });

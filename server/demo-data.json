@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-08T18:56:10.045Z",
+        "published_at": "2026-04-08T20:30:44.150Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -153,298 +153,18 @@
       }
     ]
   ],
-  "surveys": [
-    [
-      "pulse-2025",
-      {
-        "id": "pulse-2025",
-        "title": "2025 DEI Pulse Check",
-        "description": "Quick quarterly sentiment survey for the leadership cohort.",
-        "type": "pulse-check",
-        "status": "published",
-        "sections": [],
-        "blocks": [],
-        "branding": {},
-        "settings": {
-          "allowAnonymous": false,
-          "allowSaveAndContinue": true,
-          "showProgressBar": true,
-          "randomizeQuestions": false,
-          "randomizeOptions": false
-        },
-        "completion_settings": {
-          "thankYouMessage": "Thank you for completing our survey!",
-          "showResources": false,
-          "recommendedCourses": []
-        },
-        "reflection_prompts": [],
-        "default_language": "en",
-        "supported_languages": [
-          "en"
-        ],
-        "assigned_to": {
-          "organizationIds": [
-            "org-huddle",
-            "demo-sandbox-org"
-          ],
-          "userIds": [],
-          "cohortIds": [],
-          "departmentIds": []
-        },
-        "created_at": "2026-04-08T18:56:17.315Z",
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "climate-2025-q1",
-      {
-        "id": "climate-2025-q1",
-        "title": "Q1 2025 Climate Assessment",
-        "description": "Quarterly organizational climate and culture assessment",
-        "type": "climate-assessment",
-        "status": "active",
-        "sections": [],
-        "blocks": [],
-        "branding": {},
-        "settings": {
-          "allowAnonymous": false,
-          "allowSaveAndContinue": true,
-          "showProgressBar": true,
-          "randomizeQuestions": false,
-          "randomizeOptions": false
-        },
-        "completion_settings": {
-          "thankYouMessage": "Thank you for completing our survey!",
-          "showResources": false,
-          "recommendedCourses": []
-        },
-        "reflection_prompts": [],
-        "default_language": "en",
-        "supported_languages": [
-          "en"
-        ],
-        "assigned_to": {
-          "organizationIds": [
-            "1",
-            "4",
-            "5",
-            "demo-sandbox-org"
-          ],
-          "userIds": [],
-          "cohortIds": [],
-          "departmentIds": []
-        },
-        "created_at": "2026-04-08T18:56:17.315Z",
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "inclusion-index-2025",
-      {
-        "id": "inclusion-index-2025",
-        "title": "Annual Inclusion Index",
-        "description": "Comprehensive inclusion measurement with benchmarking",
-        "type": "inclusion-index",
-        "status": "draft",
-        "sections": [],
-        "blocks": [],
-        "branding": {},
-        "settings": {
-          "allowAnonymous": false,
-          "allowSaveAndContinue": true,
-          "showProgressBar": true,
-          "randomizeQuestions": false,
-          "randomizeOptions": false
-        },
-        "completion_settings": {
-          "thankYouMessage": "Thank you for completing our survey!",
-          "showResources": false,
-          "recommendedCourses": []
-        },
-        "reflection_prompts": [],
-        "default_language": "en",
-        "supported_languages": [
-          "en"
-        ],
-        "assigned_to": {
-          "organizationIds": [
-            "demo-sandbox-org"
-          ],
-          "userIds": [],
-          "cohortIds": [],
-          "departmentIds": []
-        },
-        "created_at": "2026-04-08T18:56:17.315Z",
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "equity-lens-pilot",
-      {
-        "id": "equity-lens-pilot",
-        "title": "Equity Lens Pilot Study",
-        "description": "Pilot assessment of equity in organizational practices",
-        "type": "equity-lens",
-        "status": "completed",
-        "sections": [],
-        "blocks": [],
-        "branding": {},
-        "settings": {
-          "allowAnonymous": false,
-          "allowSaveAndContinue": true,
-          "showProgressBar": true,
-          "randomizeQuestions": false,
-          "randomizeOptions": false
-        },
-        "completion_settings": {
-          "thankYouMessage": "Thank you for completing our survey!",
-          "showResources": false,
-          "recommendedCourses": []
-        },
-        "reflection_prompts": [],
-        "default_language": "en",
-        "supported_languages": [
-          "en"
-        ],
-        "assigned_to": {
-          "organizationIds": [
-            "3",
-            "2",
-            "demo-sandbox-org"
-          ],
-          "userIds": [],
-          "cohortIds": [],
-          "departmentIds": []
-        },
-        "created_at": "2026-04-08T18:56:17.315Z",
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "leadership-360",
-      {
-        "id": "leadership-360",
-        "title": "Leadership 360 Assessment",
-        "description": "Multi-rater feedback for inclusive leadership development",
-        "type": "custom",
-        "status": "paused",
-        "sections": [],
-        "blocks": [],
-        "branding": {},
-        "settings": {
-          "allowAnonymous": false,
-          "allowSaveAndContinue": true,
-          "showProgressBar": true,
-          "randomizeQuestions": false,
-          "randomizeOptions": false
-        },
-        "completion_settings": {
-          "thankYouMessage": "Thank you for completing our survey!",
-          "showResources": false,
-          "recommendedCourses": []
-        },
-        "reflection_prompts": [],
-        "default_language": "en",
-        "supported_languages": [
-          "en"
-        ],
-        "assigned_to": {
-          "organizationIds": [
-            "1",
-            "demo-sandbox-org"
-          ],
-          "userIds": [],
-          "cohortIds": [],
-          "departmentIds": []
-        },
-        "created_at": "2026-04-08T18:56:17.315Z",
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ]
-  ],
-  "surveyAssignments": [
-    [
-      "pulse-2025",
-      {
-        "survey_id": "pulse-2025",
-        "organization_ids": [
-          "org-huddle",
-          "demo-sandbox-org"
-        ],
-        "user_ids": [],
-        "cohort_ids": [],
-        "department_ids": [],
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "climate-2025-q1",
-      {
-        "survey_id": "climate-2025-q1",
-        "organization_ids": [
-          "1",
-          "4",
-          "5",
-          "demo-sandbox-org"
-        ],
-        "user_ids": [],
-        "cohort_ids": [],
-        "department_ids": [],
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "inclusion-index-2025",
-      {
-        "survey_id": "inclusion-index-2025",
-        "organization_ids": [
-          "demo-sandbox-org"
-        ],
-        "user_ids": [],
-        "cohort_ids": [],
-        "department_ids": [],
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "equity-lens-pilot",
-      {
-        "survey_id": "equity-lens-pilot",
-        "organization_ids": [
-          "3",
-          "2",
-          "demo-sandbox-org"
-        ],
-        "user_ids": [],
-        "cohort_ids": [],
-        "department_ids": [],
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ],
-    [
-      "leadership-360",
-      {
-        "survey_id": "leadership-360",
-        "organization_ids": [
-          "1",
-          "demo-sandbox-org"
-        ],
-        "user_ids": [],
-        "cohort_ids": [],
-        "department_ids": [],
-        "updated_at": "2026-04-08T18:56:17.315Z"
-      }
-    ]
-  ],
+  "documents": [],
+  "surveys": [],
+  "surveyAssignments": [],
   "lessonReflections": [
     [
-      "demo-sandbox-org:e2e-course-1775674579001:lesson-reflection-1775674578974:00000000-0000-0000-0000-000000000002",
+      "demo-sandbox-org:e2e-course-1775680263114:lesson-reflection-1775680263100:00000000-0000-0000-0000-000000000002",
       {
-        "id": "reflection-mnqeszzk-4uu2ho",
+        "id": "reflection-mnqi6qe2-foqy3u",
         "organization_id": "demo-sandbox-org",
-        "course_id": "e2e-course-1775674579001",
-        "module_id": "6936f763-3d62-454e-a0e6-bd80f90023e4",
-        "lesson_id": "lesson-reflection-1775674578974",
+        "course_id": "e2e-course-1775680263114",
+        "module_id": "ee62524c-72eb-4a9e-85ba-6bff1096782b",
+        "lesson_id": "lesson-reflection-1775680263100",
         "user_id": "00000000-0000-0000-0000-000000000002",
         "response_text": "I need to slow down and listen more carefully.",
         "response_data": {
@@ -457,18 +177,18 @@
           "submitted_at": null
         },
         "status": "draft",
-        "created_at": "2026-04-08T18:56:32.048Z",
-        "updated_at": "2026-04-08T18:56:32.048Z"
+        "created_at": "2026-04-08T20:31:11.641Z",
+        "updated_at": "2026-04-08T20:31:11.641Z"
       }
     ],
     [
-      "demo-sandbox-org:e2e-course-1775674594311:lesson-reflection-1775674594309:00000000-0000-0000-0000-000000000002",
+      "demo-sandbox-org:e2e-course-1775680273167:lesson-reflection-1775680273166:00000000-0000-0000-0000-000000000002",
       {
-        "id": "reflection-mnqet5xf-986ftg",
+        "id": "reflection-mnqi6tr8-g8i37p",
         "organization_id": "demo-sandbox-org",
-        "course_id": "e2e-course-1775674594311",
-        "module_id": "db6ee812-5219-48f8-a534-2a54c3286774",
-        "lesson_id": "lesson-reflection-1775674594309",
+        "course_id": "e2e-course-1775680273167",
+        "module_id": "f4e081d0-665a-4d48-a67f-25fbc5961022",
+        "lesson_id": "lesson-reflection-1775680273166",
         "user_id": "00000000-0000-0000-0000-000000000002",
         "response_text": "I will pause before reacting.",
         "response_data": {
@@ -478,11 +198,11 @@
           "deeper_reflection_3": "",
           "action_commitment": "",
           "current_step_id": "review",
-          "submitted_at": "2026-04-08T18:56:39.740Z"
+          "submitted_at": "2026-04-08T20:31:16.000Z"
         },
         "status": "submitted",
-        "created_at": "2026-04-08T18:56:39.747Z",
-        "updated_at": "2026-04-08T18:56:39.747Z"
+        "created_at": "2026-04-08T20:31:16.004Z",
+        "updated_at": "2026-04-08T20:31:16.004Z"
       }
     ]
   ],

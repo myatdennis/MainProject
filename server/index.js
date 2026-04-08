@@ -926,6 +926,7 @@ function loadPersistedData() {
                 logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
                 return {
                   courses: [],
+                  documents: [],
                   surveys: [],
                   surveyAssignments: [],
                   lessonReflections: [],
@@ -944,6 +945,7 @@ function loadPersistedData() {
   }
         return {
           courses: new Map(),
+          documents: new Map(),
           modules: new Map(),
           lessons: new Map(),
           surveys: new Map(),
@@ -982,6 +984,7 @@ function savePersistedData(data) {
       .filter(([, course]) => !isE2ECourse(course));
     const serializable = {
       courses: filteredCourseEntries,
+      documents: Array.from((data.documents || new Map()).entries()),
       surveys: Array.from((data.surveys || new Map()).entries()),
       surveyAssignments: Array.from((data.surveyAssignments || new Map()).entries()),
       lessonReflections: Array.from((data.lessonReflections || new Map()).entries()),
@@ -3973,6 +3976,7 @@ const e2eStore = {
   idempotencyKeys: {},
   analyticsEvents: [], // stored analytics events in demo/E2E mode
   learnerJourneys: new Map(), // key `${user_id}:${course_id}` -> snapshot for demo mode
+  documents: new Map(persistedData.documents || []),
   surveys: new Map(persistedData.surveys || []),
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
   lessonReflections: new Map(persistedData.lessonReflections || []), // key `${org_id}:${course_id}:${lesson_id}:${user_id}`
@@ -5246,6 +5250,14 @@ const createEmptyAssignedTo = () => ({
   departmentIds: [],
 });
 
+const getAssignmentOrganizationId = (row) =>
+  pickOrgId(
+    row?.organization_id,
+    row?.organizationId,
+    row?.org_id,
+    row?.orgId,
+  ) ?? null;
+
 const normalizeAssignedTargets = (payload = {}) => {
   const source =
     payload && typeof payload.assignedTo === 'object'
@@ -5848,9 +5860,7 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
     try {
       const { data, error } = await supabase
         .from('assignments')
-        .select(
-          'id,survey_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at',
-        )
+        .select('*')
         .eq('assignment_type', 'survey')
         .in('survey_id', normalizedIds);
       if (error) throw error;
@@ -5867,7 +5877,8 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
         const orgSet = new Set();
         const userSet = new Set();
         rows.forEach((row) => {
-          if (row.organization_id) orgSet.add(String(row.organization_id));
+          const organizationId = getAssignmentOrganizationId(row);
+          if (organizationId) orgSet.add(String(organizationId));
           if (row.user_id) userSet.add(String(row.user_id));
         });
         aggregate.organizationIds = Array.from(orgSet);
@@ -5971,11 +5982,15 @@ const refreshSurveyAssignmentAggregates = async (surveyId) => {
 const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [], surveyFilter = [] } = {}) => {
   if (!supabase || !userId || !Array.isArray(orgIds) || orgIds.length === 0) return;
   try {
+    const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    const includeUserIdUuid = assignmentsSupportUserIdUuid && isUuid(userId);
+
     let orgQuery = supabase
       .from('assignments')
       .select(SURVEY_ASSIGNMENT_SELECT)
       .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-      .in('organization_id', orgIds)
+      .in(assignmentsOrgColumn, orgIds)
       .is('user_id', null)
       .eq('active', true);
 
@@ -6006,10 +6021,10 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
       }
       const source = orgAssignments.find((row) => row?.survey_id === surveyId);
       if (!source) return;
-      inserts.push({
+      const sourceOrganizationId = getAssignmentOrganizationId(source);
+      const insertRow = {
         survey_id: surveyId,
         course_id: null,
-        organization_id: source.organization_id ?? null,
         user_id: userId,
         assignment_type: SURVEY_ASSIGNMENT_TYPE,
         status: source.status ?? 'assigned',
@@ -6021,7 +6036,14 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
           assigned_via: 'org_rollup',
         },
         active: true,
-      });
+      };
+      if (sourceOrganizationId) {
+        insertRow[assignmentsOrgColumn] = sourceOrganizationId;
+      }
+      if (includeUserIdUuid) {
+        insertRow.user_id_uuid = userId;
+      }
+      inserts.push(insertRow);
     });
 
     if (!inserts.length) return;
@@ -15547,6 +15569,11 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
       userId: context.userId,
       orgIdCount: scopedOrgIds.length,
     });
+    res.status(400).json({
+      error: 'explicit_org_selection_required',
+      message: 'Select an organization to load assigned surveys.',
+    });
+    return;
   }
 
   const parseBoolean = (value, defaultValue = true) => {
@@ -15631,6 +15658,14 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   }
 
   try {
+    logger.info('[survey] learner_assigned_query', {
+      requestId: req.requestId ?? null,
+      route: '/api/client/surveys/assigned',
+      userId: context.userId,
+      orgId: orgScope.orgId ?? null,
+      scopedOrgIdCount: scopedOrgIds.length,
+      includeCompleted,
+    });
     logger.info('client_assigned_surveys_request_context', {
       requestId: req.requestId ?? null,
       route: '/api/client/surveys/assigned',
@@ -15746,6 +15781,15 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   }
 
   try {
+    logger.info('[survey] learner_submit_request', {
+      requestId: req.requestId ?? null,
+      route: '/api/client/surveys/:id/submit',
+      userId: context.userId,
+      surveyId: id,
+      assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
+      status: submissionStatus,
+      responseFieldCount: Object.keys(responses || {}).length,
+    });
     submitStage = 'load_survey';
     const surveyRecord = await loadSurveyWithAssignments(id);
     if (!surveyRecord) {
@@ -16247,9 +16291,28 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
     }
 
     submitStage = 'complete_success';
+    logger.info('[survey] learner_submit_success', {
+      requestId: req.requestId ?? null,
+      route: '/api/client/surveys/:id/submit',
+      userId: context.userId,
+      surveyId,
+      assignmentId: resolvedAssignment?.id ?? null,
+      status: submissionStatus,
+      responseFieldCount: Object.keys(responses || {}).length,
+    });
     res.status(isDraftSave ? 200 : 201).json({ data: inserted });
   } catch (error) {
     console.error('[client.surveys.submit] failed', { stage: submitStage, error });
+    logger.error('[survey] learner_submit_failure', {
+      requestId: req.requestId ?? null,
+      route: '/api/client/surveys/:id/submit',
+      userId: context.userId,
+      surveyId: surveyIdForLogs,
+      stage: submitStage,
+      status: submissionStatus,
+      code: error?.code ?? null,
+      message: error?.message ?? String(error),
+    });
     logSurveyAssignmentEvent('survey_assignment_failed', {
       requestId: req.requestId ?? null,
       surveyId: surveyIdForLogs,
@@ -24444,32 +24507,52 @@ app.post(
   requireAdmin,
   documentUpload.single('file'),
   async (req, res) => {
-    if (!ensureSupabase(res)) return;
-    if (!supabase) {
-      res.status(503).json({ error: 'Supabase storage is not configured in this environment' });
-      return;
-    }
     const file = req.file;
     normalizeLegacyOrgInput(req.body, { surface: 'admin.documents.upload', requestId: req.requestId });
     if (!file) {
-      res.status(400).json({ error: 'file is required' });
+      res.status(400).json({
+        ok: false,
+        error: 'validation_failed',
+        code: 'validation_failed',
+        message: 'A document file is required.',
+        fields: { file: 'file is required' },
+      });
+      return;
+    }
+    if (!file.originalname || !file.mimetype) {
+      res.status(400).json({
+        ok: false,
+        error: 'validation_failed',
+        code: 'validation_failed',
+        message: 'The uploaded file is missing required filename or content type metadata.',
+      });
       return;
     }
 
     try {
       const context = requireUserContext(req, res);
       if (!context) return;
+      logger.info('[admin_documents] create_request', createDocumentLogContext(req, context, {
+        route: '/api/admin/documents/upload',
+        hasFile: true,
+        filename: file.originalname ?? null,
+        fileType: file.mimetype ?? null,
+        fileSize: file.size ?? null,
+        visibility: req.body?.visibility ?? 'global',
+      }));
+
+      const resolvedOrg = await resolveDocumentTargetOrg(req, res, context, req.body || {}, {
+        surface: 'admin.documents.upload',
+      });
+      if (!resolvedOrg) return;
+
       const rawDocumentId = req.body?.documentId;
       const documentId = typeof rawDocumentId === 'string' && rawDocumentId.trim().length > 0
         ? rawDocumentId
         : rawDocumentId
         ? String(rawDocumentId)
         : `doc_${Date.now()}`;
-      const orgId = pickOrgId(req.body?.organization_id, req.body?.organizationId, req.body?.orgId);
-      if (orgId) {
-        const membership = await requireOrgAccess(req, res, orgId, { write: true });
-        if (!membership) return;
-      }
+      const orgId = resolvedOrg.organizationId;
       const storagePath = buildDocumentStoragePath({
         orgId,
         documentId,
@@ -24486,6 +24569,54 @@ app.post(
         lessonId: req.body?.lessonId ?? null,
       };
 
+      logger.info('[admin_documents] create_storage_start', createDocumentLogContext(req, context, {
+        route: '/api/admin/documents/upload',
+        orgId,
+        storagePath,
+        documentId,
+        fileSize: file.size ?? null,
+      }));
+
+      if (isDemoOrTestMode && req.headers['x-test-documents-fail'] === 'storage') {
+        throw Object.assign(new Error('Simulated document storage failure'), { code: 'TEST_DOCUMENT_STORAGE_FAILURE' });
+      }
+
+      if (isDemoOrTestMode && !supabase) {
+        const expiresAt = new Date(Date.now() + DOCUMENT_URL_TTL_SECONDS * 1000).toISOString();
+        logger.info('[admin_documents] create_storage_success', createDocumentLogContext(req, context, {
+          route: '/api/admin/documents/upload',
+          orgId,
+          storagePath,
+          documentId,
+          mode: 'demo',
+        }));
+        res.status(201).json({
+          data: {
+            documentId,
+            assetId: documentId,
+            storagePath,
+            bucket: DOCUMENTS_BUCKET,
+            signedUrl: `https://example.test/documents/${encodeURIComponent(storagePath)}`,
+            urlExpiresAt: expiresAt,
+            fileType: file.mimetype,
+            fileSize: file.size,
+            organizationId: orgId,
+          },
+        });
+        return;
+      }
+
+      if (!ensureSupabase(res)) return;
+      if (!supabase) {
+        res.status(503).json({
+          ok: false,
+          error: 'document_storage_unavailable',
+          code: 'document_storage_unavailable',
+          message: 'Document storage is not configured in this environment.',
+        });
+        return;
+      }
+
       const uploadResult = await mediaService.uploadDocument({
         file,
         storagePath,
@@ -24493,6 +24624,14 @@ app.post(
         userId: context.userId,
         metadata,
       });
+
+      logger.info('[admin_documents] create_storage_success', createDocumentLogContext(req, context, {
+        route: '/api/admin/documents/upload',
+        orgId,
+        storagePath: uploadResult.asset.storage_path,
+        documentId,
+        assetId: uploadResult.asset.id,
+      }));
 
       res.status(201).json({
         data: {
@@ -24504,11 +24643,28 @@ app.post(
           urlExpiresAt: uploadResult.expiresAt,
           fileType: file.mimetype,
           fileSize: file.size,
+          organizationId: orgId,
         },
       });
     } catch (error) {
-      console.error('[documents] Failed to upload file:', error);
-      res.status(500).json({ error: 'Unable to upload document file' });
+      logger.error('[admin_documents] create_failure', {
+        ...createDocumentLogContext(req, req.user ? getRequestContext(req) : null, {
+          route: '/api/admin/documents/upload',
+          phase: 'storage',
+        }),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const isMulterLimit = error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE';
+      res.status(isMulterLimit ? 400 : 502).json({
+        ok: false,
+        error: isMulterLimit ? 'validation_failed' : 'document_storage_upload_failed',
+        code: isMulterLimit ? 'validation_failed' : 'document_storage_upload_failed',
+        message: isMulterLimit
+          ? 'The selected file is too large to upload.'
+          : error instanceof Error && error.message
+          ? error.message
+          : 'Document storage upload failed.',
+      });
     }
   },
 );
@@ -24595,6 +24751,309 @@ const applyDocumentsInsertCompatibilityFallback = (insertPayload, error) => {
   return null;
 };
 
+const DOCUMENT_MUTABLE_COLUMN_ALIASES = {
+  file_url: ['url'],
+  url: ['file_url'],
+  organization_id: ['org_id'],
+  org_id: ['organization_id'],
+};
+
+const DOCUMENT_OPTIONAL_INSERT_COLUMNS = new Set([
+  'filename',
+  'subcategory',
+  'description',
+  'bucket',
+  'storage_path',
+  'url_expires_at',
+  'file_size',
+  'file_type',
+  'created_by',
+  'metadata',
+  'tags',
+  'user_id',
+]);
+
+const createDocumentLogContext = (req, context, extra = {}) => ({
+  requestId: req.requestId ?? null,
+  route: req.originalUrl ?? req.path ?? '/api/admin/documents',
+  userId: context?.userId ?? req.user?.userId ?? req.user?.id ?? null,
+  orgId: extra.orgId ?? null,
+  visibility: extra.visibility ?? null,
+  hasFile: extra.hasFile ?? null,
+  ...extra,
+});
+
+const listAdminWritableOrgIds = (context, req) => {
+  const orgIds = new Set();
+  const memberships = [
+    ...(Array.isArray(context?.memberships) ? context.memberships : []),
+    ...(Array.isArray(req?.user?.memberships) ? req.user.memberships : []),
+  ];
+  memberships.forEach((membership) => {
+    const role = String(membership?.role || '').toLowerCase();
+    const orgId = normalizeOrgIdValue(
+      pickOrgId(membership?.organization_id, membership?.organizationId, membership?.org_id, membership?.orgId),
+    );
+    if (orgId && hasOrgAdminRole(role)) {
+      orgIds.add(orgId);
+    }
+  });
+  return Array.from(orgIds);
+};
+
+const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { surface = 'admin.documents.create' } = {}) => {
+  const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
+  const explicitOrgId = pickOrgId(payload.organization_id, payload.organizationId, payload.orgId, req.query?.orgId, req.query?.organization_id);
+  const writableOrgIds = listAdminWritableOrgIds(context, req);
+  const headerOrgId = getHeaderOrgId(req, { requireMembership: !context?.isPlatformAdmin });
+  const contextOrgId = normalizeOrgIdValue(context?.activeOrganizationId ?? context?.requestedOrgId ?? null);
+  const fallbackCandidates = Array.from(new Set([headerOrgId, contextOrgId, ...writableOrgIds].filter(Boolean)));
+
+  logger.info('[admin_documents] create_context', createDocumentLogContext(req, context, {
+    surface,
+    explicitOrgId: explicitOrgId ?? null,
+    headerOrgId: headerOrgId ?? null,
+    activeOrgId: contextOrgId ?? null,
+    writableOrgIds,
+  }));
+
+  if (explicitOrgId) {
+    const resolvedExplicitOrgId = await coerceOrgIdentifierToUuid(req, explicitOrgId);
+    if (!resolvedExplicitOrgId || !isUuid(String(resolvedExplicitOrgId).trim())) {
+      res.status(403).json({
+        ok: false,
+        error: 'org_access_denied',
+        code: 'org_access_denied',
+        message: 'Organization scope not permitted.',
+      });
+      return null;
+    }
+
+    const access = await requireOrgAccess(req, res, resolvedExplicitOrgId, { write: true, requireOrgAdmin: true });
+    if (!access) {
+      if (!res.headersSent) {
+        res.status(403).json({
+          ok: false,
+          error: 'org_access_denied',
+          code: 'org_access_denied',
+          message: 'Organization scope not permitted.',
+        });
+      }
+      return null;
+    }
+
+    return { organizationId: resolvedExplicitOrgId, resolution: 'explicit' };
+  }
+
+  if (fallbackCandidates.length === 0) {
+    res.status(400).json({
+      ok: false,
+      error: 'organization_scope_required',
+      code: 'organization_scope_required',
+      message: 'A target organization is required to upload this document.',
+    });
+    return null;
+  }
+
+  if (fallbackCandidates.length > 1) {
+    res.status(400).json({
+      ok: false,
+      error: 'explicit_org_selection_required',
+      code: 'explicit_org_selection_required',
+      message: 'This document upload is ambiguous across multiple organizations. Select an organization explicitly.',
+    });
+    return null;
+  }
+
+  const resolvedFallbackOrgId = await coerceOrgIdentifierToUuid(req, fallbackCandidates[0]);
+  if (!resolvedFallbackOrgId || !isUuid(String(resolvedFallbackOrgId).trim())) {
+    res.status(403).json({
+      ok: false,
+      error: 'org_access_denied',
+      code: 'org_access_denied',
+      message: 'Organization scope not permitted.',
+    });
+    return null;
+  }
+
+  const access = await requireOrgAccess(req, res, resolvedFallbackOrgId, { write: true, requireOrgAdmin: true });
+  if (!access) {
+    if (!res.headersSent) {
+      res.status(403).json({
+        ok: false,
+        error: 'org_access_denied',
+        code: 'org_access_denied',
+        message: 'Organization scope not permitted.',
+      });
+    }
+    return null;
+  }
+
+  return { organizationId: resolvedFallbackOrgId, resolution: 'implicit' };
+};
+
+const buildDocumentInsertCompatibilityPayload = (insertPayload, error) => {
+  const compatibilityPayload = applyDocumentsInsertCompatibilityFallback(insertPayload, error);
+  if (compatibilityPayload) return compatibilityPayload;
+  if (!isMissingColumnError(error)) return null;
+
+  const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+  if (!missingColumn) return null;
+
+  const nextPayload = { ...insertPayload };
+  const aliasTargets = DOCUMENT_MUTABLE_COLUMN_ALIASES[missingColumn] || [];
+  let changed = false;
+
+  aliasTargets.forEach((alias) => {
+    if (Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
+      nextPayload[alias] = nextPayload[missingColumn];
+      delete nextPayload[missingColumn];
+      changed = true;
+    }
+  });
+
+  if (!changed && DOCUMENT_OPTIONAL_INSERT_COLUMNS.has(missingColumn)) {
+    delete nextPayload[missingColumn];
+    changed = true;
+  }
+
+  return changed ? nextPayload : null;
+};
+
+const executeDocumentInsert = async (insertPayload) => {
+  let attemptPayload = { ...insertPayload };
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    let result = await supabase.from('documents').insert(attemptPayload).select('*');
+    if (!result.error) {
+      return { result, insertPayload: attemptPayload };
+    }
+
+    const fallbackPayload = buildDocumentInsertCompatibilityPayload(attemptPayload, result.error);
+    if (!fallbackPayload) {
+      return { result, insertPayload: attemptPayload };
+    }
+
+    attemptPayload = fallbackPayload;
+  }
+
+  const result = await supabase.from('documents').insert(attemptPayload).select('*');
+  return { result, insertPayload: attemptPayload };
+};
+
+const buildDocumentCreateFailure = (error) => {
+  const code = String(error?.code || '');
+  const message = String(error?.message || 'Document metadata could not be saved.');
+  const details = error?.details ?? null;
+  const hint = error?.hint ?? null;
+
+  if (code === '22P02' || code === '23502' || code === '23503' || code === '23514') {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        error: 'validation_failed',
+        code: 'validation_failed',
+        message,
+        meta: { details, hint },
+      },
+    };
+  }
+
+  if (isMissingColumnError(error) || isMissingRelationError(error)) {
+    return {
+      status: 500,
+      body: {
+        ok: false,
+        error: 'document_schema_mismatch',
+        code: 'document_schema_mismatch',
+        message: 'Document metadata could not be saved because the documents schema is incompatible.',
+        meta: { details, hint, code },
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    body: {
+      ok: false,
+      error: 'document_create_failed',
+      code: 'document_create_failed',
+      message,
+      meta: { details, hint, code },
+    },
+  };
+};
+
+const removeDocumentStorageObject = async ({ bucket, storagePath }) => {
+  if (!supabase || !bucket || !storagePath) return;
+  try {
+    const { error } = await supabase.storage.from(bucket).remove([storagePath]);
+    if (error) {
+      logger.warn('[admin_documents] create_storage_cleanup_failed', {
+        bucket,
+        storagePath,
+        code: error.code ?? null,
+        message: error.message ?? null,
+      });
+    }
+  } catch (error) {
+    logger.warn('[admin_documents] create_storage_cleanup_failed', {
+      bucket,
+      storagePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
+const buildE2EDocumentRecord = ({ payload, organizationId, context, url, storagePath, urlExpiresAt, bucket }) => {
+  const documentId = isUuid(String(payload?.id || '').trim()) ? String(payload.id).trim() : randomUUID();
+  return {
+    id: documentId,
+    name: payload.name,
+    filename: payload.filename ?? payload.name ?? null,
+    category: payload.category,
+    subcategory: payload.subcategory ?? null,
+    description: payload.description ?? null,
+    tags: Array.isArray(payload.tags) ? payload.tags : [],
+    file_type: payload.fileType ?? null,
+    file_size: typeof payload.fileSize === 'number' ? payload.fileSize : null,
+    file_url: url ?? payload.url ?? null,
+    storage_path: storagePath ?? payload.storagePath ?? null,
+    url_expires_at: urlExpiresAt ?? payload.urlExpiresAt ?? null,
+    bucket: bucket ?? payload.bucket ?? DOCUMENTS_BUCKET,
+    visibility: payload.visibility ?? 'global',
+    organization_id: organizationId,
+    user_id: payload.userId ?? null,
+    metadata: payload.metadata ?? {},
+    created_by: context?.userId ?? null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+};
+
+const filterE2EDocumentsForAdmin = ({ context, requestedOrgId = null, visibility = null, userId = null, category = null, tag = null, search = null }) => {
+  let rows = Array.from(e2eStore.documents.values());
+  const adminOrgIds = listAdminWritableOrgIds(context, { user: { memberships: context?.memberships || [] } });
+
+  if (requestedOrgId) {
+    rows = rows.filter((row) => normalizeOrgIdValue(row.organization_id) === requestedOrgId);
+  } else if (!context?.isPlatformAdmin) {
+    rows = rows.filter((row) => row.visibility === 'global' || adminOrgIds.includes(normalizeOrgIdValue(row.organization_id)));
+  }
+
+  if (visibility) rows = rows.filter((row) => row.visibility === visibility);
+  if (userId) rows = rows.filter((row) => row.user_id === userId);
+  if (category) rows = rows.filter((row) => row.category === category);
+  if (tag) rows = rows.filter((row) => Array.isArray(row.tags) && row.tags.includes(tag));
+  if (search) {
+    const needle = String(search).toLowerCase();
+    rows = rows.filter((row) => `${row.name ?? ''} ${row.category ?? ''}`.toLowerCase().includes(needle));
+  }
+
+  return rows.sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0));
+};
+
 // ── Client-facing documents endpoint ────────────────────────────────────────
 // Returns only global or org-scoped documents visible to the authenticated learner.
 // Does NOT expose documents belonging to other orgs or private admin-only docs.
@@ -24673,7 +25132,16 @@ app.get('/api/admin/documents', authenticate, requireOrgAdmin, async (req, res) 
 
   // Demo/test mode: return empty document list (no Supabase available)
   if (isDemoOrTestMode) {
-    res.json({ data: [], demo: true });
+    const rows = filterE2EDocumentsForAdmin({
+      context,
+      requestedOrgId: resolvedRequestedOrgId,
+      visibility,
+      userId: user_id,
+      category,
+      tag,
+      search,
+    });
+    res.json({ data: rows, demo: true });
     return;
   }
 
@@ -24721,15 +25189,19 @@ app.get('/api/admin/documents', authenticate, requireOrgAdmin, async (req, res) 
   }
 });
 
-app.post('/api/admin/documents', async (req, res) => {
-  if (!ensureSupabase(res)) return;
-  if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.create'))) return;
+app.post('/api/admin/documents', authenticate, requireAdmin, async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.documents.create', requestId: req.requestId });
   const context = requireUserContext(req, res);
   if (!context) return;
 
   const payload = req.body || {};
   const requestId = req.requestId ?? null;
+  logger.info('[admin_documents] create_request', createDocumentLogContext(req, context, {
+    route: '/api/admin/documents',
+    visibility: payload.visibility ?? 'global',
+    hasFile: Boolean(payload.storagePath || payload.url),
+    payloadKeys: Object.keys(payload).slice(0, 30),
+  }));
 
   if (!payload.name || !payload.category) {
     const missingFields = [];
@@ -24750,57 +25222,34 @@ app.post('/api/admin/documents', async (req, res) => {
     return;
   }
 
-  let organizationId = pickOrgId(payload.organization_id, payload.organizationId, payload.orgId);
+  if (payload.visibility && !['global', 'org', 'user'].includes(String(payload.visibility))) {
+    res.status(400).json({
+      ok: false,
+      error: 'validation_failed',
+      code: 'validation_failed',
+      message: 'Visibility must be one of: global, org, user.',
+      fields: { visibility: 'visibility must be one of global, org, user' },
+    });
+    return;
+  }
+
+  if (payload.userId && !isUuid(String(payload.userId).trim())) {
+    res.status(400).json({
+      ok: false,
+      error: 'validation_failed',
+      code: 'validation_failed',
+      message: 'User ID must be a valid UUID.',
+      fields: { userId: 'userId must be a valid UUID' },
+    });
+    return;
+  }
 
   try {
-    if (!organizationId && !context.isPlatformAdmin) {
-      const headerOrgId = getHeaderOrgId(req, { requireMembership: true }) || null;
-      const membershipOrgIds = Array.isArray(context.memberships)
-        ? context.memberships
-            .map((m) => normalizeOrgIdValue(pickOrgId(m.organization_id, m.organizationId, m.org_id, m.orgId)))
-            .filter(Boolean)
-        : [];
-      const orgCandidates = Array.from(new Set([
-        headerOrgId,
-        normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId),
-        ...membershipOrgIds,
-        ...(Array.isArray(context.organizationIds) ? context.organizationIds.map((orgId) => normalizeOrgIdValue(orgId)) : []),
-      ].filter(Boolean)));
-      const fallbackOrgId =
-        headerOrgId ||
-        normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId) ||
-        (orgCandidates.length === 1 ? orgCandidates[0] : null);
-      if (!fallbackOrgId && orgCandidates.length > 1) {
-        res.status(400).json({
-          ok: false,
-          error: 'explicit_org_selection_required',
-          code: 'explicit_org_selection_required',
-          message: 'This document upload is ambiguous across multiple organizations. Pass an organizationId explicitly.',
-        });
-        return;
-      }
-      if (fallbackOrgId) {
-        organizationId = fallbackOrgId;
-        logger.info('[admin.documents.create] org_id_auto_resolved', {
-          requestId,
-          userId: context.userId,
-          resolvedOrgId: organizationId,
-        });
-      } else {
-        logger.warn('[admin.documents.create] org_scope_required', {
-          requestId,
-          userId: context.userId,
-          reason: 'no_organization_id_and_not_platform_admin',
-        });
-        res.status(403).json({ error: 'organization_scope_required', message: 'Document must be assigned to an organization. Pass an organizationId in the request.' });
-        return;
-      }
-    }
-
-    if (organizationId) {
-      const access = await requireOrgAccess(req, res, organizationId, { write: true });
-      if (!access) return;
-    }
+    const resolvedOrg = await resolveDocumentTargetOrg(req, res, context, payload, {
+      surface: 'admin.documents.create',
+    });
+    if (!resolvedOrg) return;
+    const organizationId = resolvedOrg.organizationId;
 
     let storagePath = payload.storagePath ?? null;
     let url = payload.url ?? null;
@@ -24815,6 +25264,39 @@ app.post('/api/admin/documents', async (req, res) => {
       }
     }
 
+    if (isDemoOrTestMode && !supabase) {
+      if (req.headers['x-test-documents-fail'] === 'db') {
+        throw Object.assign(new Error('Simulated document metadata insert failure'), { code: 'TEST_DOCUMENT_DB_FAILURE' });
+      }
+      logger.info('[admin_documents] create_db_start', createDocumentLogContext(req, context, {
+        route: '/api/admin/documents',
+        orgId: organizationId,
+        mode: 'demo',
+      }));
+      const demoRow = buildE2EDocumentRecord({
+        payload,
+        organizationId,
+        context,
+        url,
+        storagePath,
+        urlExpiresAt,
+        bucket: documentBucket,
+      });
+      e2eStore.documents.set(demoRow.id, demoRow);
+      savePersistedData(e2eStore);
+      logger.info('[admin_documents] create_db_success', createDocumentLogContext(req, context, {
+        route: '/api/admin/documents',
+        orgId: organizationId,
+        documentId: demoRow.id,
+        mode: 'demo',
+      }));
+      res.status(201).json({ data: demoRow });
+      return;
+    }
+
+    if (!ensureSupabase(res)) return;
+    if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.create'))) return;
+
     let insertPayload = buildDocumentsInsertPayload({
       payload,
       contextUserId: context.userId,
@@ -24825,43 +25307,52 @@ app.post('/api/admin/documents', async (req, res) => {
       urlExpiresAt,
     });
 
-    let _docInsert = await supabase
-      .from('documents')
-      .insert(insertPayload)
-      .select('*');
-
-    if (_docInsert.error) {
-      const fallbackPayload = applyDocumentsInsertCompatibilityFallback(insertPayload, _docInsert.error);
-      if (fallbackPayload) {
-        insertPayload = fallbackPayload;
-        _docInsert = await supabase
-          .from('documents')
-          .insert(insertPayload)
-          .select('*');
-      }
+    if (!isUuid(String(insertPayload.created_by || '').trim())) {
+      insertPayload.metadata = {
+        ...(insertPayload.metadata || {}),
+        createdByLabel: payload.createdBy ?? null,
+      };
+      delete insertPayload.created_by;
     }
 
-    if (_docInsert.error) throw _docInsert.error;
-    const docRow = firstRow(_docInsert);
-
-    logger.info('[admin.documents.create] success', {
-      requestId,
+    logger.info('[admin_documents] create_db_start', createDocumentLogContext(req, context, {
+      route: '/api/admin/documents',
       orgId: organizationId,
-      userId: context.userId,
-      documentId: docRow?.id,
-      name: docRow?.name,
-      visibility: docRow?.visibility,
-    });
+      storagePath,
+      bucket: documentBucket,
+    }));
+
+    const { result: docInsert, insertPayload: effectiveInsertPayload } = await executeDocumentInsert(insertPayload);
+    if (docInsert.error) {
+      await removeDocumentStorageObject({
+        bucket: documentBucket,
+        storagePath: effectiveInsertPayload.storage_path ?? storagePath,
+      });
+      throw docInsert.error;
+    }
+    const docRow = firstRow(docInsert);
+
+    logger.info('[admin_documents] create_db_success', createDocumentLogContext(req, context, {
+      route: '/api/admin/documents',
+      orgId: organizationId,
+      documentId: docRow?.id ?? null,
+      name: docRow?.name ?? null,
+      visibility: docRow?.visibility ?? null,
+    }));
 
     res.status(201).json({ data: docRow });
   } catch (error) {
-    logger.error('[admin.documents.create] failed', {
+    const normalizedFailure = buildDocumentCreateFailure(error);
+    logger.error('[admin_documents] create_failure', {
+      ...createDocumentLogContext(req, context, {
+        route: '/api/admin/documents',
+        phase: 'db',
+      }),
       requestId,
-      orgId: organizationId ?? null,
-      userId: context.userId,
       error: error instanceof Error ? error.message : String(error),
+      code: error?.code ?? null,
     });
-    res.status(500).json({ error: 'Unable to create document' });
+    res.status(normalizedFailure.status).json(normalizedFailure.body);
   }
 });
 
@@ -25465,11 +25956,13 @@ app.get('/api/admin/surveys/:id', requireAdminAccess, asyncHandler(async (req, r
   }
 }));
 
-app.post('/api/admin/surveys', async (req, res) => {
+app.post('/api/admin/surveys', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.upsert'))) return;
   const payload = req.body || {};
   const incomingSurveyIdentifier = typeof payload.id === 'string' ? payload.id.trim() : null;
+  const context = requireUserContext(req, res);
+  if (!context) return;
 
   if (!payload.title) {
     res.status(400).json({ error: 'title is required' });
@@ -25477,6 +25970,25 @@ app.post('/api/admin/surveys', async (req, res) => {
   }
 
   try {
+    logger.info('[survey] create_request', {
+      requestId: req.requestId ?? null,
+      userId: context.userId,
+      surveyId: incomingSurveyIdentifier,
+      status: payload.status ?? 'draft',
+      organizationIdCount: coerceIdArray(
+        payload.organizationIds ??
+          payload.organization_ids ??
+          payload.assignedTo?.organizationIds ??
+          payload.assigned_to?.organization_ids,
+      ).length,
+    });
+    if (String(payload.status ?? '').toLowerCase() === 'published') {
+      logger.info('[survey] publish_request', {
+        requestId: req.requestId ?? null,
+        userId: context.userId,
+        surveyId: incomingSurveyIdentifier,
+      });
+    }
     if (!supabase) {
       const survey = upsertDemoSurvey(payload);
       res.status(201).json({ data: survey });
@@ -25522,15 +26034,24 @@ app.post('/api/admin/surveys', async (req, res) => {
   }
 });
 
-app.put('/api/admin/surveys/:id', async (req, res) => {
+app.put('/api/admin/surveys/:id', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.update'))) return;
   const { id } = req.params;
   const canonicalSurveyId = await resolveSurveyIdentifierToCanonicalId(id);
   const surveyIdForWrite = canonicalSurveyId ?? id;
   const patch = req.body || {};
+  const context = requireUserContext(req, res);
+  if (!context) return;
 
   try {
+    if (String(patch.status ?? '').toLowerCase() === 'published') {
+      logger.info('[survey] publish_request', {
+        requestId: req.requestId ?? null,
+        userId: context.userId,
+        surveyId: surveyIdForWrite,
+      });
+    }
     if (!supabase) {
       const survey = upsertDemoSurvey({ ...patch, id });
       res.json({ data: survey });
@@ -25581,7 +26102,7 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/surveys/:id', async (req, res) => {
+app.delete('/api/admin/surveys/:id', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.delete'))) return;
   const { id } = req.params;
@@ -25608,7 +26129,7 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
   }
 });
 
-app.post('/api/admin/surveys/:id/assign', async (req, res) => {
+app.post('/api/admin/surveys/:id/assign', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const assignmentFallbackEnabled = shouldUseAssignmentWriteFallback();
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assign'))) return;
@@ -25686,6 +26207,12 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       }
 
       organizationIds.push(...(derivedScope.organizationIds || []));
+      logger.info('[survey] assign_target_resolution', {
+        requestId: req.requestId ?? null,
+        surveyId,
+        organizationIdCount: organizationIds.length,
+        userIdCount: normalizedUserIds.length,
+      });
     } catch (deriveOrgError) {
       logger.warn('survey_assignment_org_derivation_failed', {
         requestId: req.requestId ?? null,
@@ -25707,6 +26234,13 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
 
   const context = requireUserContext(req, res);
   if (!context) return;
+  logger.info('[survey] assign_request', {
+    requestId: req.requestId ?? null,
+    surveyId,
+    userId: context.userId,
+    rawOrganizationIdCount: organizationIds.length,
+    rawUserIdCount: normalizedUserIds.length,
+  });
 
   const dueProvided = hasBodyKey('due_at') || hasBodyKey('dueAt');
   const noteProvided = hasBodyKey('note');
@@ -26014,6 +26548,13 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     const updates = [];
     const inserts = [];
 
+    logger.info('[survey] assign_db_write_start', {
+      requestId: req.requestId ?? null,
+      surveyId,
+      organizationId: canonicalOrganizationId,
+      targetUserCount: effectiveTargetUserIds.length,
+    });
+
     const sqlResult = await sql.begin(async (tx) => {
       const existingRows = !hasOrgWideTarget
         ? await tx.unsafe(
@@ -26190,6 +26731,14 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     const updatedRows = sqlResult.updatedRows || [];
 
     const persistedRows = await verifyPersistedSurveyAssignments();
+    logger.info('[survey] assign_db_write_success', {
+      requestId: req.requestId ?? null,
+      surveyId,
+      organizationId: canonicalOrganizationId,
+      insertedCount: insertedRows.length,
+      updatedCount: updatedRows.length,
+      persistedCount: persistedRows.length,
+    });
     aggregateResponse.push(...persistedRows);
     insertedTotal += insertedRows.length;
     updatedTotal += updatedRows.length;
@@ -26308,6 +26857,14 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       },
     });
   } catch (error) {
+    logger.error('[survey] assign_db_write_failure', {
+      requestId: req.requestId ?? null,
+      surveyId,
+      code: error?.code ?? null,
+      statusCode: error?.statusCode ?? null,
+      message: error?.message ?? String(error),
+      organizationId: error?.meta?.organizationId ?? null,
+    });
     logSurveyAssignmentEvent('survey_assignment_failed', {
       requestId: req.requestId ?? null,
   surveyId,
@@ -26371,7 +26928,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   }
 });
 
-app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
+app.get('/api/admin/surveys/:id/assignments', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments'))) return;
   const { id } = req.params;
@@ -26411,6 +26968,7 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
   }
 
   try {
+    const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     if (!supabase && isDemoOrTestMode) {
       const rows = Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [];
       const filtered = rows
@@ -26447,7 +27005,7 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
       .range(offset, offset + limit - 1);
 
     if (organizationId) {
-      query = query.eq('organization_id', organizationId);
+      query = query.eq(assignmentsOrgColumn, organizationId);
     }
     if (userIdFilter) {
       query = query.eq('user_id', userIdFilter);
@@ -26465,7 +27023,7 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req, res) => {
+app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments.delete'))) return;
   const { surveyId, assignmentId } = req.params;
@@ -26533,7 +27091,7 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
   }
 });
 
-app.get('/api/admin/surveys/:id/hdi/participant-report', async (req, res) => {
+app.get('/api/admin/surveys/:id/hdi/participant-report', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.hdi.participant-report'))) return;
 
@@ -26601,7 +27159,7 @@ app.get('/api/admin/surveys/:id/hdi/participant-report', async (req, res) => {
   }
 });
 
-app.get('/api/admin/surveys/:id/hdi/cohort-analytics', async (req, res) => {
+app.get('/api/admin/surveys/:id/hdi/cohort-analytics', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.hdi.cohort-analytics'))) return;
 
@@ -26659,7 +27217,7 @@ app.get('/api/admin/surveys/:id/hdi/cohort-analytics', async (req, res) => {
   }
 });
 
-app.get('/api/admin/surveys/:id/hdi/pre-post-comparison', async (req, res) => {
+app.get('/api/admin/surveys/:id/hdi/pre-post-comparison', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.hdi.pre-post-comparison'))) return;
 
@@ -26694,6 +27252,14 @@ app.get('/api/admin/surveys/:id/hdi/pre-post-comparison', async (req, res) => {
   }
 
   try {
+    logger.info('[survey] admin_results_query', {
+      requestId: req.requestId ?? null,
+      surveyId: surveyRecord.id,
+      userId: context.userId,
+      organizationId: organizationId ?? null,
+      userIdFilter,
+      limit,
+    });
     let query = supabase
       .from('survey_responses')
       .select('*')
@@ -26815,7 +27381,7 @@ app.get('/api/client/surveys/:id/results', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/admin/surveys/:id/results', async (req, res) => {
+app.get('/api/admin/surveys/:id/results', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.results'))) return;
   const context = requireUserContext(req, res);

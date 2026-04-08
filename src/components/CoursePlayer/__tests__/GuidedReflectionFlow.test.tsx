@@ -122,32 +122,12 @@ describe('GuidedReflectionFlow', () => {
   }, 10000);
 
   it('does not overlap autosave requests when a prior save is in flight', async () => {
-    let resolveFirstSave: (() => void) | null = null;
+    let resolveFirstSave: any = null;
     mockSaveLearnerReflection
       .mockImplementationOnce(
         () =>
-          new Promise((resolve) => {
-            resolveFirstSave = () =>
-              resolve({
-                id: 'reflection-1',
-                organizationId: 'org-1',
-                courseId: 'course-1',
-                lessonId: 'lesson-1',
-                userId: 'local-user',
-                responseText: 'Initial reflection',
-                responseData: {
-                  promptResponse: 'Initial reflection',
-                  deeperReflection1: '',
-                  deeperReflection2: '',
-                  deeperReflection3: '',
-                  actionCommitment: '',
-                  currentStepId: 'initial',
-                  submittedAt: null,
-                },
-                status: 'draft',
-                createdAt: '2026-04-08T12:00:00.000Z',
-                updatedAt: '2026-04-08T12:01:00.000Z',
-              });
+          new Promise<any>((resolve) => {
+            resolveFirstSave = resolve;
           }),
       )
       .mockResolvedValue({
@@ -186,7 +166,28 @@ describe('GuidedReflectionFlow', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 1300));
     expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(1);
 
-    resolveFirstSave?.();
+    if (resolveFirstSave) {
+      resolveFirstSave({
+        id: 'reflection-1',
+        organizationId: 'org-1',
+        courseId: 'course-1',
+        lessonId: 'lesson-1',
+        userId: 'local-user',
+        responseText: 'Initial reflection',
+        responseData: {
+          promptResponse: 'Initial reflection',
+          deeperReflection1: '',
+          deeperReflection2: '',
+          deeperReflection3: '',
+          actionCommitment: '',
+          currentStepId: 'initial',
+          submittedAt: null,
+        },
+        status: 'draft',
+        createdAt: '2026-04-08T12:00:00.000Z',
+        updatedAt: '2026-04-08T12:01:00.000Z',
+      });
+    }
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(2), { timeout: 2500 });
   }, 15000);
 

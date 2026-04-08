@@ -28,7 +28,7 @@ type GuidedReflectionFlowProps = {
 type StepDefinition =
   | { id: 'intro'; title: string; subtitle: string }
   | { id: 'prompt'; title: string; subtitle: string }
-  | { id: 'initial'; title: string; subtitle: string; field: 'promptResponse'; label: string; placeholder: string }
+  | { id: 'initial'; title: string; subtitle: string; field: 'promptResponse'; label: 'Your initial thoughts'; placeholder: 'Write your initial thoughts here…' }
   | {
       id: 'deepen-1' | 'deepen-2' | 'deepen-3';
       title: string;
@@ -56,7 +56,8 @@ const readDraft = (courseId: string, lessonId: string, learnerId: string): Refle
         status: parsed.status === 'submitted' ? 'submitted' : 'draft',
       };
     }
-    const legacyText = typeof parsed.text === 'string' ? parsed.text : '';
+    const legacyRecord = parsed as { text?: string };
+    const legacyText = typeof legacyRecord.text === 'string' ? legacyRecord.text : '';
     if (!legacyText) return null;
     return {
       data: {
@@ -110,6 +111,11 @@ const GuidedReflectionFlow = ({
 }: GuidedReflectionFlowProps) => {
   const config = useMemo(() => normalizeGuidedReflectionConfig(lessonContent), [lessonContent]);
   const deepenPrompts = useMemo(() => config.deepenPrompts.slice(0, 3), [config.deepenPrompts]);
+  const initialDraft = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return readDraft(courseId, lessonId, learnerId);
+  }, [courseId, lessonId, learnerId]);
+
   const baseSteps = useMemo<StepDefinition[]>(
     () => [
       { id: 'intro', title: 'Settle In', subtitle: config.introText },
@@ -122,14 +128,18 @@ const GuidedReflectionFlow = ({
         label: 'Your initial thoughts',
         placeholder: 'Write your initial thoughts here…',
       },
-      ...deepenPrompts.map((prompt, index) => ({
-        id: `deepen-${index + 1}` as const,
-        title: `Deepen Your Reflection`,
-        subtitle: 'Stay curious. Let the next layer come into focus.',
-        field: `deeperReflection${index + 1}` as const,
-        prompt,
-        placeholder: 'Write a deeper reflection here…',
-      })),
+      ...deepenPrompts.map((prompt, index) => {
+        const stepId = (`deepen-${index + 1}` as 'deepen-1' | 'deepen-2' | 'deepen-3');
+        const field = (`deeperReflection${index + 1}` as 'deeperReflection1' | 'deeperReflection2' | 'deeperReflection3');
+        return {
+          id: stepId,
+          title: 'Deepen Your Reflection',
+          subtitle: 'Stay curious. Let the next layer come into focus.',
+          field,
+          prompt,
+          placeholder: 'Write a deeper reflection here…',
+        };
+      }),
       {
         id: 'action',
         title: 'Turn Insight Into Action',
@@ -144,13 +154,17 @@ const GuidedReflectionFlow = ({
     [config.actionPrompt, config.confirmationMessage, config.introText, config.thinkPrompt, deepenPrompts],
   );
 
-  const [reflectionData, setReflectionData] = useState<ReflectionResponseData>(createEmptyReflectionResponseData());
-  const [currentStepId, setCurrentStepId] = useState<StepDefinition['id']>('intro');
+  const [reflectionData, setReflectionData] = useState<ReflectionResponseData>(
+    initialDraft?.data ?? createEmptyReflectionResponseData(),
+  );
+  const [currentStepId, setCurrentStepId] = useState<StepDefinition['id']>(
+    (initialDraft?.currentStepId as StepDefinition['id']) ?? 'intro',
+  );
   const [loading, setLoading] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'unsaved' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
-  const [draftRecovered, setDraftRecovered] = useState(false);
+  const [draftRecovered, setDraftRecovered] = useState(Boolean(initialDraft && summarizeReflectionResponse(initialDraft.data).trim()));
   const [submitting, setSubmitting] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const hydratedRef = useRef(false);
@@ -159,6 +173,8 @@ const GuidedReflectionFlow = ({
   const inFlightRef = useRef<Promise<boolean> | null>(null);
   const queuedSaveRef = useRef<{ data: ReflectionResponseData; status: 'draft' | 'submitted' } | null>(null);
   const lastInputEventRef = useRef<string | null>(null);
+  const [manualSaving, setManualSaving] = useState(false);
+  const saveDelayMs = 1000;
 
   const currentStepIndex = Math.max(0, baseSteps.findIndex((step) => step.id === currentStepId));
   const currentStep = baseSteps[currentStepIndex] ?? baseSteps[0];
@@ -176,6 +192,18 @@ const GuidedReflectionFlow = ({
   );
 
   const canSubmit = !required || reflectionData.promptResponse.trim().length > 0;
+  const hasPendingChanges = hydratedRef.current && JSON.stringify(reflectionData) !== syncedSerializedRef.current;
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasPendingChanges) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasPendingChanges]);
+
   useEffect(() => {
     setLoading(true);
     setSaveState('idle');
@@ -277,13 +305,14 @@ const GuidedReflectionFlow = ({
           });
           const savedData = normalizeReflectionResponseData(saved?.responseData ?? payloadData);
           syncedSerializedRef.current = JSON.stringify(savedData);
+          latestDraftRef.current = savedData;
           setLastSavedAt(saved?.updatedAt ?? new Date().toISOString());
           console.info('[guided-reflection] reflectionSaved', {
             lessonId,
             status,
             responseSize: summarizeReflectionResponse(savedData).length,
           });
-          if (JSON.stringify(latestDraftRef.current) === serialized || status === 'submitted') {
+          if (JSON.stringify(savedData) === serialized || status === 'submitted') {
             setSaveState('saved');
           } else {
             setSaveState('unsaved');
@@ -317,33 +346,38 @@ const GuidedReflectionFlow = ({
   );
 
   useEffect(() => {
-    if (!hydratedRef.current || currentStepId === 'confirmation' || submitting || saveState === 'error') return;
+    if (!hydratedRef.current || currentStepId === 'confirmation' || submitting) return;
     latestDraftRef.current = reflectionData;
     const serialized = JSON.stringify(reflectionData);
     if (serialized === syncedSerializedRef.current) {
+      if (saveState === 'saving' || saveState === 'error') {
+        return;
+      }
       if (saveState === 'unsaved') {
         setSaveState(lastSavedAt ? 'saved' : 'idle');
       }
       return;
     }
 
-    setSaveState((current) => (current === 'saving' ? current : 'unsaved'));
+    setSaveState((current) => (current === 'saving' || current === 'error' ? current : 'unsaved'));
     const timer = window.setTimeout(() => {
       void persistReflection({ ...latestDraftRef.current, currentStepId }, 'draft');
-    }, 1200);
+    }, saveDelayMs);
 
     return () => window.clearTimeout(timer);
   }, [currentStepId, lastSavedAt, persistReflection, reflectionData, saveState, submitting]);
-
+  
   useEffect(() => {
-    if (!currentStep) return;
-    console.info('[guided-reflection] reflectionStepViewed', {
-      lessonId,
-      stepId: currentStep.id,
-      stepIndex: currentStepIndex + 1,
-      stepCount: baseSteps.length,
-    });
-  }, [baseSteps.length, currentStep.id, currentStepIndex, lessonId]);
+    if (saveState !== 'saved' && saveState !== 'idle') return;
+    // Keep local draft in sync with successful save state while preserving fallback data.
+    const payload: ReflectionDraftPayload = {
+      data: { ...reflectionData, currentStepId },
+      currentStepId,
+      updatedAt: new Date().toISOString(),
+      status: saveState === 'saved' ? 'draft' : 'draft',
+    };
+    writeDraft(courseId, lessonId, learnerId, payload);
+  }, [courseId, currentStepId, learnerId, lessonId, reflectionData, saveState]);
 
   const updateField = (field: keyof ReflectionResponseData, value: string) => {
     setReflectionData((prev) => {
@@ -411,17 +445,42 @@ const GuidedReflectionFlow = ({
     }
   };
 
+  const saveDraft = useCallback(async () => {
+    if (submitting || advancing || currentStep.id === 'confirmation') return false;
+    if (!hasPendingChanges && saveState !== 'error') return true;
+    setManualSaving(true);
+    setSaveError(null);
+    try {
+      const result = await persistReflection(reflectionData, 'draft');
+      if (!result) {
+        setSaveState('error');
+        setSaveError('Save failed. Please try again.');
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.warn('[guided-reflection] reflection manual save failed', error);
+      setSaveState('error');
+      setSaveError('Save failed. Please try again.');
+      return false;
+    } finally {
+      setManualSaving(false);
+    }
+  }, [advancing, currentStep.id, hasPendingChanges, persistReflection, reflectionData, saveState, submitting]);
+
+  const isSaveDisabled = !hasPendingChanges || saveState === 'saving' || submitting || advancing;
+
   const statusLabel =
     loading
       ? 'Loading your reflection…'
       : saveState === 'saving'
       ? 'Saving…'
       : saveState === 'saved'
-      ? `Saved${lastSavedAt ? ` at ${new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
+      ? `Saved at ${lastSavedAt ? new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`
       : saveState === 'error'
-      ? saveError || 'Save failed'
+      ? saveError || 'Save failed — retry'
       : saveState === 'unsaved'
-      ? 'Unsaved'
+      ? 'Unsaved changes'
       : advancing
       ? 'Advancing…'
       : 'Ready';
@@ -446,12 +505,12 @@ const GuidedReflectionFlow = ({
       return (
         <div className="space-y-6 text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.22em] text-skyblue">Reflection Prompt</p>
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-4xl">
             <p className="text-3xl font-semibold leading-[1.45] text-charcoal sm:text-4xl">{config.prompt}</p>
           </div>
-          <p className="mx-auto max-w-2xl text-base leading-8 text-slate/75">{currentStep.subtitle}</p>
-          {config.instructions && <p className="mx-auto max-w-2xl text-sm leading-7 text-slate/65">{config.instructions}</p>}
-        </div>
+         <p className="mx-auto max-w-2xl text-base leading-8 text-slate/75">{currentStep.subtitle}</p>
+         {config.instructions && <p className="mx-auto max-w-2xl text-sm leading-7 text-slate/65">{config.instructions}</p>}
+       </div>
       );
     }
 
@@ -503,9 +562,9 @@ const GuidedReflectionFlow = ({
         <textarea
           value={fieldValue}
           onChange={(event) => updateField(currentStep.field, event.target.value)}
-          rows={currentStep.id === 'action' ? 5 : 8}
+          rows={currentStep.id === 'action' ? 8 : 10}
           placeholder={placeholder}
-          className="min-h-[220px] w-full resize-y rounded-[28px] border border-slate/15 bg-white px-5 py-4 text-base leading-8 text-charcoal shadow-sm transition focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
+          className="min-h-[280px] w-full max-w-full resize-y rounded-[28px] border border-slate/15 bg-white px-6 py-5 text-base leading-8 text-charcoal shadow-sm transition focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
         />
       </div>
     );
@@ -513,7 +572,7 @@ const GuidedReflectionFlow = ({
 
   return (
     <Card tone="muted" className="mt-10 border border-skyblue/15 bg-gradient-to-b from-white to-skyblue/5 p-5 sm:mt-12 sm:p-8 lg:p-10">
-      <div className="mx-auto flex max-w-3xl flex-col gap-9">
+      <div className="mx-auto flex w-full max-w-none flex-col gap-9">
         <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -556,6 +615,17 @@ const GuidedReflectionFlow = ({
             {required ? 'A prompt response is required before you submit.' : 'You can skip optional steps and return later.'}
           </div>
           <div className="flex flex-wrap gap-2">
+            {currentStep.id !== 'intro' && currentStep.id !== 'prompt' && currentStep.id !== 'confirmation' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void saveDraft()}
+                disabled={isSaveDisabled}
+                loading={manualSaving}
+              >
+                {manualSaving ? 'Saving…' : 'Save draft'}
+              </Button>
+            )}
             {currentStepIndex > 0 && currentStep.id !== 'confirmation' && (
               <Button
                 size="sm"
@@ -603,6 +673,11 @@ const GuidedReflectionFlow = ({
         {saveState === 'error' && saveError && currentStep.id !== 'confirmation' && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
             {saveError}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => void saveDraft()} disabled={manualSaving || submitting || advancing}>
+                Retry save
+              </Button>
+            </div>
           </div>
         )}
 

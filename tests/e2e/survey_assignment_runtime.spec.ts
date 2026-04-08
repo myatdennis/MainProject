@@ -117,6 +117,21 @@ const submitSurveyAsLearner = async (request: any, surveyId: string, assignmentI
   return JSON.parse(text);
 };
 
+const fetchAdminSurveyResults = async (request: any, surveyId: string) => {
+  const response = await request.get(
+    `${apiBase}/api/admin/surveys/${encodeURIComponent(surveyId)}/results?orgId=${encodeURIComponent(TEST_ORG_ID)}`,
+    {
+      headers: adminHeaders,
+      failOnStatusCode: false,
+    },
+  );
+  const text = await response.text();
+  expect(response.status(), text).toBe(200);
+  const payload = JSON.parse(text);
+  expect(Array.isArray(payload?.data)).toBeTruthy();
+  return payload?.data ?? [];
+};
+
 const deleteSurvey = async (request: any, surveyId: string) => {
   await request.delete(`${apiBase}/api/admin/surveys/${encodeURIComponent(surveyId)}`, {
     headers: adminHeaders,
@@ -194,6 +209,14 @@ test.describe('Survey assignment runtime proof', () => {
       expect(assignedUserIds.map((value: string) => String(value).toLowerCase())).toContain(
         LEARNER_USER_ID.toLowerCase(),
       );
+
+      const adminResults = await fetchAdminSurveyResults(request, surveyId);
+      const learnerResult = adminResults.find(
+        (row: any) => String(row?.assignment_id ?? '') === String(matchingEntry.assignment.id),
+      );
+      expect(learnerResult).toBeTruthy();
+      expect(String(learnerResult?.user_id ?? '').toLowerCase()).toBe(LEARNER_USER_ID.toLowerCase());
+      expect(String(learnerResult?.status ?? '')).toBe('completed');
     } finally {
       await deleteSurvey(request, surveyId);
     }

@@ -95,4 +95,13 @@ describe('ClientSurveys', () => {
       expect(mockNavigate).toHaveBeenCalledWith('/client/surveys/survey-fallback/take?assignmentId=assignment-1');
     });
   });
+
+  it('shows an error state when assigned surveys fail to load instead of a fake empty state', async () => {
+    fetchAssignedSurveysForLearnerMock.mockRejectedValue(new Error('backend failed'));
+
+    renderPage();
+
+    expect(await screen.findByText('Unable to load surveys right now. Please retry soon.')).toBeInTheDocument();
+    expect(screen.queryByText('No surveys assigned')).not.toBeInTheDocument();
+  });
 });

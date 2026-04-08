@@ -258,7 +258,6 @@ useEffect(() => {
         fileType: file?.type,
         visibility: 'org',
         organizationId: orgId!,
-        createdBy: 'Admin',
       } as any, file || undefined);
 
       if (doc?.id) {

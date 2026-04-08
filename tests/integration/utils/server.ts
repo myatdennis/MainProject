@@ -599,10 +599,14 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
     }
 
     const payload: Record<string, any> = {
+      ...claims,
       sub: claims.userId || testUser.id,
       email: claims.email || testUser.email,
       role: claims.role || testUser.role,
-      app_metadata: { platform_role: effectivePlatformRole },
+      app_metadata: {
+        ...(claims.app_metadata || {}),
+        platform_role: effectivePlatformRole,
+      },
       iss,
       aud: 'authenticated',
     };

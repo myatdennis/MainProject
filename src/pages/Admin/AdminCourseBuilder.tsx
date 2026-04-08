@@ -4774,10 +4774,10 @@ const scheduleAutosave = useCallback(
                 </div>
               </div>
 
-              {(lesson.type === 'reflection' || lesson.content.collectResponse || lesson.content.allowReflection || lesson.content.prompt || lesson.content.reflectionPrompt) && (() => {
-                const reflectionKey = `${moduleId}:${lesson.id}`;
-                const reflectionState = lessonReflections[reflectionKey] ?? {
-                  loading: false,
+              {(lesson.content.collectResponse || lesson.content.allowReflection || lesson.content.prompt || lesson.content.reflectionPrompt) && (() => {
+                 const reflectionKey = `${moduleId}:${lesson.id}`;
+                 const reflectionState = lessonReflections[reflectionKey] ?? {
+                   loading: false,
                   rows: [] as AdminReflectionRow[],
                   total: 0,
                   error: null,

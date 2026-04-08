@@ -159,6 +159,35 @@ describe('assignmentStorage session enforcement', () => {
     ]);
   });
 
+  it('maps legacy org_id assignment rows without dropping organization scope', async () => {
+    const now = new Date().toISOString();
+
+    const { mapAssignmentsFromApiRows } = await importModule();
+    const result = mapAssignmentsFromApiRows([
+      {
+        id: 'assign-survey-2',
+        survey_id: 'survey-2',
+        assignment_type: 'survey',
+        user_id: 'user-456',
+        org_id: 'legacy-org-1',
+        status: 'assigned',
+        progress: 0,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'assign-survey-2',
+        surveyId: 'survey-2',
+        userId: 'user-456',
+        organizationId: 'legacy-org-1',
+        assignmentType: 'survey',
+      }),
+    ]);
+  });
+
   it('treats unauthorized errors from the API as empty responses', async () => {
     mockGetUserSession.mockReturnValue({ id: 'user-123' });
     mockApiRequest.mockRejectedValue(new MockApiError(401));
