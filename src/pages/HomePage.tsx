@@ -23,9 +23,7 @@ const HomePage = () => {
   // Prefetch critical user paths for fast navigation
   useRoutePrefetch([
     '/client-portal',
-    '/admin/dashboard',
-    '/admin/courses',
-    '/admin/analytics',
+    '/login',
     '/client/dashboard',
     '/client/courses',
   ]);

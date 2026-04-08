@@ -21,6 +21,14 @@ type RemoteSyncCacheEntry = {
 
 const remoteSyncCache = new Map<string, RemoteSyncCacheEntry>();
 
+const hasMeaningfulProgress = (progress: StoredCourseProgress | null | undefined): boolean => {
+  if (!progress) return false;
+  if ((progress.completedLessonIds ?? []).length > 0) return true;
+  if (Object.values(progress.lessonProgress ?? {}).some((value) => Number(value ?? 0) > 0)) return true;
+  if (Object.values(progress.lessonPositions ?? {}).some((value) => Number(value ?? 0) > 0)) return true;
+  return false;
+};
+
 const readLocalProgress = (courseSlug: string): StoredCourseProgress => {
   try {
     const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
@@ -55,6 +63,92 @@ const writeLocalProgress = (courseSlug: string, data: StoredCourseProgress) => {
   }
 };
 
+const mergeStoredProgress = (
+  existing: StoredCourseProgress,
+  incoming: StoredCourseProgress,
+  lessonIds: string[]
+): StoredCourseProgress => {
+  const lessonScope = new Set(lessonIds);
+  const completed = new Set<string>();
+
+  existing.completedLessonIds.forEach((lessonId) => {
+    if (lessonScope.has(lessonId)) {
+      completed.add(lessonId);
+    }
+  });
+  incoming.completedLessonIds.forEach((lessonId) => {
+    if (lessonScope.has(lessonId)) {
+      completed.add(lessonId);
+    }
+  });
+
+  const lessonProgress: Record<string, number> = {};
+  lessonIds.forEach((lessonId) => {
+    const existingValue = existing.lessonProgress[lessonId] ?? 0;
+    const incomingValue = incoming.lessonProgress[lessonId] ?? 0;
+    const merged = Math.max(existingValue, incomingValue);
+    if (merged > 0) {
+      lessonProgress[lessonId] = merged;
+    }
+  });
+
+  const lessonPositions: Record<string, number> = {};
+  lessonIds.forEach((lessonId) => {
+    const existingPosition = existing.lessonPositions?.[lessonId] ?? 0;
+    const incomingPosition = incoming.lessonPositions?.[lessonId] ?? 0;
+    const merged = Math.max(existingPosition, incomingPosition);
+    if (merged > 0) {
+      lessonPositions[lessonId] = merged;
+    }
+  });
+
+  return {
+    completedLessonIds: lessonIds.filter((lessonId) => completed.has(lessonId)),
+    lessonProgress,
+    lessonPositions,
+    lastLessonId: incoming.lastLessonId || existing.lastLessonId,
+  };
+};
+
+const summarizeProgressCoverage = (progress: StoredCourseProgress, lessonIds: string[]) => {
+  let completed = 0;
+  let started = 0;
+  lessonIds.forEach((lessonId) => {
+    const value = progress.lessonProgress[lessonId] ?? 0;
+    if (value > 0) {
+      started += 1;
+    }
+    if (progress.completedLessonIds.includes(lessonId) || value >= 100) {
+      completed += 1;
+    }
+  });
+  return { started, completed };
+};
+
+const analyzeMergeDeltas = (
+  existing: StoredCourseProgress,
+  incoming: StoredCourseProgress,
+  lessonIds: string[]
+) => {
+  let higherCount = 0;
+  let lowerCount = 0;
+  let equalCount = 0;
+
+  lessonIds.forEach((lessonId) => {
+    const current = existing.lessonProgress[lessonId] ?? 0;
+    const next = incoming.lessonProgress[lessonId] ?? 0;
+    if (next > current) {
+      higherCount += 1;
+    } else if (next < current) {
+      lowerCount += 1;
+    } else {
+      equalCount += 1;
+    }
+  });
+
+  return { higherCount, lowerCount, equalCount };
+};
+
 const deriveStoredProgressFromRemote = (
   rows: LessonProgressRow[],
   lessonIds: string[]
@@ -63,12 +157,34 @@ const deriveStoredProgressFromRemote = (
     return { completedLessonIds: [], lessonProgress: {}, lessonPositions: {} };
   }
 
+  const lessonScope = new Set(lessonIds);
+  const overlapCount = rows.reduce(
+    (count, row) => (lessonScope.has(row.lesson_id) ? count + 1 : count),
+    0,
+  );
+
+  let normalizedRows = rows;
+  if (overlapCount === 0 && lessonIds.length === 1 && rows.length > 0) {
+    const candidate =
+      rows
+        .slice()
+        .sort((left, right) => {
+          const leftTime = Date.parse(left.last_accessed_at ?? '') || 0;
+          const rightTime = Date.parse(right.last_accessed_at ?? '') || 0;
+          if (leftTime !== rightTime) return rightTime - leftTime;
+          return (right.progress_percentage ?? 0) - (left.progress_percentage ?? 0);
+        })[0] ?? rows[0];
+    normalizedRows = [{ ...candidate, lesson_id: lessonIds[0] }];
+  } else if (overlapCount === 0 && rows.length === lessonIds.length) {
+    normalizedRows = rows.map((row, index) => ({ ...row, lesson_id: lessonIds[index] ?? row.lesson_id }));
+  }
+
   const lessonProgress: Record<string, number> = {};
   const lessonPositions: Record<string, number> = {};
   const completionSet = new Set<string>();
   let latestLesson: { id: string; at: number } | null = null;
 
-  rows.forEach((row) => {
+  normalizedRows.forEach((row) => {
     const progress = typeof row.progress_percentage === 'number' ? row.progress_percentage : 0;
     lessonProgress[row.lesson_id] = progress;
     lessonPositions[row.lesson_id] = row.time_spent ?? 0;
@@ -153,7 +269,12 @@ export const syncCourseProgressWithRemote = async (options: {
   const cacheKey = `${userId}:${courseId}`;
   const cached = remoteSyncCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < REMOTE_SYNC_CACHE_TTL_MS) {
-    return cached.payload;
+    if (hasMeaningfulProgress(cached.payload)) {
+      return cached.payload;
+    }
+    // Don't trust short-lived all-zero cache entries; fetch remote again in case
+    // progress was just persisted on another route/tab.
+    remoteSyncCache.delete(cacheKey);
   }
 
   const release = await acquireRemoteSyncSlot();
@@ -168,10 +289,58 @@ export const syncCourseProgressWithRemote = async (options: {
       }
     }
 
+    const existing = readLocalProgress(courseSlug);
+    if (aggregatedRows.length === 0) {
+      const existingSummary = summarizeProgressCoverage(existing, lessonIds);
+      console.info('[courseProgress.sync] remote_empty_kept_local', {
+        courseSlug,
+        courseId,
+        userId,
+        lessonCount: lessonIds.length,
+        localStartedLessons: existingSummary.started,
+        localCompletedLessons: existingSummary.completed,
+      });
+      if (hasMeaningfulProgress(existing)) {
+        remoteSyncCache.set(cacheKey, { timestamp: Date.now(), payload: existing });
+      } else {
+        remoteSyncCache.delete(cacheKey);
+      }
+      return existing;
+    }
+
     const derived = deriveStoredProgressFromRemote(aggregatedRows, lessonIds);
-    writeLocalProgress(courseSlug, derived);
-    remoteSyncCache.set(cacheKey, { timestamp: Date.now(), payload: derived });
-    return derived;
+    const merged = mergeStoredProgress(existing, derived, lessonIds);
+    const delta = analyzeMergeDeltas(existing, derived, lessonIds);
+    const localSummary = summarizeProgressCoverage(existing, lessonIds);
+    const remoteSummary = summarizeProgressCoverage(derived, lessonIds);
+    const mergedSummary = summarizeProgressCoverage(merged, lessonIds);
+    const decision =
+      delta.lowerCount > 0 && delta.higherCount === 0
+        ? 'remote_stale_lower_merged_preserved_local'
+        : delta.higherCount > 0 && delta.lowerCount === 0
+          ? 'remote_newer_higher_accepted_merged'
+          : delta.higherCount > 0 && delta.lowerCount > 0
+            ? 'remote_mixed_merged_preserved_and_advanced'
+            : 'remote_equal_merged';
+    console.info('[courseProgress.sync] merge_decision', {
+      decision,
+      courseSlug,
+      courseId,
+      userId,
+      lessonCount: lessonIds.length,
+      remoteRows: aggregatedRows.length,
+      deltas: delta,
+      local: localSummary,
+      remote: remoteSummary,
+      merged: mergedSummary,
+    });
+    writeLocalProgress(courseSlug, merged);
+    if (hasMeaningfulProgress(merged)) {
+      remoteSyncCache.set(cacheKey, { timestamp: Date.now(), payload: merged });
+    } else {
+      remoteSyncCache.delete(cacheKey);
+    }
+    return merged;
   } finally {
     release();
   }

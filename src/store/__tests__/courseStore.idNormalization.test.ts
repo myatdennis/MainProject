@@ -36,4 +36,35 @@ describe('sanitizeModuleGraph identifier normalization', () => {
     expect(lesson.client_temp_id).toBe('les-temp-1');
     expect(lesson.module_id).toBe(module.id);
   });
+
+  it('maps non-UUID ids to stable deterministic UUIDs across refreshes', () => {
+    const modules: Module[] = [
+      {
+        id: 'legacy-module-id',
+        title: 'Legacy Module',
+        description: '',
+        duration: '0 min',
+        order: 1,
+        lessons: [
+          {
+            id: 'legacy-lesson-id',
+            title: 'Legacy Lesson',
+            description: '',
+            type: 'text',
+            order: 1,
+            content: {},
+          } as any,
+        ],
+        resources: [],
+      },
+    ];
+
+    const normalizedFirst = sanitizeModuleGraph(modules);
+    const normalizedSecond = sanitizeModuleGraph(modules);
+
+    expect(normalizedFirst[0]?.id).toBe(normalizedSecond[0]?.id);
+    expect(normalizedFirst[0]?.lessons[0]?.id).toBe(normalizedSecond[0]?.lessons[0]?.id);
+    expect(isUuid(normalizedFirst[0]!.id)).toBe(true);
+    expect(isUuid(normalizedFirst[0]!.lessons[0]!.id)).toBe(true);
+  });
 });

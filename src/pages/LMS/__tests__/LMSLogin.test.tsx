@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { RuntimeStatus } from '../../../state/runtimeStatus';
 import LMSLogin from '../LMSLogin';
 import { MemoryRouter } from 'react-router-dom';
@@ -17,6 +17,7 @@ const defaultRuntimeStatus: RuntimeStatus = {
   statusLabel: 'demo-fallback',
   lastChecked: null,
   requestId: null,
+  errorType: null,
   lastError: undefined,
 };
 
@@ -41,7 +42,7 @@ const mockAuth = {
   login: vi.fn().mockResolvedValue({ success: true }),
   register: vi.fn().mockResolvedValue({ success: true }),
   forgotPassword: vi.fn().mockResolvedValue(true),
-  isAuthenticated: { lms: false },
+  isAuthenticated: { lms: false, admin: false },
 };
 
 vi.mock('../../../context/SecureAuthContext', () => ({
@@ -92,5 +93,35 @@ describe('LMSLogin runtime awareness', () => {
     expect(
       await screen.findByText(/Password reset is unavailable while the platform is in demo or maintenance mode/i),
     ).toBeInTheDocument();
+  });
+
+  it('defaults to client login mode', () => {
+    renderScreen();
+
+    expect(screen.getByRole('tab', { name: /Client Login/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Admin Login/i })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('switches to admin mode and signs in through admin auth path', async () => {
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Admin Login/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Sign In to Admin Portal/i }));
+
+    await waitFor(() => {
+      expect(mockAuth.login).toHaveBeenCalledWith('user@pacificcoast.edu', 'user123', 'admin');
+      expect(mockNavigate).toHaveBeenCalledWith('/admin', { replace: true });
+    });
+  });
+
+  it('keeps client login redirect pointed to learner dashboard', async () => {
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Sign In$/i }));
+
+    await waitFor(() => {
+      expect(mockAuth.login).toHaveBeenCalledWith('user@pacificcoast.edu', 'user123', 'lms');
+      expect(mockNavigate).toHaveBeenCalledWith('/lms/dashboard', { replace: true });
+    });
   });
 });

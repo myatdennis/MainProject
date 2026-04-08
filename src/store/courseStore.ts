@@ -143,6 +143,31 @@ const randomUuid = (): string => {
   return nanoid(32);
 };
 
+const stableHashHex = (input: string, seed: number): string => {
+  let hash = seed >>> 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+};
+
+const stableUuidFromIdentifier = (input: string): string => {
+  const normalized = input.trim().toLowerCase();
+  const hex = [
+    stableHashHex(normalized, 0x811c9dc5),
+    stableHashHex(normalized, 0x9e3779b1),
+    stableHashHex(normalized, 0x85ebca6b),
+    stableHashHex(normalized, 0xc2b2ae35),
+  ].join('');
+  const chars = hex.slice(0, 32).split('');
+  chars[12] = '4';
+  const variant = parseInt(chars[16] ?? '0', 16);
+  chars[16] = ((variant & 0x3) | 0x8).toString(16);
+  const canonical = chars.join('');
+  return `${canonical.slice(0, 8)}-${canonical.slice(8, 12)}-${canonical.slice(12, 16)}-${canonical.slice(16, 20)}-${canonical.slice(20, 32)}`;
+};
+
 export const createModuleId = (): string => randomUuid();
 export const createLessonId = (): string => randomUuid();
 
@@ -153,8 +178,16 @@ const normalizeIdentifier = (
   options: { forceNewId?: boolean } = {},
 ) => {
   const trimmed = typeof value === 'string' ? value.trim() : '';
-  if (!options.forceNewId && trimmed && isUuid(trimmed)) {
-    return { id: trimmed, clientTempId: existingClientTemp ?? null, replaced: false, original: trimmed };
+  if (!options.forceNewId && trimmed) {
+    if (isUuid(trimmed)) {
+      return { id: trimmed, clientTempId: existingClientTemp ?? null, replaced: false, original: trimmed };
+    }
+    return {
+      id: stableUuidFromIdentifier(trimmed),
+      clientTempId: existingClientTemp ?? trimmed,
+      replaced: true,
+      original: trimmed,
+    };
   }
   const generated = generator();
   return {

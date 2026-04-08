@@ -6,7 +6,6 @@ import cn from '../utils/cn';
 import { logAuthRedirect, logAuthDiagnostic } from '../utils/logAuthRedirect';
 import RealtimeNotifications from './RealtimeNotifications';
 import { useSecureAuth } from '../context/SecureAuthContext';
-import { useAdminAccessState } from '../lib/adminAccessState';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -21,12 +20,7 @@ const Header = () => {
     { name: 'Contact', href: '/contact' },
   ];
   const navigate = useNavigate();
-  const { user, isAuthenticated, authInitializing, logout, sessionStatus } = useSecureAuth();
-  const {
-    adminPortalAllowed,
-    sessionStatus: adminSessionStatus,
-    authInitializing: adminAuthInitializing,
-  } = useAdminAccessState();
+  const { user, isAuthenticated, authInitializing, logout } = useSecureAuth();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const logoutInFlightRef = useRef(false);
@@ -52,8 +46,6 @@ const Header = () => {
 
   const isAdminRole = (user?.role ?? '').toLowerCase() === 'admin' || Boolean(user?.isPlatformAdmin);
   const roleLabel = isAdminRole ? 'Admin' : 'Learner';
-  const gateSessionStatus = adminSessionStatus ?? sessionStatus;
-  const gateAuthInitializing = adminAuthInitializing ?? authInitializing;
   const canAccessAdmin = Boolean(isAuthenticated?.admin);
   const canAccessLms = Boolean(isAuthenticated?.lms);
   const primaryWorkspacePath = canAccessAdmin ? '/admin/dashboard' : '/lms/dashboard';
@@ -102,22 +94,6 @@ const Header = () => {
       logoutInFlightRef.current = false;
     }
   }, [canAccessAdmin, isLoggedIn, logout, navigate]);
-
-  const handleAdminCtaClick = useCallback(() => {
-    // If not logged in or session not authenticated, go straight to admin login
-    if (!user || gateSessionStatus !== 'authenticated') {
-      navigate('/admin/login');
-      return;
-    }
-    if (gateAuthInitializing) {
-      return;
-    }
-    if (adminPortalAllowed) {
-      navigate('/admin/courses');
-      return;
-    }
-    navigate('/admin/login');
-  }, [adminPortalAllowed, gateAuthInitializing, gateSessionStatus, navigate, user]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -196,23 +172,14 @@ const Header = () => {
             />
           </div>
           {!isLoggedIn && (
-            <>
-              <Link
-                to="/login"
-                className={cn(
-                  'hidden sm:inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 px-4 text-sm font-semibold text-skyblue transition-colors hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite'
-                )}
-              >
-                Client Login
-              </Link>
-              <button
-                type="button"
-                onClick={handleAdminCtaClick}
-                className="inline-flex h-11 items-center justify-center rounded-lg px-5 text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
-              >
-                Admin Portal
-              </button>
-            </>
+            <Link
+              to="/login"
+              className={cn(
+                'inline-flex h-11 items-center justify-center rounded-lg px-5 text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta'
+              )}
+            >
+              Login
+            </Link>
           )}
           {isLoggedIn && (
             <div className="relative hidden md:block" ref={userMenuRef}>
@@ -320,25 +287,13 @@ const Header = () => {
             )}
             <div className="mt-2 grid grid-cols-2 gap-2">
               {!isLoggedIn ? (
-                <>
-                  <Link
-                    to="/login"
-                    onClick={() => setIsMenuOpen(false)}
-                    className="inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 text-sm font-semibold text-skyblue transition hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
-                  >
-                    Client
-                  </Link>
-                  <Link
-                    to="/admin/login"
-                    onClick={() => {
-                      logAuthRedirect('Header.mobile_admin_cta', { target: '/admin/login' });
-                      setIsMenuOpen(false);
-                    }}
-                    className="inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
-                  >
-                    Admin
-                  </Link>
-                </>
+                <Link
+                  to="/login"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="col-span-2 inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
+                >
+                  Login
+                </Link>
               ) : (
                 <>
                   <button

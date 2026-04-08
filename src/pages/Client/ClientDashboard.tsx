@@ -38,6 +38,7 @@ import apiRequest, { ApiError } from '../../utils/apiClient';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import documentService, { type DocumentMeta } from '../../dal/documents';
 import useDocumentDownload from '../../hooks/useDocumentDownload';
+import { getUserSession } from '../../lib/secureStorage';
 
 type BootStepName = 'session' | 'membership' | 'courses' | 'analytics';
 type BootStepStatus = 'idle' | 'running' | 'success' | 'error' | 'timeout';
@@ -134,6 +135,19 @@ const ClientDashboard = () => {
     if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
+  const sessionLearnerId = useMemo(() => {
+    try {
+      const session = getUserSession();
+      return session?.id ? String(session.id).toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  }, [learnerId]);
+  const effectiveSyncUserId = useMemo(() => {
+    if (!sessionLearnerId) return learnerId;
+    if (sessionLearnerId === learnerId) return learnerId;
+    return undefined;
+  }, [learnerId, sessionLearnerId]);
   const learnerFirstName = useMemo(() => {
     const candidate =
       (user as Record<string, unknown> | null)?.firstName ||
@@ -504,7 +518,7 @@ const ClientDashboard = () => {
           return syncCourseProgressWithRemote({
             courseSlug: course.slug,
             courseId: course.id,
-            userId: learnerId,
+            userId: effectiveSyncUserId,
             lessonIds,
           });
         })
@@ -521,7 +535,7 @@ const ClientDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [courses, learnerId]);
+  }, [courses, effectiveSyncUserId]);
 
   const courseDetails = useMemo(() => courses.map((course) => {
     const stored = loadStoredCourseProgress(course.slug);

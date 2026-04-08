@@ -12,6 +12,7 @@ import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNaviga
 import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { evaluateCourseAvailability } from '../../utils/courseAvailability';
+import { getUserSession } from '../../lib/secureStorage';
 
 const ClientCourseDetail = () => {
   const navigate = useNavigate();
@@ -23,6 +24,19 @@ const ClientCourseDetail = () => {
     if (user?.id) return String(user.id).toLowerCase();
     return 'local-user';
   }, [user]);
+  const sessionLearnerId = useMemo(() => {
+    try {
+      const session = getUserSession();
+      return session?.id ? String(session.id).toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  }, [learnerId]);
+  const effectiveSyncUserId = useMemo(() => {
+    if (!sessionLearnerId) return learnerId;
+    if (sessionLearnerId === learnerId) return learnerId;
+    return undefined;
+  }, [learnerId, sessionLearnerId]);
 
   const course = courseId ? courseStore.resolveCourse(courseId) : null;
   const normalized = course ? normalizeCourse(course) : null;
@@ -72,7 +86,7 @@ const ClientCourseDetail = () => {
       const result = await syncCourseProgressWithRemote({
         courseSlug: normalized.slug,
         courseId: normalized.id,
-        userId: learnerId,
+        userId: effectiveSyncUserId,
         lessonIds,
       });
 
@@ -85,7 +99,7 @@ const ClientCourseDetail = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalized, learnerId]);
+  }, [normalized, effectiveSyncUserId]);
 
   const storedProgress = useMemo(
     () => loadStoredCourseProgress(courseSlug),
@@ -102,7 +116,9 @@ const ClientCourseDetail = () => {
         : null,
     [normalized, storedProgress]
   );
-  const progressPercent = assignment?.progress ?? Math.round(((snapshot?.overallProgress ?? 0) || 0) * 100);
+  const assignmentProgress = Number(assignment?.progress ?? 0);
+  const snapshotProgress = Math.round(((snapshot?.overallProgress ?? 0) || 0) * 100);
+  const progressPercent = Math.max(assignmentProgress, snapshotProgress);
   const preferredLessonId = normalized
     ? getPreferredLessonId(normalized, storedProgress) ?? getFirstLessonId(normalized)
     : undefined;

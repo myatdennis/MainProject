@@ -51,7 +51,6 @@ import AuthCallback from './pages/AuthCallback';
 
 import HomePage from './pages/HomePage';
 import LMSLogin from './pages/LMS/LMSLogin';
-import AdminLogin from './pages/Admin/AdminLogin';
 import useViewportHeight from './hooks/useViewportHeight';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
@@ -139,6 +138,14 @@ const LegacyCourseRedirect = () => {
       ? `/lms${location.pathname}`
       : '/lms/courses';
   return <Navigate to={{ pathname: targetPath, search: location.search, hash: location.hash }} replace />;
+};
+
+const AdminLoginLegacyRedirect = () => {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set('role', 'admin');
+  const search = params.toString();
+  return <Navigate to={{ pathname: '/login', search: search ? `?${search}` : '' }} replace />;
 };
 
 /**
@@ -435,7 +442,7 @@ function AppContent() {
           {/* ── Public auth ────────────────────────────────────────────── */}
           <Route path="/login" element={<LMSLogin />} />
           <Route path="/lms/login" element={<Navigate to="/login" replace />} />
-          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/admin/login" element={<AdminLoginLegacyRedirect />} />
           <Route path="/courses/*" element={<LegacyCourseRedirect />} />
 
           {/* ── LMS portal ─────────────────────────────────────────────── */}

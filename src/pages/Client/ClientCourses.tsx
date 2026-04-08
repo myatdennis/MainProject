@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { LazyImage } from '../../components/PerformanceComponents';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Clock, Search, Filter, ArrowRight, Inbox } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -22,6 +22,7 @@ import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
 import { shouldIncludeCourseForLearner } from './clientCoursesUtils';
+import { getUserSession } from '../../lib/secureStorage';
 
 const ClientCourses = () => {
   // Prefetch critical user flows for fast navigation
@@ -35,12 +36,30 @@ const ClientCourses = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'completed' | 'not-started'>('all');
   const [coursesError, setCoursesError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
     if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
+  const sessionLearnerId = useMemo(() => {
+    try {
+      const session = getUserSession();
+      return session?.id ? String(session.id).toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  }, [learnerId]);
+  const effectiveSyncUserId = useMemo(() => {
+    if (!sessionLearnerId) return learnerId;
+    if (sessionLearnerId === learnerId) return learnerId;
+    return undefined;
+  }, [learnerId, sessionLearnerId]);
+  const showProgressDebug = useMemo(
+    () => new URLSearchParams(location.search).get('debugProgress') === '1',
+    [location.search],
+  );
 
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
@@ -95,7 +114,7 @@ const ClientCourses = () => {
           return syncCourseProgressWithRemote({
             courseSlug: course.slug,
             courseId: course.id,
-            userId: learnerId,
+            userId: effectiveSyncUserId,
             lessonIds,
           });
         })
@@ -112,7 +131,7 @@ const ClientCourses = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalizedCourses, learnerId]);
+  }, [normalizedCourses, effectiveSyncUserId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -169,21 +188,71 @@ const ClientCourses = () => {
     };
   }, [learnerId]);
 
-  const courseSnapshots = useMemo(() => normalizedCourses.map((course) => {
-    const stored = loadStoredCourseProgress(course.slug);
-    return {
-      course,
-      snapshot: buildLearnerProgressSnapshot(course, new Set(stored.completedLessonIds), stored.lessonProgress || {}),
-      assignment: assignments.find((record) => record.courseId === course.id),
-      stored,
-      preferredLessonId: getPreferredLessonId(course, stored) ?? getFirstLessonId(course),
-    };
-  }), [normalizedCourses, assignments, progressRefreshToken]);
+  const courseCardModels = useMemo(
+    () =>
+      normalizedCourses.map((course) => {
+        const stored = loadStoredCourseProgress(course.slug);
+        const snapshot = buildLearnerProgressSnapshot(course, new Set(stored.completedLessonIds), stored.lessonProgress || {});
+        const assignment = assignments.find((record) => record.courseId === course.id);
+        const assignmentProgress = Number(assignment?.progress ?? 0);
+        const snapshotProgress = Math.round((snapshot.overallProgress || 0) * 100);
+        const progress = Math.max(assignmentProgress, snapshotProgress);
+        const status =
+          assignment?.status === 'completed' || progress >= 100
+            ? 'completed'
+            : progress > 0
+              ? 'in-progress'
+              : 'not-started';
+        const reason =
+          assignment?.status === 'completed'
+            ? 'assignment_status_completed'
+            : snapshotProgress > assignmentProgress
+              ? 'snapshot_wins'
+              : assignmentProgress > snapshotProgress
+                ? 'assignment_wins'
+                : 'equal';
 
-  const filtered = courseSnapshots.filter(({ course, snapshot, assignment }) => {
+        return {
+          course,
+          snapshot,
+          assignment,
+          stored,
+          preferredLessonId: getPreferredLessonId(course, stored) ?? getFirstLessonId(course),
+          assignmentProgress,
+          snapshotProgress,
+          progress,
+          status,
+          reason,
+        };
+      }),
+    [normalizedCourses, assignments, progressRefreshToken],
+  );
+
+  useEffect(() => {
+    if (!showProgressDebug) return;
+    console.info('[ClientCourses.progress_debug] sync_identity', {
+      learnerId,
+      sessionLearnerId,
+      effectiveSyncUserId: effectiveSyncUserId ?? 'session-derived',
+      courses: courseCardModels.length,
+    });
+    courseCardModels.forEach((entry) => {
+      console.info('[ClientCourses.progress_debug] card_model', {
+        title: entry.course.title,
+        courseId: entry.course.id,
+        courseSlug: entry.course.slug,
+        assignmentCourseId: entry.assignment?.courseId ?? null,
+        assignmentProgress: entry.assignmentProgress,
+        snapshotProgress: entry.snapshotProgress,
+        mergedProgress: entry.progress,
+        selectedBranch: entry.reason,
+      });
+    });
+  }, [showProgressDebug, courseCardModels, learnerId, sessionLearnerId, effectiveSyncUserId]);
+
+  const filtered = courseCardModels.filter(({ course, status }) => {
     const searchMatch = course.title.toLowerCase().includes(searchTerm.toLowerCase());
     if (!searchMatch) return false;
-    const status = assignment?.status || (snapshot.overallProgress >= 1 ? 'completed' : snapshot.overallProgress > 0 ? 'in-progress' : 'not-started');
     if (filterStatus === 'all') return true;
     if (filterStatus === 'in-progress') return status === 'in-progress';
     if (filterStatus === 'completed') return status === 'completed';
@@ -276,9 +345,7 @@ const ClientCourses = () => {
           ) : (
             <>
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {filtered.map(({ course, snapshot, assignment, preferredLessonId }) => {
-                  const progress = assignment?.progress ?? Math.round((snapshot.overallProgress || 0) * 100);
-                  const status = assignment?.status || (snapshot.overallProgress >= 1 ? 'completed' : snapshot.overallProgress > 0 ? 'in-progress' : 'not-started');
+                {filtered.map(({ course, progress, status, preferredLessonId }) => {
                   return (
                     <Card key={course.id} className="flex h-full flex-col gap-4" data-test="client-course-card">
                       <div className="relative overflow-hidden rounded-2xl">

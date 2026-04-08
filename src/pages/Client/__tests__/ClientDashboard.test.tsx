@@ -179,4 +179,42 @@ describe('ClientDashboard', () => {
     expect(inProgressCard).not.toBeNull();
     expect(within(inProgressCard as HTMLElement).getByText('0')).toBeInTheDocument();
   });
+
+  it('uses snapshot progress on course cards when assignment progress is stale or zero', async () => {
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-2',
+        courseId: 'course-2',
+        userId: 'user-123',
+        status: 'in-progress',
+        progress: 0,
+      },
+    ] as any);
+
+    getCourseMock.mockReturnValue({
+      id: 'course-2',
+      slug: 'course-2',
+      title: 'Course 2',
+      description: 'Course description',
+      duration: '1 hour',
+      chapters: [
+        {
+          id: 'chapter-1',
+          lessons: [{ id: 'lesson-1' }, { id: 'lesson-2' }, { id: 'lesson-3' }, { id: 'lesson-4' }],
+        },
+      ],
+    });
+
+    buildLearnerProgressSnapshotMock.mockReturnValue({ overallProgress: 0.75 });
+
+    renderDashboard();
+
+    const assignedCoursesRegion = await screen.findByRole('region', { name: 'Assigned courses' });
+    expect(within(assignedCoursesRegion).getByText('Course 2')).toBeInTheDocument();
+
+    const progressBar = within(assignedCoursesRegion).getByRole('progressbar', {
+      name: 'Course 2 completion',
+    });
+    expect(progressBar).toHaveAttribute('aria-valuenow', '75');
+  });
 });

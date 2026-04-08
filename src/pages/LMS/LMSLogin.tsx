@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { Users, Lock, Mail, Eye, EyeOff, AlertCircle, Info, ShieldCheck } from 'lucide-react';
 import { loginSchema, emailSchema, registerSchema } from '../../utils/validators';
@@ -9,6 +9,7 @@ import type { z } from 'zod';
 
 const LMSLogin: React.FC = () => {
   const { login, register, isAuthenticated, forgotPassword } = useSecureAuth();
+  const location = useLocation();
   const runtimeStatus = useRuntimeStatus();
   const isE2ERuntime =
     (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
@@ -45,19 +46,44 @@ const LMSLogin: React.FC = () => {
   const [registerForm, setRegisterForm] = useState<RegisterFormState>(() => ({ ...initialRegisterState }));
   const [registerErrors, setRegisterErrors] = useState<RegisterErrors>({});
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'client' | 'admin'>('client');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (isAuthenticated.lms && !isE2ERuntime) {
-      navigate('/lms/dashboard', { replace: true });
+  const adminLandingTarget = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const rawReturnTo = params.get('returnTo');
+    if (rawReturnTo && rawReturnTo.startsWith('/admin/') && !rawReturnTo.startsWith('/admin/login')) {
+      return rawReturnTo;
     }
-  }, [isAuthenticated.lms, isE2ERuntime, navigate]);
+    return '/admin';
+  }, [location.search]);
 
   useEffect(() => {
-    if (!registrationAvailable && activeTab === 'register') {
+    const requestedRole = new URLSearchParams(location.search).get('role');
+    if (requestedRole === 'admin') {
+      setAuthMode('admin');
+      setActiveTab('login');
+      return;
+    }
+    setAuthMode('client');
+  }, [location.search]);
+
+  useEffect(() => {
+    if (isE2ERuntime) return;
+    if (authMode === 'admin' && isAuthenticated.admin) {
+      navigate(adminLandingTarget, { replace: true });
+      return;
+    }
+    if (authMode === 'client' && isAuthenticated.lms) {
+      navigate('/lms/dashboard', { replace: true });
+    }
+  }, [adminLandingTarget, authMode, isAuthenticated.admin, isAuthenticated.lms, isE2ERuntime, navigate]);
+
+  useEffect(() => {
+    if ((!registrationAvailable || authMode === 'admin') && activeTab === 'register') {
       setActiveTab('login');
     }
-  }, [registrationAvailable, activeTab]);
+  }, [registrationAvailable, activeTab, authMode]);
 
   useEffect(() => {
     if (demoModeEnabled && !hasPrefilledDemo.current) {
@@ -94,11 +120,12 @@ const LMSLogin: React.FC = () => {
     // Sanitize inputs
     const sanitizedEmail = sanitizeText(email.toLowerCase().trim());
 
-    const result = await login(sanitizedEmail, password, 'lms');
+    const loginType = authMode === 'admin' ? 'admin' : 'lms';
+    const result = await login(sanitizedEmail, password, loginType);
     setIsLoading(false);
     
     if (result.success) {
-      navigate('/lms/dashboard', { replace: true });
+      navigate(loginType === 'admin' ? adminLandingTarget : '/lms/dashboard', { replace: true });
     } else {
       setMessage(result.error || 'Sign-in failed.');
       setMessageType('error');
@@ -211,26 +238,53 @@ const LMSLogin: React.FC = () => {
             </div>
             <span className="font-bold text-2xl text-gray-900">The Huddle Co.</span>
           </Link>
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back to your learning path</h2>
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">
+            {authMode === 'admin' ? 'Admin portal sign in' : 'Welcome back to your learning path'}
+          </h2>
           <p className="text-gray-600">
-            Use your organization email for assignments, reflections, and certificates curated for your cohort.
+            {authMode === 'admin'
+              ? 'Sign in to manage courses, assignments, analytics, and organization settings.'
+              : 'Use your organization email for assignments, reflections, and certificates curated for your cohort.'}
           </p>
-          <p className="mt-3 text-sm text-gray-500">
-            Need to manage a program instead? Visit the{' '}
-            <Link to="/admin/login" className="text-orange-500 hover:text-orange-600 underline-offset-2 hover:underline">
-              Admin Portal
-            </Link>
-            .
-          </p>
+        </div>
+
+        <div className="rounded-2xl border border-gray-200 bg-white px-2 py-2 shadow-sm">
+          <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Login role">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={authMode === 'client'}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${authMode === 'client' ? 'bg-skyblue text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+              onClick={() => setAuthMode('client')}
+            >
+              Client Login
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={authMode === 'admin'}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${authMode === 'admin' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-100'}`}
+              onClick={() => {
+                setAuthMode('admin');
+                setActiveTab('login');
+              }}
+            >
+              Admin Login
+            </button>
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/60 bg-white/80 p-5 shadow-xl text-left">
           <div className="flex items-start gap-3">
             <ShieldCheck className="h-5 w-5 text-green-500 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-gray-900">Private learner workspace</p>
+              <p className="text-sm font-semibold text-gray-900">
+                {authMode === 'admin' ? 'Protected admin workspace' : 'Private learner workspace'}
+              </p>
               <p className="text-sm text-gray-600">
-                Only active cohorts and verified facilitators can sign in. Your progress, reflections, and certifications stay synced with your org lead.
+                {authMode === 'admin'
+                  ? 'Only authorized organization and platform administrators can access this surface.'
+                  : 'Only active cohorts and verified facilitators can sign in. Your progress, reflections, and certifications stay synced with your org lead.'}
               </p>
             </div>
           </div>
@@ -275,7 +329,7 @@ const LMSLogin: React.FC = () => {
             </div>
           )}
 
-          <div className="flex mb-6 rounded-lg bg-gray-100 p-1 text-sm font-medium" role="tablist" aria-label="Authentication mode">
+          <div className="flex mb-6 rounded-lg bg-gray-100 p-1 text-sm font-medium" role="tablist" aria-label="Authentication action">
             <button
               type="button"
               role="tab"
@@ -295,9 +349,9 @@ const LMSLogin: React.FC = () => {
               aria-controls="lms-register-panel"
               id="lms-register-tab"
               aria-label="Create Account tab"
-              onClick={() => registrationAvailable && setActiveTab('register')}
-              disabled={!registrationAvailable}
-              className={`flex-1 py-2 rounded-md transition ${activeTab === 'register' ? 'bg-white shadow text-gray-900' : 'text-gray-500'} ${registrationAvailable ? '' : 'opacity-50 cursor-not-allowed'}`}
+              onClick={() => registrationAvailable && authMode === 'client' && setActiveTab('register')}
+              disabled={!registrationAvailable || authMode === 'admin'}
+              className={`flex-1 py-2 rounded-md transition ${activeTab === 'register' ? 'bg-white shadow text-gray-900' : 'text-gray-500'} ${registrationAvailable && authMode === 'client' ? '' : 'opacity-50 cursor-not-allowed'}`}
             >
               Create Account
             </button>
@@ -392,7 +446,7 @@ const LMSLogin: React.FC = () => {
                   Signing in...
                 </div>
               ) : (
-                'Sign In'
+                authMode === 'admin' ? 'Sign In to Admin Portal' : 'Sign In'
               )}
                 </button>
               </form>
