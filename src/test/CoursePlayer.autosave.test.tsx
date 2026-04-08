@@ -25,13 +25,14 @@ vi.mock('../utils/courseProgress', () => ({
 const mockSyncLogEvent = vi.hoisted(() => vi.fn());
 vi.mock('../dal/sync', () => ({ useSyncService: () => ({ logEvent: mockSyncLogEvent, subscribe: vi.fn(() => ({ unsubscribe: () => {} })) }) }));
 vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock('../hooks/useUserProfile', () => ({ useUserProfile: () => ({ user: null }) }));
 
 const handleApiCallMock = vi.hoisted(() => vi.fn(async (call: () => Promise<any>) => (typeof call === 'function' ? call() : undefined)));
 const isOnlineMock = vi.hoisted(() => vi.fn(() => true));
 vi.mock('../utils/NetworkErrorHandler', () => {
   const mockHandler = {
-    handleApiCall: (...args: any[]) => handleApiCallMock(...args),
-    isOnline: (...args: any[]) => isOnlineMock(...args),
+    handleApiCall: handleApiCallMock,
+    isOnline: isOnlineMock,
   };
   return {
     NetworkErrorHandler: mockHandler,
@@ -39,23 +40,9 @@ vi.mock('../utils/NetworkErrorHandler', () => {
   };
 });
 
-const apiRequestMock = vi.hoisted(() =>
-  vi.fn((path: string, options?: any) => {
-    if (typeof path === 'string' && path.includes('/api/learner/progress')) {
-      return Promise.resolve({ data: { lessons: [] } });
-    }
-    return Promise.resolve({});
-  })
-);
 vi.mock('../utils/apiClient', async () => {
   const actual = await vi.importActual<typeof import('../utils/apiClient')>('../utils/apiClient');
-  const proxyApiRequest = vi.fn((path: string, options?: any) => {
-    if (typeof path === 'string' && path.includes('/api/learner/progress')) {
-      return Promise.resolve({ data: { lessons: [] } });
-    }
-    return actual.apiRequest(path as any, options as any);
-  });
-  apiRequestMock.mockImplementation((path: string, options?: any) => proxyApiRequest(path, options));
+  const proxyApiRequest = vi.fn(async () => ({ data: { lessons: [] } }));
   return {
     ...actual,
     apiRequest: proxyApiRequest,
@@ -112,8 +99,31 @@ const mockCourse = {
   id: 'course-auto',
   slug: 'course-auto',
   title: 'AutoSave Course',
+  description: 'Autosave test course',
+  thumbnail: '',
+  difficulty: 'Beginner',
+  duration: '5 min',
   status: 'published',
-  modules: [],
+  modules: [
+    {
+      id: 'module-1',
+      title: 'Module 1',
+      description: '',
+      duration: '5 min',
+      order: 1,
+      lessons: [
+        {
+          id: 'lesson-auto',
+          title: 'Lesson Auto',
+          type: 'video',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: { videoUrl: 'https://example.com/vid.mp4' },
+        },
+      ],
+    },
+  ],
   chapters: [
     {
       id: 'ch-1',
@@ -125,6 +135,7 @@ const mockCourse = {
           title: 'Lesson Auto',
           type: 'video',
           order: 1,
+          order_index: 1,
           duration: '5 min',
           content: { videoUrl: 'https://example.com/vid.mp4' },
         },
@@ -134,15 +145,15 @@ const mockCourse = {
 };
 
 const mockLessons = mockCourse.chapters[0].lessons;
-const mockLoadCourseResult = { course: mockCourse, modules: [], lessons: mockLessons, source: 'local' as const };
+const mockLoadCourseResult = { course: mockCourse, modules: mockCourse.modules, lessons: mockLessons, source: 'local' as const };
 
 const renderCoursePlayer = () => {
   const qc = new QueryClient();
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[`/lms/course/${mockCourse.slug}/lesson/${mockLessons[0].id}`]}>
+  <MemoryRouter initialEntries={[`/lms/courses/${mockCourse.slug}/lesson/${mockLessons[0].id}`]}>
         <Routes>
-          <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
+          <Route path="/lms/courses/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>

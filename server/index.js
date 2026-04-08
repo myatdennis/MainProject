@@ -409,11 +409,18 @@ const ASSIGNMENT_INFRASTRUCTURE_ERROR_CODES = new Set([
 
 const isInfrastructureUnavailableError = (error) => {
   if (!error) return false;
-  const code = String(error?.code || '').trim();
+  const code = String(error?.code || error?.cause?.code || '').trim().toUpperCase();
   if (code && ASSIGNMENT_INFRASTRUCTURE_ERROR_CODES.has(code)) {
     return true;
   }
-  const message = String(error?.message || '').toLowerCase();
+  const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.status ?? NaN);
+  if ([502, 503, 504, 520, 521, 522, 523, 524, 525, 526].includes(statusCode)) {
+    return true;
+  }
+  const message = [error?.message, error?.details, error?.hint, error?.error_description, error?.cause?.message]
+    .filter((value) => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase();
   return (
     message.includes('timeout') ||
     message.includes('timed out') ||
@@ -422,7 +429,18 @@ const isInfrastructureUnavailableError = (error) => {
     message.includes('could not connect') ||
     message.includes('failed to fetch') ||
     message.includes('network') ||
-    message.includes('self-signed certificate')
+    message.includes('self-signed certificate') ||
+    message.includes('cloudflare') ||
+    message.includes('cf-ray') ||
+    message.includes('origin web server') ||
+    message.includes('web server returned an unknown error') ||
+    message.includes('service unavailable') ||
+    message.includes('bad gateway') ||
+    message.includes('gateway timeout') ||
+    message.includes('error code: 520') ||
+    message.includes('error code: 521') ||
+    message.includes('<!doctype html') ||
+    message.includes('<html')
   );
 };
 
@@ -13210,9 +13228,14 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       console.log('[admin-courses] idempotency insert attempted', { idempotencyKey, insertData, insertError });
 
       if (insertError) {
-        if (isIdempotencyTableMissingError(insertError)) {
+        if (isIdempotencyTableMissingError(insertError) || isInfrastructureUnavailableError(insertError)) {
           idempotencyTableMissing = true;
-          console.info('[idempotency] idempotency_keys table missing, using in-memory fallback for upsert', { error: insertError, idempotencyKey });
+          const fallbackReason = isIdempotencyTableMissingError(insertError) ? 'missing_table' : 'infra_unavailable';
+          console.info('[idempotency] idempotency persistence unavailable, using in-memory fallback for upsert', {
+            fallbackReason,
+            error: insertError,
+            idempotencyKey,
+          });
           setInMemoryIdempotencyKey(idempotencyKey, {
             status: 'in_flight',
             createdAt: new Date().toISOString(),
@@ -13502,15 +13525,19 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       organizationId,
     });
     // Provide more details to the client for debugging
-    const errorMessage = error?.message || 'Unable to save course';
-    const errorDetails = error?.details || error?.hint || null;
-    sendApiError(res, 500, error?.code ?? 'upsert_failed', errorMessage, {
+    const isInfraUnavailable = isInfrastructureUnavailableError(error);
+    const errorMessage = isInfraUnavailable
+      ? 'Course save is temporarily unavailable while the database service is degraded. Please retry shortly.'
+      : error?.message || 'Unable to save course';
+    const errorDetails = isInfraUnavailable ? null : error?.details || error?.hint || null;
+    sendApiError(res, isInfraUnavailable ? 503 : 500, isInfraUnavailable ? 'database_unavailable' : error?.code ?? 'upsert_failed', errorMessage, {
       details: errorDetails,
       hint: error?.hint ?? null,
       meta: {
         requestId: req.requestId ?? null,
         timestamp: new Date().toISOString(),
         orgId: organizationId ?? null,
+        retryable: isInfraUnavailable,
       },
     });
   }
@@ -15342,9 +15369,14 @@ app.post('/api/admin/courses/:id/publish', authenticate, async (req, res) => {
         });
 
       if (insertError) {
-        if (isIdempotencyTableMissingError(insertError)) {
+        if (isIdempotencyTableMissingError(insertError) || isInfrastructureUnavailableError(insertError)) {
           idempotencyTableMissing = true;
-          console.info('[idempotency] idempotency_keys table missing, using in-memory fallback for publish', { error: insertError, idempotencyKey });
+          const fallbackReason = isIdempotencyTableMissingError(insertError) ? 'missing_table' : 'infra_unavailable';
+          console.info('[idempotency] idempotency persistence unavailable, using in-memory fallback for publish', {
+            fallbackReason,
+            error: insertError,
+            idempotencyKey,
+          });
           setInMemoryIdempotencyKey(idempotencyKey, {
             status: 'in_flight',
             createdAt: new Date().toISOString(),
@@ -15700,9 +15732,18 @@ app.post('/api/admin/courses/:id/publish', authenticate, async (req, res) => {
       });
       return;
     }
-    sendApiError(res, 500, 'publish_failed', 'Unable to publish course', {
+    const isInfraUnavailable = isInfrastructureUnavailableError(error);
+    sendApiError(
+      res,
+      isInfraUnavailable ? 503 : 500,
+      isInfraUnavailable ? 'database_unavailable' : 'publish_failed',
+      isInfraUnavailable
+        ? 'Course publish is temporarily unavailable while the database service is degraded. Please retry shortly.'
+        : 'Unable to publish course',
+      {
       meta: { requestId: req.requestId ?? null, courseId },
-    });
+      },
+    );
   }
 });
 

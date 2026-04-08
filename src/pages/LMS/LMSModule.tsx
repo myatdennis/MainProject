@@ -332,7 +332,11 @@ const LMSModule = () => {
           return;
         }
 
-        const lessons = (context.module.lessons ?? []) as unknown as NormalizedLesson[];
+        const lessons = [...((context.module.lessons ?? []) as unknown as NormalizedLesson[])].sort((left, right) => {
+          const leftOrder = typeof left.order_index === 'number' ? left.order_index : left.order ?? 0;
+          const rightOrder = typeof right.order_index === 'number' ? right.order_index : right.order ?? 0;
+          return leftOrder - rightOrder;
+        });
         if (lessons.length === 0) {
           setCourseContext({ ...context, lessons: [] });
           setCompletedLessons(new Set());
@@ -358,10 +362,15 @@ const LMSModule = () => {
         setLessonProgress(storedProgress.lessonProgress || {});
         setLessonPositions(storedProgress.lessonPositions || {});
 
-        const resolvedLesson =
-          (storedProgress.lastLessonId && lessons.some((lesson) => lesson.id === storedProgress.lastLessonId)
+        const requestedLesson =
+          requestedLessonId && lessons.some((lesson) => lesson.id === requestedLessonId)
+            ? requestedLessonId
+            : null;
+        const resumedLesson =
+          storedProgress.lastLessonId && lessons.some((lesson) => lesson.id === storedProgress.lastLessonId)
             ? storedProgress.lastLessonId
-            : lessons[0]?.id) ?? null;
+            : null;
+        const resolvedLesson = requestedLesson ?? resumedLesson ?? lessons[0]?.id ?? null;
         focusLesson(resolvedLesson, { replace: true });
       } catch (err) {
         console.error('[LMSModule] Failed to load module data:', err);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 // import { useNavigate, useLocation } from 'react-router-dom'; // TODO: Implement when needed
 import { 
   ChevronDown, 
@@ -31,6 +31,7 @@ interface Module {
   duration?: string;
   lessons: Lesson[];
   order: number;
+  order_index?: number;
 }
 
 interface Lesson {
@@ -39,6 +40,7 @@ interface Lesson {
   type: 'video' | 'interactive' | 'quiz' | 'resource' | 'text';
   duration?: string;
   order: number;
+  order_index?: number;
   isLocked?: boolean;
 }
 
@@ -76,24 +78,56 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
   const [expandedModules, setExpandedModules] = useState<{ [moduleId: string]: boolean }>({});
   const [isMobile, setIsMobile] = useState(false);
 
+  const toNumericOrder = (value: unknown, fallback = 0) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return fallback;
+  };
+
+  const sortedModules = useMemo(() => {
+    if (!course?.modules?.length) {
+      return [] as Module[];
+    }
+
+    return [...course.modules]
+      .sort((left, right) => {
+        const leftOrder = toNumericOrder(left.order_index, toNumericOrder(left.order, 0));
+        const rightOrder = toNumericOrder(right.order_index, toNumericOrder(right.order, 0));
+        return leftOrder - rightOrder;
+      })
+      .map((module) => ({
+        ...module,
+        lessons: [...(module.lessons || [])].sort((left, right) => {
+          const leftOrder = toNumericOrder(left.order_index, toNumericOrder(left.order, 0));
+          const rightOrder = toNumericOrder(right.order_index, toNumericOrder(right.order, 0));
+          return leftOrder - rightOrder;
+        }),
+      }));
+  }, [course]);
+
   // Initialize expanded state
   useEffect(() => {
-    if (course?.modules) {
-      const initialExpanded: { [moduleId: string]: boolean } = {};
-      
-      // Expand module containing current lesson
-      course.modules.forEach(module => {
-        const hasCurrentLesson = module.lessons.some(lesson => lesson.id === currentLessonId);
-        if (hasCurrentLesson) {
-          initialExpanded[module.id] = true;
-        } else {
-          initialExpanded[module.id] = false;
-        }
-      });
-      
-      setExpandedModules(initialExpanded);
+    if (!sortedModules.length) {
+      setExpandedModules({});
+      return;
     }
-  }, [course, currentLessonId]);
+
+    setExpandedModules((previous) => {
+      const nextExpanded: { [moduleId: string]: boolean } = {};
+      sortedModules.forEach((module) => {
+        const hasCurrentLesson = module.lessons.some((lesson) => lesson.id === currentLessonId);
+        nextExpanded[module.id] = hasCurrentLesson ? true : previous[module.id] ?? false;
+      });
+      return nextExpanded;
+    });
+  }, [sortedModules, currentLessonId]);
 
   // Handle responsive behavior
   useEffect(() => {
@@ -169,10 +203,10 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
   };
 
   const calculateOverallProgress = (): number => {
-    if (!course?.modules?.length) return 0;
+    if (!sortedModules.length) return 0;
     
-    const totalLessons = course.modules.reduce((acc, module) => acc + module.lessons.length, 0);
-    const completedLessons = course.modules.reduce((acc, module) => 
+    const totalLessons = sortedModules.reduce((acc, module) => acc + module.lessons.length, 0);
+    const completedLessons = sortedModules.reduce((acc, module) => 
       acc + module.lessons.filter(lesson => lessonProgress[lesson.id]?.completed).length, 0
     );
     
@@ -226,7 +260,7 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
 
         {/* Module indicators */}
         <div className="mt-4 px-2 space-y-2">
-          {course?.modules?.map((module, index) => {
+          {sortedModules.map((module, index) => {
             const moduleProgress = calculateModuleProgress(module);
             const hasCurrentLesson = module.lessons.some(lesson => lesson.id === currentLessonId);
             
@@ -298,7 +332,7 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
       {/* Course Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-3">
-          {course?.modules?.map((module, moduleIndex) => {
+          {sortedModules.map((module, moduleIndex) => {
             const moduleProgress = calculateModuleProgress(module);
             const isExpanded = expandedModules[module.id];
             const hasCurrentLesson = module.lessons.some(lesson => lesson.id === currentLessonId);
@@ -363,10 +397,19 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
                       const progress = lessonProgress[lesson.id];
                       
                       return (
-                        <button
+                        <div
                           key={lesson.id}
+                          role="button"
+                          tabIndex={lesson.isLocked ? -1 : 0}
                           onClick={() => handleLessonClick(module.id, lesson)}
-                          disabled={lesson.isLocked}
+                          onKeyDown={(event) => {
+                            if (lesson.isLocked) return;
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              handleLessonClick(module.id, lesson);
+                            }
+                          }}
+                          aria-disabled={lesson.isLocked}
                           className={`w-full p-3 text-left hover:bg-white transition-colors border-b border-gray-200 last:border-b-0 ${
                             isCurrentLesson ? 'bg-orange-100 border-orange-200' : ''
                           } ${lesson.isLocked ? 'cursor-not-allowed opacity-60' : ''}`}
@@ -417,7 +460,7 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
                               </button>
                             </div>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -432,8 +475,8 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
       <div className="p-4 border-t border-gray-200 bg-gray-50">
         <div className="flex items-center justify-between text-sm text-gray-600">
           <span>
-            {course?.modules?.reduce((acc, m) => acc + m.lessons.filter(l => lessonProgress[l.id]?.completed).length, 0) || 0} of{' '}
-            {course?.modules?.reduce((acc, m) => acc + m.lessons.length, 0) || 0} lessons complete
+            {sortedModules.reduce((acc, m) => acc + m.lessons.filter(l => lessonProgress[l.id]?.completed).length, 0)} of{' '}
+            {sortedModules.reduce((acc, m) => acc + m.lessons.length, 0)} lessons complete
           </span>
           
           {overallProgress === 100 && (

@@ -19,6 +19,7 @@ import {
   buildLearnerProgressSnapshot,
   loadStoredCourseProgress,
 } from '../utils/courseProgress';
+import { getPreferredLessonId, getFirstLessonId } from '../utils/courseNavigation';
 import { syncService } from '../dal/sync';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
@@ -304,24 +305,13 @@ const LearnerDashboard = () => {
   };
 
   const handleContinueCourse = (course: Course) => {
-    const progress = progressData.get(course.id);
-    if (progress && progress.lessonProgress.length > 0) {
-      const nextLesson = progress.lessonProgress.find((p) => !p.isCompleted);
-      if (nextLesson) {
-        navigate(`/lms/courses/${course.slug || course.id}/lesson/${nextLesson.lessonId}`);
-        return;
-      }
-    }
+    const normalizedCourse = normalizeCourse(course);
+    const storedProgress = loadStoredCourseProgress(normalizedCourse.slug);
+    const preferredLessonId =
+      getPreferredLessonId(normalizedCourse, storedProgress) ?? getFirstLessonId(normalizedCourse);
 
-    const storedProgress = loadStoredCourseProgress(course.slug);
-    if (storedProgress.lastLessonId) {
-      navigate(`/lms/courses/${course.slug || course.id}/lesson/${storedProgress.lastLessonId}`);
-      return;
-    }
-
-    const firstLesson = course.chapters?.[0]?.lessons?.[0] || course.modules?.[0]?.lessons?.[0];
-    if (firstLesson) {
-      navigate(`/lms/courses/${course.slug || course.id}/lesson/${firstLesson.id}`);
+    if (preferredLessonId) {
+      navigate(`/lms/courses/${normalizedCourse.slug || course.id}/lesson/${preferredLessonId}`);
       return;
     }
 

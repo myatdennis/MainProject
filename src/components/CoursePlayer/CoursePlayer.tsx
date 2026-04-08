@@ -47,6 +47,7 @@ import CourseCompletion from '../CourseCompletion';
 import { useSyncService } from '../../dal/sync';
 import { useToast } from '../../context/ToastContext';
 import { resolveLessonVideoPlayback } from '../../utils/videoUtils';
+import { getInitialLesson, getNextLesson, getPreviousLesson, isLessonIdInCourse } from '../../utils/courseNavigation';
 import {
   updateAssignmentProgress,
 } from '../../utils/assignmentStorage';
@@ -199,6 +200,30 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [userNotes, setUserNotes] = useState<UserNote[]>([]);
   const [userBookmarks, setUserBookmarks] = useState<UserBookmark[]>([]);
 
+  const deriveCourseLessons = useCallback((course: NormalizedCourse, providedLessons?: NormalizedLesson[] | null) => {
+    if (Array.isArray(providedLessons) && providedLessons.length > 0) {
+      return providedLessons;
+    }
+
+    const flattened = (course.modules || []).flatMap((module, moduleIndex) =>
+      (module.lessons || []).map((lesson, lessonIndex) => ({
+        ...(lesson as NormalizedLesson),
+        moduleId: (lesson as any)?.moduleId || module.id,
+        moduleTitle: (lesson as any)?.moduleTitle || module.title,
+        moduleOrder:
+          (lesson as any)?.moduleOrder ??
+          (typeof (module as any)?.order_index === 'number' ? (module as any).order_index : module.order ?? moduleIndex),
+        absoluteOrder: (lesson as any)?.absoluteOrder ?? moduleIndex * 1000 + lessonIndex + 1,
+      }))
+    );
+
+    return flattened.sort((left, right) => {
+      const leftOrder = typeof left.order_index === 'number' ? left.order_index : left.order ?? 0;
+      const rightOrder = typeof right.order_index === 'number' ? right.order_index : right.order ?? 0;
+      return leftOrder - rightOrder;
+    });
+  }, []);
+
   const progress = useMemo(() => {
     if (!courseData) return null;
     return buildLearnerProgressSnapshot(courseData.course, completedLessons, lessonProgressMap, lessonPositions);
@@ -206,9 +231,6 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
   const courseLessons = courseData?.lessons ?? [];
   const course = courseData?.course ?? null;
-  const currentLessonIndex = currentLesson
-    ? courseLessons.findIndex((lesson) => lesson.id === currentLesson.id)
-    : -1;
   const currentLessonPlayback = useMemo(
     () => resolveLessonVideoPlayback((currentLesson as any)?.content || {}),
     [currentLesson],
@@ -242,9 +264,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     asset: currentLessonVideoAsset,
     fallbackUrl: currentLessonPlayback.src,
   });
-  const canGoPrevious = currentLessonIndex > 0;
-  const canGoNext = currentLessonIndex !== -1 && currentLessonIndex < courseLessons.length - 1;
-  const nextLesson = canGoNext ? courseLessons[currentLessonIndex + 1] : null;
+  const previousLesson = currentLesson && course ? getPreviousLesson(currentLesson, course) : null;
+  const nextLesson = currentLesson && course ? getNextLesson(currentLesson, course) : null;
+  const canGoPrevious = Boolean(previousLesson);
+  const canGoNext = Boolean(nextLesson);
 
   const calculateOverallPercent = useCallback(
     (progressMap: Record<string, number>, completedSet: Set<string>) => {
@@ -592,11 +615,21 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     if (!courseData) return;
     if (!lessonId) return;
 
+    if (!isLessonIdInCourse(courseData.course, lessonId)) {
+      const fallback = getInitialLesson(courseData.course, storedProgressRef.current);
+      if (fallback) {
+        navigate(`${coursePathBase}/${courseData.course.slug}/${lessonPathSegment}/${fallback.id}`, {
+          replace: true,
+        });
+      }
+      return;
+    }
+
     const lesson = courseLessons.find((item) => item.id === lessonId);
     if (lesson) {
       setCurrentLesson(lesson);
     }
-  }, [lessonId, courseData, courseLessons]);
+  }, [lessonId, courseData, courseLessons, navigate, coursePathBase, lessonPathSegment]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -630,33 +663,49 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
           return;
         }
 
-        setCourseData({ course: result.course, lessons: result.lessons });
+        const resolvedLessons = deriveCourseLessons(result.course, result.lessons as NormalizedLesson[]);
+
+        setCourseData({ course: result.course, lessons: resolvedLessons });
 
         if (learnerId) {
           await syncCourseProgressWithRemote({
             courseSlug: result.course.slug,
             courseId: result.course.id,
             userId: learnerId,
-            lessonIds: result.lessons.map((lesson) => lesson.id),
+            lessonIds: resolvedLessons.map((lesson) => lesson.id),
           });
         }
 
         const stored = loadStoredCourseProgress(result.course.slug);
-        storedProgressRef.current = stored;
+        const validLessonIds = new Set(resolvedLessons.map((lesson) => lesson.id));
+        const sanitizedStored: StoredCourseProgress = {
+          completedLessonIds: (stored.completedLessonIds || []).filter((lessonKey) => validLessonIds.has(lessonKey)),
+          lessonProgress: Object.fromEntries(
+            Object.entries(stored.lessonProgress || {}).filter(([lessonKey]) => validLessonIds.has(lessonKey))
+          ),
+          lessonPositions: Object.fromEntries(
+            Object.entries(stored.lessonPositions || {}).filter(([lessonKey]) => validLessonIds.has(lessonKey))
+          ),
+          lastLessonId: validLessonIds.has(stored.lastLessonId || '') ? stored.lastLessonId : undefined,
+        };
+        storedProgressRef.current = sanitizedStored;
 
-        setCompletedLessons(new Set(stored.completedLessonIds));
-        setLessonProgressMap(stored.lessonProgress || {});
-        setLessonPositions(stored.lessonPositions || {});
+        setCompletedLessons(new Set(sanitizedStored.completedLessonIds));
+        setLessonProgressMap(sanitizedStored.lessonProgress || {});
+        setLessonPositions(sanitizedStored.lessonPositions || {});
 
-        const desiredLessonId = lessonIdRef.current || stored.lastLessonId;
+        const desiredLessonId = lessonIdRef.current;
+        const initialLesson = getInitialLesson(result.course, sanitizedStored);
         const startingLesson =
-          (desiredLessonId && result.lessons.find((lesson) => lesson.id === desiredLessonId)) ||
-          result.lessons[0] ||
+          (desiredLessonId && isLessonIdInCourse(result.course, desiredLessonId)
+            ? resolvedLessons.find((lesson) => lesson.id === desiredLessonId)
+            : null) ||
+          initialLesson ||
           null;
 
         if (startingLesson) {
-          setCurrentLesson(startingLesson);
-          if (!lessonId || lessonId !== startingLesson.id) {
+          setCurrentLesson(startingLesson as NormalizedLesson);
+          if (!lessonId || lessonId !== startingLesson.id || !isLessonIdInCourse(result.course, lessonId)) {
             navigate(
               `${coursePathBase}/${result.course.slug}/${lessonPathSegment}/${startingLesson.id}`,
               { replace: true }
@@ -683,7 +732,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     return () => {
       isMounted = false;
     };
-  }, [courseId, navigate, reloadToken, learnerId]);
+  }, [courseId, navigate, reloadToken, learnerId, deriveCourseLessons]);
 
   useEffect(() => {
     if (!courseData?.course || !learnerId || hasTrackedInitialEventRef.current) {
@@ -1112,21 +1161,19 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
   const navigateLesson = useCallback(
     (direction: 'prev' | 'next') => {
-      if (!currentLesson || courseLessons.length === 0) return;
+      if (!currentLesson || !courseData?.course) return;
 
-      const currentIndex = courseLessons.findIndex((lesson) => lesson.id === currentLesson.id);
-      if (currentIndex === -1) return;
+      const targetLesson =
+        direction === 'next'
+          ? getNextLesson(currentLesson, courseData.course)
+          : getPreviousLesson(currentLesson, courseData.course);
+      if (!targetLesson) return;
 
-      const offset = direction === 'next' ? 1 : -1;
-      const nextIndex = currentIndex + offset;
-      if (nextIndex < 0 || nextIndex >= courseLessons.length) return;
-
-      const nextLesson = courseLessons[nextIndex];
       const courseSlug = courseData?.course.slug || courseId || '';
       if (!courseSlug) return;
-      navigate(`${coursePathBase}/${courseSlug}/${lessonPathSegment}/${nextLesson.id}`);
+      navigate(`${coursePathBase}/${courseSlug}/${lessonPathSegment}/${targetLesson.id}`);
     },
-    [courseLessons, currentLesson, navigate, courseData, courseId, coursePathBase, lessonPathSegment]
+    [currentLesson, navigate, courseData, courseId, coursePathBase, lessonPathSegment]
   );
 
   const markLessonComplete = () => {
@@ -1293,6 +1340,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   }
 
   const courseProgressPercent = Math.round((progress?.overallProgress || 0) * 100);
+  const lessonCountLabel = course.lessons || courseLessons.length;
 
   return (
     <div className="min-h-screen bg-softwhite pb-16">
@@ -1334,7 +1382,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
           </span>
           <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 shadow-card-sm">
             <BookOpen className="h-4 w-4" />
-            {course.lessons} lessons
+            {lessonCountLabel} lessons
           </span>
         </div>
 

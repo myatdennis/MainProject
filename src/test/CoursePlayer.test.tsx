@@ -9,6 +9,10 @@ vi.mock('../context/ToastContext', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }));
 
+vi.mock('../hooks/useUserProfile', () => ({
+  useUserProfile: () => ({ user: null }),
+}));
+
 const mockLogEvent = vi.hoisted(() => vi.fn());
 
 type MockSubscription = {
@@ -92,6 +96,16 @@ vi.mock('../dal/analytics', () => {
   };
 });
 
+vi.mock('../utils/apiClient', async () => {
+  const actual = await vi.importActual<typeof import('../utils/apiClient')>('../utils/apiClient');
+  const request = vi.fn(async () => ({ data: {} }));
+  return {
+    ...actual,
+    apiRequest: request,
+    default: request,
+  };
+});
+
 // IMPORTANT: import tested component AFTER all mocks to avoid hoist issues
 import CoursePlayer from '../components/CoursePlayer/CoursePlayer';
 
@@ -99,12 +113,17 @@ const mockCourse = {
   id: 'course-1',
   slug: 'course-1',
   title: 'Test Course',
+  description: 'Course description',
+  thumbnail: '',
+  difficulty: 'Beginner',
+  duration: '12 min',
   status: 'published',
-  modules: [],
-  chapters: [
+  modules: [
     {
-      id: 'chapter-1',
-      title: 'Chapter 1',
+      id: 'module-1',
+      title: 'Module 1',
+      description: 'Module description',
+      duration: '12 min',
       order: 1,
       lessons: [
         {
@@ -112,6 +131,7 @@ const mockCourse = {
           title: 'Lesson 1',
           type: 'video',
           order: 1,
+          order_index: 1,
           duration: '5 min',
           content: {
             videoUrl: 'https://example.com/video.mp4',
@@ -123,6 +143,39 @@ const mockCourse = {
           title: 'Lesson 2',
           type: 'text',
           order: 2,
+          order_index: 2,
+          duration: '7 min',
+          content: {
+            textContent: '<p>Lesson content</p>',
+          },
+        },
+      ],
+    },
+  ],
+  chapters: [
+    {
+      id: 'chapter-1',
+      title: 'Chapter 1',
+      order: 1,
+      lessons: [
+        {
+          id: 'lesson-1',
+          title: 'Lesson 1',
+          type: 'video',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            videoUrl: 'https://example.com/video.mp4',
+            transcript: 'Sample transcript',
+          },
+        },
+        {
+          id: 'lesson-2',
+          title: 'Lesson 2',
+          type: 'text',
+          order: 2,
+          order_index: 2,
           duration: '7 min',
           content: {
             textContent: '<p>Lesson content</p>',
@@ -137,18 +190,18 @@ const mockLessons = mockCourse.chapters[0].lessons;
 
 const mockLoadCourseResult = {
   course: mockCourse,
-  modules: [],
+  modules: mockCourse.modules,
   lessons: mockLessons,
   source: 'supabase' as const,
 };
 
-const renderCoursePlayer = () => {
+const renderCoursePlayer = (initialEntry = '/lms/courses/course-1/lesson/lesson-1') => {
   const queryClient = new QueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/lms/course/course-1/lesson/lesson-1']}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
-          <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
+          <Route path="/lms/courses/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -193,6 +246,7 @@ describe('CoursePlayer progress integration', () => {
   it('persists progress and updates assignment when marking lesson complete', async () => {
     renderCoursePlayer();
 
+    await screen.findByText('Test Course');
     const markButtons = await screen.findAllByRole('button', { name: /Mark as complete/i });
     await userEvent.click(markButtons[0]);
 
@@ -218,6 +272,7 @@ describe('CoursePlayer progress integration', () => {
 
   it('records partial progress during video playback', async () => {
     renderCoursePlayer();
+    await screen.findByText('Test Course');
 
     const getActiveVideo = () =>
       Array.from(document.querySelectorAll('video')).find(
@@ -266,6 +321,40 @@ describe('CoursePlayer progress integration', () => {
     mockLoadCourse.mockResolvedValue({
       course: {
         ...mockCourse,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-reflection',
+                title: 'Reflection Lesson',
+                type: 'reflection',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  reflectionPrompt: '<p>What stood out to you most?</p>',
+                },
+              },
+              {
+                id: 'lesson-download',
+                title: 'Download Lesson',
+                type: 'download',
+                order: 2,
+                order_index: 2,
+                duration: '3 min',
+                content: {
+                  fileUrl: 'https://example.com/resource.pdf',
+                  description: 'Take this worksheet with you.',
+                },
+              },
+            ],
+          },
+        ],
         chapters: [
           {
             id: 'chapter-1',
@@ -277,6 +366,7 @@ describe('CoursePlayer progress integration', () => {
                 title: 'Reflection Lesson',
                 type: 'reflection',
                 order: 1,
+                order_index: 1,
                 duration: '5 min',
                 content: {
                   reflectionPrompt: '<p>What stood out to you most?</p>',
@@ -287,6 +377,7 @@ describe('CoursePlayer progress integration', () => {
                 title: 'Download Lesson',
                 type: 'download',
                 order: 2,
+                order_index: 2,
                 duration: '3 min',
                 content: {
                   fileUrl: 'https://example.com/resource.pdf',
@@ -297,13 +388,47 @@ describe('CoursePlayer progress integration', () => {
           },
         ],
       },
-      modules: [],
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-reflection',
+              title: 'Reflection Lesson',
+              type: 'reflection',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                reflectionPrompt: '<p>What stood out to you most?</p>',
+              },
+            },
+            {
+              id: 'lesson-download',
+              title: 'Download Lesson',
+              type: 'download',
+              order: 2,
+              order_index: 2,
+              duration: '3 min',
+              content: {
+                fileUrl: 'https://example.com/resource.pdf',
+                description: 'Take this worksheet with you.',
+              },
+            },
+          ],
+        },
+      ],
       lessons: [
         {
           id: 'lesson-reflection',
           title: 'Reflection Lesson',
           type: 'reflection',
           order: 1,
+          order_index: 1,
           duration: '5 min',
           content: {
             reflectionPrompt: '<p>What stood out to you most?</p>',
@@ -314,6 +439,7 @@ describe('CoursePlayer progress integration', () => {
           title: 'Download Lesson',
           type: 'download',
           order: 2,
+          order_index: 2,
           duration: '3 min',
           content: {
             fileUrl: 'https://example.com/resource.pdf',
@@ -327,20 +453,18 @@ describe('CoursePlayer progress integration', () => {
     const queryClient = new QueryClient();
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/lms/course/course-1/lesson/lesson-reflection']}>
+        <MemoryRouter initialEntries={['/lms/courses/course-1/lesson/lesson-reflection']}>
           <Routes>
-            <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
             <Route path="/lms/courses/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText('Reflection')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /complete reflection/i })).toBeInTheDocument();
     expect(screen.getByText('What stood out to you most?')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /complete reflection/i })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByText('Download Lesson'));
+    await userEvent.click(screen.getByRole('button', { name: /Download Lesson/i }));
 
     expect(await screen.findByRole('link', { name: /download resource/i })).toHaveAttribute(
       'href',

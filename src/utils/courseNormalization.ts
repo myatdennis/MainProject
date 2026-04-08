@@ -69,8 +69,25 @@ import { migrateLessonContent } from './contentMigrator.js';
 const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: number): Lesson[] => {
   const lessons = module.lessons || [];
 
+  const toNumericOrder = (value: unknown, fallback: number): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return fallback;
+  };
+
   return lessons
     .map((lesson: Lesson, lessonIndex: number) => {
+      const canonicalOrder = toNumericOrder(
+        lesson.order_index,
+        toNumericOrder(lesson.order, lessonIndex)
+      );
       const estimatedMinutes =
         lesson.estimatedDuration ?? parseDurationToMinutes(lesson.duration);
 
@@ -79,7 +96,8 @@ const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: numbe
       return {
         ...lesson,
         chapterId: lesson.chapterId || module.id,
-        order: lesson.order ?? lessonIndex + 1,
+        order_index: canonicalOrder,
+        order: canonicalOrder,
         estimatedDuration: estimatedMinutes,
         duration: lesson.duration || formatMinutes(estimatedMinutes),
         content: contentJson,
@@ -88,14 +106,32 @@ const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: numbe
         description: lesson.description || ''
       };
     })
-    .sort((a: Lesson, b: Lesson) => (a.order ?? 0) - (b.order ?? 0));
+    .sort((a: Lesson, b: Lesson) => {
+      const left = toNumericOrder(a.order_index, toNumericOrder(a.order, 0));
+      const right = toNumericOrder(b.order_index, toNumericOrder(b.order, 0));
+      return left - right;
+    });
 };
 
 const normalizeModules = (course: Course): Module[] => {
   const modules = course.modules || [];
 
+  const toNumericOrder = (value: unknown, fallback: number): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return fallback;
+  };
+
   return modules
     .map((module: Module, index: number) => {
+      const canonicalOrder = toNumericOrder((module as any)?.order_index, toNumericOrder(module.order, index));
       const lessons = normalizeLessons(module, course.id, index);
       const moduleMinutes = lessons.reduce((sum: number, lesson: Lesson) => {
         return sum + (lesson.estimatedDuration ?? 0);
@@ -103,13 +139,17 @@ const normalizeModules = (course: Course): Module[] => {
 
       return {
         ...module,
-        order: module.order ?? index + 1,
+        order: canonicalOrder,
         lessons,
         duration: module.duration || formatMinutes(moduleMinutes) || '',
         resources: module.resources || []
       };
     })
-    .sort((a: Module, b: Module) => (a.order ?? 0) - (b.order ?? 0));
+    .sort((a: Module, b: Module) => {
+      const left = toNumericOrder((a as any)?.order_index, toNumericOrder(a.order, 0));
+      const right = toNumericOrder((b as any)?.order_index, toNumericOrder(b.order, 0));
+      return left - right;
+    });
 };
 
 const buildChaptersFromModules = (course: Course, modules: Module[]): Chapter[] => {
