@@ -12147,7 +12147,7 @@ app.locals.broadcastToTopic = broadcastToTopic;
 const TEAM_HUDDLE_TABLES = {
   posts: 'team_huddle_posts',
   comments: 'team_huddle_comments',
-  reactions: 'team_huddle_reactions',
+  reactions: 'team_huddle_post_reactions',
   reports: 'team_huddle_reports',
 };
 const TEAM_HUDDLE_REACTIONS = new Set(['like', 'dislike', 'love']);
@@ -12244,10 +12244,10 @@ const mapTeamHuddlePostEnvelope = (post, { includeComments = false, viewerUserId
 const teamHuddleReadiness = async () => {
   if (!supabase) return { ok: true };
   return ensureTablesReady('team_huddle', [
-    { table: TEAM_HUDDLE_TABLES.posts, columns: ['id', 'organization_id', 'title', 'body', 'author_user_id', 'created_at'] },
-    { table: TEAM_HUDDLE_TABLES.comments, columns: ['id', 'post_id', 'organization_id', 'body', 'author_user_id', 'created_at'] },
+    { table: TEAM_HUDDLE_TABLES.posts, columns: ['id', 'organization_id', 'title', 'body', 'user_id', 'created_at'] },
+    { table: TEAM_HUDDLE_TABLES.comments, columns: ['id', 'post_id', 'organization_id', 'body', 'user_id', 'created_at'] },
     { table: TEAM_HUDDLE_TABLES.reactions, columns: ['id', 'post_id', 'organization_id', 'user_id', 'reaction_type'] },
-    { table: TEAM_HUDDLE_TABLES.reports, columns: ['id', 'post_id', 'organization_id', 'reported_by_user_id', 'reason'] },
+    { table: TEAM_HUDDLE_TABLES.reports, columns: ['id', 'post_id', 'organization_id', 'reporter_user_id', 'reason'] },
   ]);
 };
 
@@ -12380,7 +12380,7 @@ app.post('/api/team-huddle/posts', authenticate, asyncHandler(async (req, res) =
   const payload = {
     id: randomUUID(),
     organization_id: orgId,
-    author_user_id: context.userId,
+    user_id: context.userId,
     title,
     body,
     topics: normalizeTeamHuddleTopics(req.body?.topics),
@@ -12430,7 +12430,7 @@ app.get('/api/team-huddle/posts/:postId', authenticate, asyncHandler(async (req,
     }
     const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
     if (!access) return;
-    if (post.hidden_at && !hasOrgAdminRole(access.role) && post.author_user_id !== context.userId) {
+  if (post.hidden_at && !hasOrgAdminRole(access.role) && post.user_id !== context.userId) {
       res.status(404).json({ error: 'not_found', message: 'Post not found.' });
       return;
     }
@@ -12457,7 +12457,7 @@ app.get('/api/team-huddle/posts/:postId', authenticate, asyncHandler(async (req,
   }
   const access = await requireOrgAccess(req, res, post.organization_id, { write: false });
   if (!access) return;
-  if (post.hidden_at && !hasOrgAdminRole(access.role) && post.author_user_id !== context.userId) {
+  if (post.hidden_at && !hasOrgAdminRole(access.role) && post.user_id !== context.userId) {
     res.status(404).json({ error: 'not_found', message: 'Post not found.' });
     return;
   }
@@ -12528,7 +12528,7 @@ app.post('/api/team-huddle/posts/:postId/comments', authenticate, asyncHandler(a
       post_id: postId,
       organization_id: post.organization_id,
       parent_comment_id: parentCommentId,
-      author_user_id: context.userId,
+      user_id: context.userId,
       body,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -12538,11 +12538,11 @@ app.post('/api/team-huddle/posts/:postId/comments', authenticate, asyncHandler(a
     persistE2EStore();
     if (parentCommentId) {
       const parent = e2eStore.huddleComments.get(parentCommentId);
-      if (parent?.author_user_id && parent.author_user_id !== context.userId && notificationService) {
+      if (parent?.user_id && parent.user_id !== context.userId && notificationService) {
         await notificationService.createNotification({
           title: 'New Team Huddle reply',
           body: `Someone replied to your comment in "${post.title}".`,
-          userId: parent.author_user_id,
+          userId: parent.user_id,
           organizationId: post.organization_id,
           type: 'team_huddle_reply',
           metadata: { postId: post.id, commentId: row.id },
@@ -12582,7 +12582,7 @@ app.post('/api/team-huddle/posts/:postId/comments', authenticate, asyncHandler(a
     post_id: post.id,
     organization_id: post.organization_id,
     parent_comment_id: parentCommentId,
-    author_user_id: context.userId,
+    user_id: context.userId,
     body,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -12597,15 +12597,15 @@ app.post('/api/team-huddle/posts/:postId/comments', authenticate, asyncHandler(a
   if (parentCommentId && notificationService) {
     const { data: parentComment } = await supabase
       .from(TEAM_HUDDLE_TABLES.comments)
-      .select('author_user_id')
+      .select('user_id')
       .eq('id', parentCommentId)
       .eq('organization_id', post.organization_id)
       .maybeSingle();
-    if (parentComment?.author_user_id && parentComment.author_user_id !== context.userId) {
+    if (parentComment?.user_id && parentComment.user_id !== context.userId) {
       await notificationService.createNotification({
         title: 'New Team Huddle reply',
         body: `Someone replied to your comment in "${post.title}".`,
-        userId: parentComment.author_user_id,
+        userId: parentComment.user_id,
         organizationId: post.organization_id,
         type: 'team_huddle_reply',
         metadata: { postId: post.id, commentId: inserted?.id ?? null },
@@ -12744,7 +12744,7 @@ app.post('/api/team-huddle/posts/:postId/report', authenticate, asyncHandler(asy
       post_id: postId,
       organization_id: post.organization_id,
       comment_id: null,
-      reported_by_user_id: context.userId,
+      reporter_user_id: context.userId,
       reason,
       status: 'open',
       resolved_at: null,
@@ -12783,7 +12783,7 @@ app.post('/api/team-huddle/posts/:postId/report', authenticate, asyncHandler(asy
     post_id: postId,
     organization_id: post.organization_id,
     comment_id: null,
-    reported_by_user_id: context.userId,
+    reporter_user_id: context.userId,
     reason,
     status: 'open',
     resolved_at: null,
@@ -19609,16 +19609,150 @@ const shapeReflectionRecord = (row) => ({
   id: row.id,
   organizationId: row.organization_id ?? row.organizationId ?? null,
   courseId: row.course_id ?? row.courseId ?? null,
+  moduleId: row.module_id ?? row.moduleId ?? null,
   lessonId: row.lesson_id ?? row.lessonId ?? null,
   userId: row.user_id ?? row.userId ?? null,
   responseText: row.response_text ?? row.responseText ?? '',
+  status: row.status ?? null,
   createdAt: row.created_at ?? row.createdAt ?? null,
   updatedAt: row.updated_at ?? row.updatedAt ?? null,
   learnerEmail: row.learner_email ?? row.learnerEmail ?? null,
   learnerName: row.learner_name ?? row.learnerName ?? null,
+  lessonTitle: row.lesson_title ?? row.lessonTitle ?? null,
+  moduleTitle: row.module_title ?? row.moduleTitle ?? null,
 });
 
-app.get('/api/learner/reflections', authenticate, asyncHandler(async (req, res) => {
+const extractLearnerReflectionRequest = (req) => ({
+  courseId: coerceString(req.query?.courseId, req.query?.course_id, req.body?.courseId, req.body?.course_id),
+  lessonId: coerceString(req.params?.lessonId, req.query?.lessonId, req.query?.lesson_id, req.body?.lessonId, req.body?.lesson_id),
+});
+
+const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lessonId }) => {
+  if (!courseId || !lessonId) {
+    res.status(400).json({ error: 'validation_failed', message: 'courseId and lessonId are required.' });
+    return null;
+  }
+
+  if (isDemoOrTestMode) {
+    for (const course of e2eStore.courses.values()) {
+      if (!course || String(course.id) !== String(courseId)) continue;
+      const courseOrgId = pickOrgId(course.organization_id, course.organizationId, course.org_id) || orgId;
+      if (String(courseOrgId || '').toLowerCase() !== String(orgId || '').toLowerCase()) {
+        continue;
+      }
+      const modules = Array.isArray(course.modules) ? course.modules : [];
+      for (const module of modules) {
+        const lesson = (Array.isArray(module.lessons) ? module.lessons : []).find((candidate) => String(candidate.id) === String(lessonId));
+        if (lesson) {
+          return {
+            courseId: String(courseId),
+            lessonId: String(lessonId),
+            moduleId: coerceString(lesson.module_id, lesson.moduleId, module.id),
+            lessonTitle: coerceString(lesson.title),
+            moduleTitle: coerceString(module.title),
+            orgId: courseOrgId,
+          };
+        }
+      }
+    }
+    res.status(404).json({ error: 'lesson_not_found', message: 'The requested reflection lesson was not found in this course.' });
+    return null;
+  }
+
+  if (!ensureSupabase(res)) return null;
+
+  const courseResult = await supabase
+    .from('courses')
+    .select('id,organization_id,org_id,title')
+    .eq('id', courseId)
+    .maybeSingle();
+  if (courseResult.error) {
+    if (isMissingRelationError(courseResult.error) || isMissingColumnError(courseResult.error)) {
+      res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
+      return null;
+    }
+    throw courseResult.error;
+  }
+
+  const course = courseResult.data;
+  if (!course) {
+    res.status(404).json({ error: 'course_not_found', message: 'Course not found.' });
+    return null;
+  }
+
+  const courseOrgId = pickOrgId(course.organization_id, course.org_id);
+  if (courseOrgId && String(courseOrgId).toLowerCase() !== String(orgId).toLowerCase()) {
+    res.status(403).json({ error: 'org_scope_mismatch', message: 'This lesson does not belong to the selected organization.' });
+    return null;
+  }
+
+  const lessonResult = await supabase
+    .from('lessons')
+    .select('id,course_id,module_id,title')
+    .eq('id', lessonId)
+    .eq('course_id', courseId)
+    .maybeSingle();
+  if (lessonResult.error) {
+    if (isMissingRelationError(lessonResult.error) || isMissingColumnError(lessonResult.error)) {
+      res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
+      return null;
+    }
+    throw lessonResult.error;
+  }
+  if (!lessonResult.data) {
+    res.status(404).json({ error: 'lesson_not_found', message: 'The requested reflection lesson was not found in this course.' });
+    return null;
+  }
+
+  let moduleTitle = null;
+  if (lessonResult.data.module_id) {
+    const moduleResult = await supabase
+      .from('modules')
+      .select('id,title')
+      .eq('id', lessonResult.data.module_id)
+      .maybeSingle();
+    if (!moduleResult.error && moduleResult.data) {
+      moduleTitle = moduleResult.data.title ?? null;
+    }
+  }
+
+  return {
+    courseId: String(courseId),
+    lessonId: String(lessonId),
+    moduleId: lessonResult.data.module_id ?? null,
+    lessonTitle: lessonResult.data.title ?? null,
+    moduleTitle,
+    orgId: courseOrgId ?? orgId,
+  };
+};
+
+const fetchReflectionProfileLookup = async (userIds) => {
+  const normalizedIds = Array.from(new Set((Array.isArray(userIds) ? userIds : []).map((value) => coerceString(value)).filter(Boolean)));
+  if (normalizedIds.length === 0 || isDemoOrTestMode || !supabase) {
+    return new Map();
+  }
+  const profileResult = await supabase.from('user_profiles').select('id,email,full_name').in('id', normalizedIds);
+  if (profileResult.error || !Array.isArray(profileResult.data)) {
+    return new Map();
+  }
+  return new Map(profileResult.data.map((profile) => [String(profile.id).toLowerCase(), profile]));
+};
+
+const shapeAdminReflectionRows = ({ rows, profileLookup = new Map(), lessonContextById = new Map() }) =>
+  (Array.isArray(rows) ? rows : []).map((row) => {
+    const profile = profileLookup.get(String(row.user_id || row.userId || '').toLowerCase());
+    const lessonContext = lessonContextById.get(String(row.lesson_id || row.lessonId || '').toLowerCase());
+    return shapeReflectionRecord({
+      ...row,
+      learner_email: profile?.email ?? null,
+      learner_name: profile?.full_name ?? null,
+      lesson_title: lessonContext?.lessonTitle ?? null,
+      module_title: lessonContext?.moduleTitle ?? null,
+      module_id: row.module_id ?? lessonContext?.moduleId ?? null,
+    });
+  });
+
+const handleLearnerReflectionGet = async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
@@ -19627,32 +19761,26 @@ app.get('/api/learner/reflections', authenticate, asyncHandler(async (req, res) 
     return;
   }
 
-  const courseId = coerceString(req.query.courseId, req.query.course_id);
-  const lessonId = coerceString(req.query.lessonId, req.query.lesson_id);
-  if (!courseId || !lessonId) {
-    res.status(400).json({ error: 'validation_failed', message: 'courseId and lessonId are required.' });
-    return;
-  }
-
+  const { courseId, lessonId } = extractLearnerReflectionRequest(req);
   const userId = context.userId;
   const orgId = orgScope.orgId ?? resolveOrgIdFromRequest(req, context) ?? DEFAULT_SANDBOX_ORG_ID;
+  const lessonContext = await resolveReflectionLessonContext({ req, res, orgId, courseId, lessonId });
+  if (!lessonContext) return;
 
   if (isDemoOrTestMode) {
     const record = e2eStore.lessonReflections.get(
-      buildReflectionStoreKey({ orgId, courseId, lessonId, userId }),
+      buildReflectionStoreKey({ orgId, courseId: lessonContext.courseId, lessonId: lessonContext.lessonId, userId }),
     ) || null;
     res.json({ data: record ? shapeReflectionRecord(record) : null, meta: { mode: 'demo' } });
     return;
   }
 
-  if (!ensureSupabase(res)) return;
-
   const { data, error } = await supabase
     .from('lesson_reflections')
     .select('*')
     .eq('organization_id', orgId)
-    .eq('course_id', courseId)
-    .eq('lesson_id', lessonId)
+    .eq('course_id', lessonContext.courseId)
+    .eq('lesson_id', lessonContext.lessonId)
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -19665,9 +19793,9 @@ app.get('/api/learner/reflections', authenticate, asyncHandler(async (req, res) 
   }
 
   res.json({ data: data ? shapeReflectionRecord(data) : null });
-}));
+};
 
-app.post('/api/learner/reflections', authenticate, asyncHandler(async (req, res) => {
+const handleLearnerReflectionPost = async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
@@ -19676,29 +19804,26 @@ app.post('/api/learner/reflections', authenticate, asyncHandler(async (req, res)
     return;
   }
 
-  const courseId = coerceString(req.body?.courseId, req.body?.course_id);
-  const lessonId = coerceString(req.body?.lessonId, req.body?.lesson_id);
+  const { courseId, lessonId } = extractLearnerReflectionRequest(req);
   const responseText = normalizeReflectionText(req.body?.responseText ?? req.body?.response_text);
-
-  if (!courseId || !lessonId) {
-    res.status(400).json({ error: 'validation_failed', message: 'courseId and lessonId are required.' });
-    return;
-  }
-
   const orgId = orgScope.orgId ?? resolveOrgIdFromRequest(req, context) ?? DEFAULT_SANDBOX_ORG_ID;
   const userId = context.userId;
   const nowIso = new Date().toISOString();
+  const lessonContext = await resolveReflectionLessonContext({ req, res, orgId, courseId, lessonId });
+  if (!lessonContext) return;
 
   if (isDemoOrTestMode) {
-    const key = buildReflectionStoreKey({ orgId, courseId, lessonId, userId });
+    const key = buildReflectionStoreKey({ orgId, courseId: lessonContext.courseId, lessonId: lessonContext.lessonId, userId });
     const existing = e2eStore.lessonReflections.get(key);
     const record = {
       id: existing?.id ?? `reflection-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       organization_id: orgId,
-      course_id: courseId,
-      lesson_id: lessonId,
+      course_id: lessonContext.courseId,
+      module_id: lessonContext.moduleId,
+      lesson_id: lessonContext.lessonId,
       user_id: userId,
       response_text: responseText,
+      status: 'draft',
       created_at: existing?.created_at ?? nowIso,
       updated_at: nowIso,
     };
@@ -19708,22 +19833,42 @@ app.post('/api/learner/reflections', authenticate, asyncHandler(async (req, res)
     return;
   }
 
-  if (!ensureSupabase(res)) return;
-
   const payload = {
     organization_id: orgId,
-    course_id: courseId,
-    lesson_id: lessonId,
+    course_id: lessonContext.courseId,
+    module_id: lessonContext.moduleId,
+    lesson_id: lessonContext.lessonId,
     user_id: userId,
     response_text: responseText,
+    status: 'draft',
     updated_at: nowIso,
   };
 
-  const { data, error } = await supabase
+  let data = null;
+  let error = null;
+  ({ data, error } = await supabase
     .from('lesson_reflections')
     .upsert(payload, { onConflict: 'organization_id,course_id,lesson_id,user_id' })
     .select('*')
-    .maybeSingle();
+    .maybeSingle());
+
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await supabase
+      .from('lesson_reflections')
+      .upsert(
+        {
+          organization_id: orgId,
+          course_id: lessonContext.courseId,
+          lesson_id: lessonContext.lessonId,
+          user_id: userId,
+          response_text: responseText,
+          updated_at: nowIso,
+        },
+        { onConflict: 'organization_id,course_id,lesson_id,user_id' },
+      )
+      .select('*')
+      .maybeSingle());
+  }
 
   if (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
@@ -19731,10 +19876,12 @@ app.post('/api/learner/reflections', authenticate, asyncHandler(async (req, res)
         data: {
           id: `reflection-local-${Date.now()}`,
           organizationId: orgId,
-          courseId,
-          lessonId,
+          courseId: lessonContext.courseId,
+          moduleId: lessonContext.moduleId,
+          lessonId: lessonContext.lessonId,
           userId,
           responseText,
+          status: 'draft',
           createdAt: nowIso,
           updatedAt: nowIso,
         },
@@ -19746,15 +19893,15 @@ app.post('/api/learner/reflections', authenticate, asyncHandler(async (req, res)
   }
 
   res.status(202).json({ data: shapeReflectionRecord(data ?? payload) });
-}));
+};
 
-app.get('/api/admin/reflections', authenticate, asyncHandler(async (req, res) => {
+const handleAdminLessonReflectionsGet = async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
 
   const orgId = coerceString(req.query.orgId, req.query.organizationId, req.query.organization_id);
   const courseId = coerceString(req.query.courseId, req.query.course_id);
-  const lessonId = coerceString(req.query.lessonId, req.query.lesson_id);
+  const lessonId = coerceString(req.params?.lessonId, req.query.lessonId, req.query.lesson_id);
   const limit = Math.max(1, Math.min(100, Number(req.query.limit ?? 20) || 20));
   const offset = Math.max(0, Number(req.query.offset ?? 0) || 0);
 
@@ -19765,13 +19912,15 @@ app.get('/api/admin/reflections', authenticate, asyncHandler(async (req, res) =>
 
   const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
   if (!access) return;
+  const lessonContext = await resolveReflectionLessonContext({ req, res, orgId, courseId, lessonId });
+  if (!lessonContext) return;
 
   if (isDemoOrTestMode) {
     const rows = Array.from(e2eStore.lessonReflections.values())
       .filter((row) =>
         String(row.organization_id || '').toLowerCase() === String(orgId).toLowerCase() &&
-        String(row.course_id || '').toLowerCase() === String(courseId).toLowerCase() &&
-        String(row.lesson_id || '').toLowerCase() === String(lessonId).toLowerCase(),
+        String(row.course_id || '').toLowerCase() === String(lessonContext.courseId).toLowerCase() &&
+        String(row.lesson_id || '').toLowerCase() === String(lessonContext.lessonId).toLowerCase(),
       )
       .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')));
 
@@ -19785,6 +19934,9 @@ app.get('/api/admin/reflections', authenticate, asyncHandler(async (req, res) =>
         ...row,
         learner_email: user?.email ?? null,
         learner_name: user?.full_name ?? user?.name ?? null,
+        lesson_title: lessonContext.lessonTitle,
+        module_title: lessonContext.moduleTitle,
+        module_id: row.module_id ?? lessonContext.moduleId,
       });
     });
 
@@ -19792,14 +19944,12 @@ app.get('/api/admin/reflections', authenticate, asyncHandler(async (req, res) =>
     return;
   }
 
-  if (!ensureSupabase(res)) return;
-
   const { data, count, error } = await supabase
     .from('lesson_reflections')
     .select('*', { count: 'exact' })
     .eq('organization_id', orgId)
-    .eq('course_id', courseId)
-    .eq('lesson_id', lessonId)
+    .eq('course_id', lessonContext.courseId)
+    .eq('lesson_id', lessonContext.lessonId)
     .order('updated_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -19812,26 +19962,169 @@ app.get('/api/admin/reflections', authenticate, asyncHandler(async (req, res) =>
   }
 
   const rows = Array.isArray(data) ? data : [];
-  const userIds = Array.from(new Set(rows.map((row) => coerceString(row.user_id)).filter(Boolean)));
-  let profileLookup = new Map();
-  if (userIds.length > 0) {
-    const profileResult = await supabase.from('user_profiles').select('id,email,full_name').in('id', userIds);
-    if (!profileResult.error && Array.isArray(profileResult.data)) {
-      profileLookup = new Map(profileResult.data.map((profile) => [String(profile.id).toLowerCase(), profile]));
-    }
+  const profileLookup = await fetchReflectionProfileLookup(rows.map((row) => row.user_id));
+  const shaped = shapeAdminReflectionRows({
+    rows,
+    profileLookup,
+    lessonContextById: new Map([[String(lessonContext.lessonId).toLowerCase(), lessonContext]]),
+  });
+
+  res.json({ data: { rows: shaped, total: search ? shaped.length : (count ?? shaped.length) } });
+};
+
+const handleAdminCourseReflectionsGet = async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const orgId = coerceString(req.query.orgId, req.query.organizationId, req.query.organization_id);
+  const courseId = coerceString(req.params?.courseId, req.query.courseId, req.query.course_id);
+  const lessonIdFilter = coerceString(req.query.lessonId, req.query.lesson_id);
+  const search = normalizeReflectionText(req.query.search);
+  const limit = Math.max(1, Math.min(200, Number(req.query.limit ?? 50) || 50));
+  const offset = Math.max(0, Number(req.query.offset ?? 0) || 0);
+
+  if (!orgId || !courseId) {
+    res.status(400).json({ error: 'validation_failed', message: 'orgId and courseId are required.' });
+    return;
   }
 
-  const shaped = rows.map((row) => {
-    const profile = profileLookup.get(String(row.user_id || '').toLowerCase());
-    return shapeReflectionRecord({
-      ...row,
-      learner_email: profile?.email ?? null,
-      learner_name: profile?.full_name ?? null,
-    });
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  if (isDemoOrTestMode) {
+    const course = e2eStore.courses.get(courseId);
+    const lessonContextById = new Map();
+    for (const module of Array.isArray(course?.modules) ? course.modules : []) {
+      for (const lesson of Array.isArray(module.lessons) ? module.lessons : []) {
+        lessonContextById.set(String(lesson.id).toLowerCase(), {
+          lessonId: lesson.id,
+          moduleId: coerceString(lesson.module_id, lesson.moduleId, module.id),
+          lessonTitle: coerceString(lesson.title),
+          moduleTitle: coerceString(module.title),
+        });
+      }
+    }
+    const userLookup = new Map((Array.isArray(e2eStore.users) ? e2eStore.users : []).map((user) => [String(user.id).toLowerCase(), user]));
+    const allRows = Array.from(e2eStore.lessonReflections.values())
+      .filter((row) =>
+        String(row.organization_id || '').toLowerCase() === String(orgId).toLowerCase() &&
+        String(row.course_id || '').toLowerCase() === String(courseId).toLowerCase() &&
+        (!lessonIdFilter || String(row.lesson_id || '').toLowerCase() === String(lessonIdFilter).toLowerCase()),
+      )
+      .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')))
+      .map((row) => {
+        const user = userLookup.get(String(row.user_id || '').toLowerCase());
+        const lessonContext = lessonContextById.get(String(row.lesson_id || '').toLowerCase());
+        return shapeReflectionRecord({
+          ...row,
+          learner_email: user?.email ?? null,
+          learner_name: user?.full_name ?? user?.name ?? null,
+          lesson_title: lessonContext?.lessonTitle ?? null,
+          module_title: lessonContext?.moduleTitle ?? null,
+          module_id: row.module_id ?? lessonContext?.moduleId ?? null,
+        });
+      })
+      .filter((row) => {
+        if (!search) return true;
+        const haystack = [row.learnerName, row.learnerEmail, row.responseText, row.lessonTitle, row.moduleTitle]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(search.toLowerCase());
+      });
+
+    res.json({ data: { rows: allRows.slice(offset, offset + limit), total: allRows.length }, meta: { mode: 'demo' } });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  const courseResult = await supabase
+    .from('courses')
+    .select('id,organization_id,org_id')
+    .eq('id', courseId)
+    .maybeSingle();
+  if (courseResult.error) {
+    throw courseResult.error;
+  }
+  if (!courseResult.data) {
+    res.status(404).json({ error: 'course_not_found', message: 'Course not found.' });
+    return;
+  }
+  const courseOrgId = pickOrgId(courseResult.data.organization_id, courseResult.data.org_id);
+  if (courseOrgId && String(courseOrgId).toLowerCase() !== String(orgId).toLowerCase()) {
+    res.status(403).json({ error: 'org_scope_mismatch', message: 'This course does not belong to the selected organization.' });
+    return;
+  }
+
+  const lessonResult = await supabase
+    .from('lessons')
+    .select('id,title,module_id')
+    .eq('course_id', courseId);
+  if (lessonResult.error) {
+    throw lessonResult.error;
+  }
+  const lessons = Array.isArray(lessonResult.data) ? lessonResult.data : [];
+  const moduleIds = Array.from(new Set(lessons.map((lesson) => coerceString(lesson.module_id)).filter(Boolean)));
+  let moduleLookup = new Map();
+  if (moduleIds.length > 0) {
+    const moduleResult = await supabase.from('modules').select('id,title').in('id', moduleIds);
+    if (!moduleResult.error && Array.isArray(moduleResult.data)) {
+      moduleLookup = new Map(moduleResult.data.map((module) => [String(module.id).toLowerCase(), module]));
+    }
+  }
+  const lessonContextById = new Map(
+    lessons.map((lesson) => [
+      String(lesson.id).toLowerCase(),
+      {
+        lessonId: lesson.id,
+        moduleId: lesson.module_id ?? null,
+        lessonTitle: lesson.title ?? null,
+        moduleTitle: moduleLookup.get(String(lesson.module_id || '').toLowerCase())?.title ?? null,
+      },
+    ]),
+  );
+
+  let query = supabase
+    .from('lesson_reflections')
+    .select('*', { count: 'exact' })
+    .eq('organization_id', orgId)
+    .eq('course_id', courseId)
+    .order('updated_at', { ascending: false });
+  if (lessonIdFilter) {
+    query = query.eq('lesson_id', lessonIdFilter);
+  }
+  const queryResult = await query.range(offset, offset + limit - 1);
+  const { data, count, error } = queryResult;
+  if (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      res.json({ data: { rows: [], total: 0 }, meta: { degraded: true, reason: 'reflection_storage_unavailable' } });
+      return;
+    }
+    throw error;
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const profileLookup = await fetchReflectionProfileLookup(rows.map((row) => row.user_id));
+  const shaped = shapeAdminReflectionRows({ rows, profileLookup, lessonContextById }).filter((row) => {
+    if (!search) return true;
+    const haystack = [row.learnerName, row.learnerEmail, row.responseText, row.lessonTitle, row.moduleTitle]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(search.toLowerCase());
   });
 
   res.json({ data: { rows: shaped, total: count ?? shaped.length } });
-}));
+};
+
+app.get('/api/learner/reflections', authenticate, asyncHandler(handleLearnerReflectionGet));
+app.get('/api/learner/lessons/:lessonId/reflection', authenticate, asyncHandler(handleLearnerReflectionGet));
+app.post('/api/learner/reflections', authenticate, asyncHandler(handleLearnerReflectionPost));
+app.post('/api/learner/lessons/:lessonId/reflection', authenticate, asyncHandler(handleLearnerReflectionPost));
+app.get('/api/admin/reflections', authenticate, asyncHandler(handleAdminLessonReflectionsGet));
+app.get('/api/admin/lessons/:lessonId/reflections', authenticate, asyncHandler(handleAdminLessonReflectionsGet));
+app.get('/api/admin/courses/:courseId/reflections', authenticate, asyncHandler(handleAdminCourseReflectionsGet));
 
 // ─── GET /api/client/progress/summary ──────────────────────────────────────
 // Returns real per-learner stats: modulesCompleted/total, overall % progress,

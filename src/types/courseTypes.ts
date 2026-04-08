@@ -151,6 +151,8 @@ export interface LessonContent {
   textContent?: string;
   content?: string; // alias for main text content (courseStore compatibility)
   notes?: string; // For additional course notes
+  prompt?: string; // canonical reflection prompt
+  collectResponse?: boolean; // canonical reflection response flag
   reflectionPrompt?: string; // for courseStore compatibility
   allowReflection?: boolean; // for courseStore compatibility
   requireReflection?: boolean; // for courseStore compatibility

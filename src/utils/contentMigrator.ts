@@ -62,9 +62,8 @@ export function migrateLessonContent(raw: any): any {
     }
 
     // 6) reflection shape: common keys `prompt` or `reflectionPrompt`
-    if (!out.type && (out.prompt || out.reflectionPrompt)) {
+    if (!out.type && (out.prompt || out.reflectionPrompt || out.allowReflection || out.collectResponse)) {
       out.type = 'reflection';
-      out.prompt = out.prompt || out.reflectionPrompt || '';
     }
 
     // 7) interactive activities: normalize `instructions` or `steps`
@@ -84,6 +83,7 @@ export function migrateLessonContent(raw: any): any {
 
   // Promote video metadata to canonical object
   maybeDeriveVideo(out);
+  normalizeReflectionContent(out);
 
   // Future migrations can be applied here using switch(out.schema_version) {...}
 
@@ -230,6 +230,51 @@ function maybeDeriveVideo(out: Record<string, any>) {
   if (durationSeconds != null) {
     out.videoDuration = durationSeconds;
   }
+}
+
+function normalizeReflectionContent(out: Record<string, any>) {
+  const prompt = firstNonEmptyString(
+    out.prompt,
+    out.reflectionPrompt,
+    out.question,
+  );
+  const instructions = firstNonEmptyString(
+    out.instructions,
+    out.description,
+    out.notes,
+  );
+  const shouldCollectResponse =
+    out.collectResponse === true ||
+    out.allowReflection === true ||
+    out.requireReflection === true ||
+    out.type === 'reflection' ||
+    Boolean(prompt);
+
+  if (prompt) {
+    out.prompt = prompt;
+    out.reflectionPrompt = prompt;
+  }
+
+  if (instructions) {
+    out.instructions = instructions;
+  }
+
+  if (shouldCollectResponse) {
+    out.collectResponse = true;
+    out.allowReflection = true;
+  }
+}
+
+function firstNonEmptyString(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  }
+  return '';
 }
 
 function deriveProvider(url: string): string {

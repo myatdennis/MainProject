@@ -13,6 +13,16 @@ vi.mock('../hooks/useUserProfile', () => ({
   useUserProfile: () => ({ user: null }),
 }));
 
+const mockFetchLearnerReflection = vi.hoisted(() => vi.fn());
+const mockSaveLearnerReflection = vi.hoisted(() => vi.fn());
+
+vi.mock('../services/reflectionService', () => ({
+  reflectionService: {
+    fetchLearnerReflection: (...args: any[]) => mockFetchLearnerReflection(...args),
+    saveLearnerReflection: (...args: any[]) => mockSaveLearnerReflection(...args),
+  },
+}));
+
 const mockLogEvent = vi.hoisted(() => vi.fn());
 
 type MockSubscription = {
@@ -233,6 +243,19 @@ describe('CoursePlayer progress integration', () => {
     });
     mockSyncCourseProgressWithRemote.mockResolvedValue(null);
     mockUpdateAssignmentProgress.mockResolvedValue(undefined);
+    mockFetchLearnerReflection.mockResolvedValue(null);
+    mockSaveLearnerReflection.mockImplementation(async ({ responseText }: { responseText: string }) => ({
+      id: 'reflection-1',
+      organizationId: 'org-1',
+      courseId: 'course-1',
+      lessonId: 'lesson-reflection',
+      userId: 'local-user',
+      responseText,
+      status: 'draft',
+      createdAt: '2026-04-08T12:00:00.000Z',
+      updatedAt: '2026-04-08T12:00:01.000Z',
+    }));
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -494,7 +517,9 @@ describe('CoursePlayer progress integration', () => {
     );
 
   expect(await screen.findByRole('button', { name: /complete reflection/i })).toBeInTheDocument();
+    expect(screen.getByText('Reflection Prompt')).toBeInTheDocument();
     expect(screen.getByText('What stood out to you most?')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Write your reflection here…')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /Download Lesson/i }));
 
@@ -503,4 +528,213 @@ describe('CoursePlayer progress integration', () => {
       'https://example.com/resource.pdf',
     );
   });
+
+  it('saves reflection responses and restores previously saved content on reload', async () => {
+    mockFetchLearnerReflection
+      .mockResolvedValueOnce({
+        id: 'reflection-1',
+        organizationId: 'org-1',
+        courseId: 'course-1',
+        lessonId: 'lesson-reflection',
+        userId: 'local-user',
+        responseText: '',
+        status: 'draft',
+        createdAt: '2026-04-08T12:00:00.000Z',
+        updatedAt: '2026-04-08T12:00:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        id: 'reflection-1',
+        organizationId: 'org-1',
+        courseId: 'course-1',
+        lessonId: 'lesson-reflection',
+        userId: 'local-user',
+        responseText: 'Saved reflection text',
+        status: 'draft',
+        createdAt: '2026-04-08T12:00:00.000Z',
+        updatedAt: '2026-04-08T12:05:00.000Z',
+      });
+
+    mockLoadCourse.mockResolvedValue({
+      ...mockLoadCourseResult,
+      course: {
+        ...mockLoadCourseResult.course,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-reflection',
+                title: 'Reflection Lesson',
+                type: 'reflection',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  prompt: 'What stood out to you most?',
+                  collectResponse: true,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-reflection',
+              title: 'Reflection Lesson',
+              type: 'reflection',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                prompt: 'What stood out to you most?',
+                collectResponse: true,
+              },
+            },
+          ],
+        },
+      ],
+      lessons: [
+        {
+          id: 'lesson-reflection',
+          title: 'Reflection Lesson',
+          type: 'reflection',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            prompt: 'What stood out to you most?',
+            collectResponse: true,
+          },
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    const view = renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
+
+    await screen.findByRole('button', { name: /complete reflection/i });
+    const input = await screen.findByPlaceholderText('Write your reflection here…');
+    await user.type(input, 'Saved reflection text');
+    await user.click(screen.getByRole('button', { name: /save response/i }));
+
+    await waitFor(() => {
+      expect(mockSaveLearnerReflection).toHaveBeenCalledWith({
+        courseId: 'course-1',
+        lessonId: 'lesson-reflection',
+        responseText: 'Saved reflection text',
+      });
+    });
+
+    view.unmount();
+    renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
+
+    expect(await screen.findByDisplayValue('Saved reflection text')).toBeInTheDocument();
+  }, 10000);
+
+  it('recovers an unsaved local reflection draft after refresh', async () => {
+    window.localStorage.setItem(
+      'reflection-draft:course-1:lesson-reflection:local-user',
+      JSON.stringify({
+        text: 'Draft that never reached the server',
+        updatedAt: '2026-04-08T12:10:00.000Z',
+      }),
+    );
+
+    mockFetchLearnerReflection.mockResolvedValue({
+      id: 'reflection-1',
+      organizationId: 'org-1',
+      courseId: 'course-1',
+      lessonId: 'lesson-reflection',
+      userId: 'local-user',
+      responseText: 'Older saved reflection',
+      status: 'draft',
+      createdAt: '2026-04-08T12:00:00.000Z',
+      updatedAt: '2026-04-08T12:05:00.000Z',
+    });
+
+    mockLoadCourse.mockResolvedValue({
+      ...mockLoadCourseResult,
+      course: {
+        ...mockLoadCourseResult.course,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Module 1',
+            description: '',
+            duration: '8 min',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-reflection',
+                title: 'Reflection Lesson',
+                type: 'reflection',
+                order: 1,
+                order_index: 1,
+                duration: '5 min',
+                content: {
+                  prompt: 'What stood out to you most?',
+                  collectResponse: true,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [
+        {
+          id: 'module-1',
+          title: 'Module 1',
+          description: '',
+          duration: '8 min',
+          order: 1,
+          lessons: [
+            {
+              id: 'lesson-reflection',
+              title: 'Reflection Lesson',
+              type: 'reflection',
+              order: 1,
+              order_index: 1,
+              duration: '5 min',
+              content: {
+                prompt: 'What stood out to you most?',
+                collectResponse: true,
+              },
+            },
+          ],
+        },
+      ],
+      lessons: [
+        {
+          id: 'lesson-reflection',
+          title: 'Reflection Lesson',
+          type: 'reflection',
+          order: 1,
+          order_index: 1,
+          duration: '5 min',
+          content: {
+            prompt: 'What stood out to you most?',
+            collectResponse: true,
+          },
+        },
+      ],
+    });
+
+    renderCoursePlayer('/lms/courses/course-1/lesson/lesson-reflection');
+
+    await screen.findByRole('button', { name: /complete reflection/i });
+    expect(await screen.findByDisplayValue('Draft that never reached the server')).toBeInTheDocument();
+    expect(screen.getByText('Recovered an unsaved draft from this device.')).toBeInTheDocument();
+  }, 10000);
 });

@@ -7,7 +7,7 @@ export interface TeamHuddleComment {
   post_id: string;
   organization_id: string;
   parent_comment_id: string | null;
-  author_user_id: string;
+  user_id: string;
   body: string;
   created_at: string;
   updated_at: string;
@@ -17,7 +17,7 @@ export interface TeamHuddleComment {
 export interface TeamHuddlePost {
   id: string;
   organization_id: string;
-  author_user_id: string;
+  user_id: string;
   title: string;
   body: string;
   topics: string[];
@@ -37,7 +37,7 @@ export interface TeamHuddleReport {
   id: string;
   post_id: string;
   organization_id: string;
-  reported_by_user_id: string;
+  reporter_user_id: string;
   reason: string;
   status: 'open' | 'resolved' | 'dismissed';
   created_at: string;

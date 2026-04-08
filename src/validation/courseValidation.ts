@@ -164,11 +164,9 @@ const hasDocumentSource = (lesson: Lesson): boolean => {
 const hasReflectionContent = (lesson: Lesson): boolean => {
   const content = lesson.content || {};
   const candidates = [
-    deriveTextContent(lesson),
     content.reflectionPrompt,
     (content as Record<string, unknown>).question,
     (content as Record<string, unknown>).prompt,
-    (content as Record<string, unknown>).instructions,
   ];
   return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
 };

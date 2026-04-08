@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
+import { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/adminCourses';
@@ -31,7 +31,10 @@ import {
   Target,
   AlertTriangle,
   Info,
+  MessageCircleMore,
+  Search,
 } from 'lucide-react';
+import { reflectionService, type AdminReflectionRow } from '../../dal/reflections';
 
 const AdminCourseDetail = () => {
   useNavTrace('AdminCourseDetail');
@@ -42,6 +45,19 @@ const AdminCourseDetail = () => {
   const [viewMode, setViewMode] = useState<'admin' | 'learner'>(
     searchParams.get('viewMode') === 'learner' ? 'learner' : 'admin'
   );
+  const [courseReflections, setCourseReflections] = useState<{
+    loading: boolean;
+    rows: AdminReflectionRow[];
+    total: number;
+    error: string | null;
+  }>({
+    loading: false,
+    rows: [],
+    total: 0,
+    error: null,
+  });
+  const [reflectionLessonFilter, setReflectionLessonFilter] = useState('all');
+  const [reflectionSearch, setReflectionSearch] = useState('');
 
   // Subscribe to catalog state so the component re-renders when init completes.
   const catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
@@ -98,6 +114,69 @@ const AdminCourseDetail = () => {
 
   // Get course from store (re-reads after direct-fetch hydration above)
   const course = courseId ? courseStore.getCourse(courseId) : null;
+
+  const resolvedOrgId = useMemo(() => {
+    if (!course) return null;
+    return course.organizationId ?? (course as any).organization_id ?? (course as any).org_id ?? null;
+  }, [course]);
+
+  const reflectionLessons = useMemo(() => {
+    if (!course?.modules) return [];
+    return course.modules.flatMap((module) =>
+      (module.lessons ?? [])
+        .filter((lesson) =>
+          lesson.type === 'reflection' ||
+          lesson.content?.collectResponse === true ||
+          lesson.content?.allowReflection === true ||
+          Boolean(lesson.content?.prompt || lesson.content?.reflectionPrompt),
+        )
+        .map((lesson) => ({
+          id: lesson.id,
+          title: lesson.title,
+          moduleTitle: module.title,
+        })),
+    );
+  }, [course]);
+
+  useEffect(() => {
+    if (viewMode !== 'admin' || !course?.id || !resolvedOrgId) {
+      return;
+    }
+
+    let isMounted = true;
+    setCourseReflections((prev) => ({ ...prev, loading: true, error: null }));
+    reflectionService
+      .fetchAdminCourseReflections({
+        orgId: resolvedOrgId,
+        courseId: course.id,
+        lessonId: reflectionLessonFilter === 'all' ? undefined : reflectionLessonFilter,
+        search: reflectionSearch.trim() || undefined,
+        limit: 100,
+      })
+      .then((payload) => {
+        if (!isMounted) return;
+        setCourseReflections({
+          loading: false,
+          rows: payload.rows,
+          total: payload.total,
+          error: null,
+        });
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        console.warn('[AdminCourseDetail] Failed to load course reflections', error);
+        setCourseReflections({
+          loading: false,
+          rows: [],
+          total: 0,
+          error: 'Unable to load reflection responses right now.',
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [course?.id, reflectionLessonFilter, reflectionSearch, resolvedOrgId, viewMode]);
 
   const persistCourse = async (inputCourse: Course, statusOverride?: 'draft' | 'published') => {
     const prepared: Course = {
@@ -540,6 +619,96 @@ const AdminCourseDetail = () => {
               ))}
             </div>
           </div>
+
+          {viewMode === 'admin' && reflectionLessons.length > 0 && (
+            <div className="card-lg space-y-5">
+              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <div className="flex items-center space-x-2 mb-2">
+                    <MessageCircleMore className="h-5 w-5 text-sky-600" />
+                    <h2 className="text-xl font-bold text-gray-900">Reflection Responses</h2>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Authorized admins can review saved learner reflections for this course.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <label className="flex flex-col text-sm text-gray-600">
+                    <span className="mb-1 font-medium text-gray-700">Lesson</span>
+                    <select
+                      value={reflectionLessonFilter}
+                      onChange={(event) => setReflectionLessonFilter(event.target.value)}
+                      className="min-w-[220px] rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                    >
+                      <option value="all">All reflection lessons</option>
+                      {reflectionLessons.map((lesson) => (
+                        <option key={lesson.id} value={lesson.id}>
+                          {lesson.moduleTitle}: {lesson.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col text-sm text-gray-600">
+                    <span className="mb-1 font-medium text-gray-700">Learner or response</span>
+                    <div className="flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2">
+                      <Search className="mr-2 h-4 w-4 text-gray-400" />
+                      <input
+                        value={reflectionSearch}
+                        onChange={(event) => setReflectionSearch(event.target.value)}
+                        placeholder="Search name, email, or response"
+                        className="w-full border-0 p-0 text-sm text-gray-900 focus:outline-none"
+                      />
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                {courseReflections.total > 0
+                  ? `${courseReflections.total} saved reflection response${courseReflections.total === 1 ? '' : 's'}`
+                  : 'No saved reflection responses yet.'}
+              </div>
+
+              {courseReflections.loading && <p className="text-sm text-gray-600">Loading reflection responses…</p>}
+              {!courseReflections.loading && courseReflections.error && (
+                <p className="text-sm text-red-600">{courseReflections.error}</p>
+              )}
+              {!courseReflections.loading && !courseReflections.error && courseReflections.rows.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-6 py-8 text-center text-sm text-gray-600">
+                  No responses match the current filters.
+                </div>
+              )}
+              {!courseReflections.loading && !courseReflections.error && courseReflections.rows.length > 0 && (
+                <div className="space-y-4">
+                  {courseReflections.rows.map((row) => (
+                    <div key={row.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">
+                            {row.learnerName || row.learnerEmail || row.userId}
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            {row.learnerEmail || row.userId}
+                            {row.lessonTitle ? ` • ${row.lessonTitle}` : ''}
+                            {row.moduleTitle ? ` • ${row.moduleTitle}` : ''}
+                          </p>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          <p>Updated {row.updatedAt ? new Date(row.updatedAt).toLocaleString() : 'Unknown'}</p>
+                          <p>Created {row.createdAt ? new Date(row.createdAt).toLocaleString() : 'Unknown'}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 rounded-2xl bg-gray-50 px-4 py-3">
+                        <p className="whitespace-pre-wrap break-words text-sm leading-6 text-gray-800">
+                          {row.responseText || 'No response text saved.'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Prerequisites */}
           {course.prerequisites && course.prerequisites.length > 0 && (

@@ -181,12 +181,11 @@ describe('Admin/learner golden path', () => {
     const adminLessonProgress = adminLessons.find((row: any) => row.lesson_id === lessonId || row.lessonId === lessonId);
     expect(adminLessonProgress).toBeTruthy();
 
-    const reflectionSaveRes = await server!.fetch('/api/learner/reflections', {
+    const reflectionSaveRes = await server!.fetch(`/api/learner/lessons/${encodeURIComponent(lessonId)}/reflection`, {
       method: 'POST',
       headers: learnerHeadersResolved,
       body: JSON.stringify({
         courseId,
-        lessonId,
         responseText: 'I will apply this in my next team retrospective.',
       }),
     });
@@ -196,7 +195,7 @@ describe('Admin/learner golden path', () => {
     const reflectionOrgId = String(reflectionSaveJson?.data?.organizationId || 'demo-sandbox-org');
 
     const reflectionFetchRes = await server!.fetch(
-      `/api/learner/reflections?courseId=${encodeURIComponent(courseId)}&lessonId=${encodeURIComponent(lessonId)}`,
+      `/api/learner/lessons/${encodeURIComponent(lessonId)}/reflection?courseId=${encodeURIComponent(courseId)}`,
       { headers: learnerHeadersResolved },
     );
     expect(reflectionFetchRes.status).toBe(200);
@@ -204,7 +203,7 @@ describe('Admin/learner golden path', () => {
     expect(String(reflectionFetchJson?.data?.responseText || '')).toContain('team retrospective');
 
     const adminReflectionRes = await server!.fetch(
-      `/api/admin/reflections?orgId=${encodeURIComponent(reflectionOrgId)}&courseId=${encodeURIComponent(courseId)}&lessonId=${encodeURIComponent(lessonId)}&limit=5`,
+      `/api/admin/lessons/${encodeURIComponent(lessonId)}/reflections?orgId=${encodeURIComponent(reflectionOrgId)}&courseId=${encodeURIComponent(courseId)}&limit=5`,
       { headers: await adminHeaders() },
     );
     expect(adminReflectionRes.status).toBe(200);
@@ -212,5 +211,24 @@ describe('Admin/learner golden path', () => {
     const reflectionRows: any[] = adminReflectionJson?.data?.rows ?? [];
     expect(Array.isArray(reflectionRows)).toBe(true);
     expect(reflectionRows.some((row) => String(row?.responseText || '').includes('team retrospective'))).toBe(true);
+
+    const adminCourseReflectionRes = await server!.fetch(
+      `/api/admin/courses/${encodeURIComponent(courseId)}/reflections?orgId=${encodeURIComponent(reflectionOrgId)}&limit=10`,
+      { headers: await adminHeaders() },
+    );
+    expect(adminCourseReflectionRes.status).toBe(200);
+    const adminCourseReflectionJson = await adminCourseReflectionRes.json();
+    const courseReflectionRows: any[] = adminCourseReflectionJson?.data?.rows ?? [];
+    expect(courseReflectionRows.some((row) => String(row?.responseText || '').includes('team retrospective'))).toBe(true);
+
+    const secondLearnerId = randomUUID();
+    const secondLearnerHeadersResolved = await learnerHeaders(secondLearnerId, `other+${slug}@example.com`);
+    const otherLearnerReflectionRes = await server!.fetch(
+      `/api/learner/lessons/${encodeURIComponent(lessonId)}/reflection?courseId=${encodeURIComponent(courseId)}`,
+      { headers: secondLearnerHeadersResolved },
+    );
+    expect(otherLearnerReflectionRes.status).toBe(200);
+    const otherLearnerReflectionJson = await otherLearnerReflectionRes.json();
+    expect(otherLearnerReflectionJson?.data).toBeNull();
   }, 60000);
 });

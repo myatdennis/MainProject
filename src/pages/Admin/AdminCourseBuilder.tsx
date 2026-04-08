@@ -20,7 +20,7 @@ import { type CourseValidationIntent, type CourseValidationIssue } from '../../v
 import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
-import { reflectionService, type AdminReflectionRow } from '../../services/reflectionService';
+import { reflectionService, type AdminReflectionRow } from '../../dal/reflections';
 import { deriveExternalVideoCommitMetadata, resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import {
   shouldBypassMediaSigning,
@@ -4774,7 +4774,7 @@ const scheduleAutosave = useCallback(
                 </div>
               </div>
 
-              {(lesson.content.allowReflection || lesson.content.reflectionPrompt) && (() => {
+              {(lesson.type === 'reflection' || lesson.content.collectResponse || lesson.content.allowReflection || lesson.content.prompt || lesson.content.reflectionPrompt) && (() => {
                 const reflectionKey = `${moduleId}:${lesson.id}`;
                 const reflectionState = lessonReflections[reflectionKey] ?? {
                   loading: false,
@@ -4972,69 +4972,89 @@ const scheduleAutosave = useCallback(
             </div>
           )}
 
-          {lesson.type === 'text' && (
+          {(lesson.type === 'text' || lesson.type === 'reflection') && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Content Title</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {lesson.type === 'reflection' ? 'Reflection Title' : 'Content Title'}
+                </label>
                 <input
                   type="text"
                   value={lesson.content.title || ''}
                   onChange={(e) => updateLesson(moduleId, lesson.id, {
                     content: { ...lesson.content, title: e.target.value }
                   })}
-                  placeholder="e.g., Reflection: Leadership Journey"
+                  placeholder={lesson.type === 'reflection' ? 'e.g., Leadership Reflection' : 'e.g., Reflection: Leadership Journey'}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Content Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {lesson.type === 'reflection' ? 'Learner Guidance' : 'Content Description'}
+                </label>
                 <textarea
                   value={lesson.content.description || ''}
                   onChange={(e) => updateLesson(moduleId, lesson.id, {
-                    content: { ...lesson.content, description: e.target.value }
+                    content: { ...lesson.content, description: e.target.value, instructions: e.target.value }
                   })}
                   rows={3}
-                  placeholder="Brief description of this content section..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Main Content</label>
-                <textarea
-                  value={lesson.content.textContent ?? lesson.content.content ?? ''}
-                  onChange={(e) =>
-                    updateLesson(moduleId, lesson.id, {
-                      content: {
-                        ...lesson.content,
-                        content: e.target.value,
-                        textContent: e.target.value,
-                      },
-                    })
+                  placeholder={
+                    lesson.type === 'reflection'
+                      ? 'Optional guidance to help learners frame their response...'
+                      : 'Brief description of this content section...'
                   }
-                  rows={6}
-                  placeholder="Enter the main content, reading material, or instructions..."
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  This content will be displayed to learners. Modules can publish with text-only lessons as long as this section includes the learner-facing material.
-                </p>
               </div>
 
+              {lesson.type === 'text' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Main Content</label>
+                  <textarea
+                    value={lesson.content.textContent ?? lesson.content.content ?? ''}
+                    onChange={(e) =>
+                      updateLesson(moduleId, lesson.id, {
+                        content: {
+                          ...lesson.content,
+                          content: e.target.value,
+                          textContent: e.target.value,
+                        },
+                      })
+                    }
+                    rows={6}
+                    placeholder="Enter the main content, reading material, or instructions..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    This content will be displayed to learners. Modules can publish with text-only lessons as long as this section includes the learner-facing material.
+                  </p>
+                </div>
+              )}
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Reflection Prompt (Optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {lesson.type === 'reflection' ? 'Reflection Prompt' : 'Reflection Prompt (Optional)'}
+                </label>
                 <textarea
-                  value={lesson.content.reflectionPrompt || ''}
+                  value={lesson.content.prompt ?? lesson.content.reflectionPrompt ?? ''}
                   onChange={(e) => updateLesson(moduleId, lesson.id, {
-                    content: { ...lesson.content, reflectionPrompt: e.target.value }
+                    content: {
+                      ...lesson.content,
+                      prompt: e.target.value,
+                      reflectionPrompt: e.target.value,
+                      collectResponse: lesson.type === 'reflection' ? true : (lesson.content.collectResponse ?? lesson.content.allowReflection ?? Boolean(e.target.value)),
+                      allowReflection: lesson.type === 'reflection' ? true : (lesson.content.allowReflection ?? Boolean(e.target.value)),
+                    }
                   })}
                   rows={4}
                   placeholder="What questions do you want learners to reflect on? e.g., 'How will you apply these concepts in your leadership role?'"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  If provided, learners will see a reflection area where they can write and save their thoughts.
+                  {lesson.type === 'reflection'
+                    ? 'Reflection lessons require a prompt. Learners will see this question prominently above their response area.'
+                    : 'If provided, learners will see a reflection area where they can write and save their thoughts.'}
                 </p>
               </div>
 
@@ -5043,13 +5063,20 @@ const scheduleAutosave = useCallback(
                   <label className="flex items-center space-x-2">
                     <input
                       type="checkbox"
-                      checked={lesson.content.allowReflection || false}
+                      checked={lesson.type === 'reflection' ? true : (lesson.content.collectResponse || lesson.content.allowReflection || false)}
                       onChange={(e) => updateLesson(moduleId, lesson.id, {
-                        content: { ...lesson.content, allowReflection: e.target.checked }
+                        content: {
+                          ...lesson.content,
+                          collectResponse: e.target.checked,
+                          allowReflection: e.target.checked,
+                        }
                       })}
                       className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                      disabled={lesson.type === 'reflection'}
                     />
-                    <span className="text-sm text-gray-700">Enable reflection area for learners</span>
+                    <span className={`text-sm ${lesson.type === 'reflection' ? 'text-gray-500' : 'text-gray-700'}`}>
+                      {lesson.type === 'reflection' ? 'Response collection is enabled for reflection lessons' : 'Enable reflection area for learners'}
+                    </span>
                   </label>
                 </div>
 
@@ -5062,9 +5089,9 @@ const scheduleAutosave = useCallback(
                         content: { ...lesson.content, requireReflection: e.target.checked }
                       })}
                       className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                      disabled={!lesson.content.allowReflection}
+                      disabled={!(lesson.type === 'reflection' || lesson.content.collectResponse || lesson.content.allowReflection)}
                     />
-                    <span className={`text-sm ${!lesson.content.allowReflection ? 'text-gray-400' : 'text-gray-700'}`}>
+                    <span className={`text-sm ${!(lesson.type === 'reflection' || lesson.content.collectResponse || lesson.content.allowReflection) ? 'text-gray-400' : 'text-gray-700'}`}>
                       Require reflection to complete lesson
                     </span>
                   </label>

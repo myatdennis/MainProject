@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-08T14:58:19.954Z",
+        "published_at": "2026-04-08T16:33:55.462Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -155,7 +155,23 @@
   ],
   "surveys": [],
   "surveyAssignments": [],
-  "lessonReflections": [],
+  "lessonReflections": [
+    [
+      "demo-sandbox-org:e2e-course-1775666037176:3712326c-18c4-4e7b-afcf-40ae07282499:1d07d6b0-810f-4fb8-b5dd-276c06aa3990",
+      {
+        "id": "reflection-mnq9pnlk-7ao8c8",
+        "organization_id": "demo-sandbox-org",
+        "course_id": "e2e-course-1775666037176",
+        "module_id": "1f0d3d0a-9fc6-48a7-aa93-144760053245",
+        "lesson_id": "3712326c-18c4-4e7b-afcf-40ae07282499",
+        "user_id": "1d07d6b0-810f-4fb8-b5dd-276c06aa3990",
+        "response_text": "I will apply this in my next team retrospective.",
+        "status": "draft",
+        "created_at": "2026-04-08T16:33:57.944Z",
+        "updated_at": "2026-04-08T16:33:57.944Z"
+      }
+    ]
+  ],
   "huddlePosts": [],
   "huddleComments": [],
   "huddleReactions": [],

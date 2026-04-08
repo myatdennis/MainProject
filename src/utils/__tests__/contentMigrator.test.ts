@@ -54,6 +54,8 @@ describe('migrateLessonContent', () => {
     expect(out.schema_version).toBe(CURRENT_CONTENT_SCHEMA_VERSION);
     expect(out.type).toBe('reflection');
     expect(out.prompt).toBe('How did this make you feel?');
+    expect(out.collectResponse).toBe(true);
+    expect(out.allowReflection).toBe(true);
   });
 
   it('normalizes interactive activity shapes', () => {

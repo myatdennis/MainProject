@@ -280,13 +280,9 @@ const hasDocumentSource = (lesson) => {
 const hasReflectionContent = (lesson) => {
   const content = lesson?.content || {};
   const candidates = [
-    content.textContent,
-    content.content,
-    content.notes,
     content.reflectionPrompt,
     content.question,
     content.prompt,
-    content.instructions,
   ];
   return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
 };
