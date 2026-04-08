@@ -12573,6 +12573,8 @@ const normalizeKeyTakeawaysInput = (input) => {
   return [];
 };
 
+const ADMIN_COURSE_UPSERT_MAX_PAYLOAD_BYTES = Number(process.env.ADMIN_COURSE_UPSERT_MAX_PAYLOAD_BYTES || 8 * 1024 * 1024);
+
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
   const upsertStartedAt = Date.now();
@@ -12587,6 +12589,22 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     sendApiError(res, 400, 'invalid_course_id', 'Course ID must be a UUID.', {
       meta: { requestId: req.requestId ?? null },
     });
+    return;
+  }
+  if (typeof requestPayloadSize === 'number' && requestPayloadSize > ADMIN_COURSE_UPSERT_MAX_PAYLOAD_BYTES) {
+    sendApiError(
+      res,
+      413,
+      'payload_too_large',
+      `Course save payload exceeds ${(ADMIN_COURSE_UPSERT_MAX_PAYLOAD_BYTES / (1024 * 1024)).toFixed(1)}MB limit.`,
+      {
+        details: {
+          payloadSize: requestPayloadSize,
+          maxPayloadSize: ADMIN_COURSE_UPSERT_MAX_PAYLOAD_BYTES,
+        },
+        meta: { requestId: req.requestId ?? null },
+      },
+    );
     return;
   }
   req.body = req.body || {};
@@ -13559,13 +13577,13 @@ app.put('/api/admin/courses/:id', authenticate, requireOrgAdmin, asyncHandler(as
     return;
   }
   const courseId = resolvedCourseId;
-  if (!isUuid(id) && !isFallbackMode) {
+  if (!isUuid(courseId) && !isFallbackMode) {
     sendApiError(res, 400, 'invalid_course_id', 'Course ID must be a UUID.', {
       meta: { requestId: req.requestId ?? null },
     });
     return;
   }
-  await handleAdminCourseUpsert(req, res, { courseIdFromParams: id });
+  await handleAdminCourseUpsert(req, res, { courseIdFromParams: courseId });
 }));
 
 // Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)

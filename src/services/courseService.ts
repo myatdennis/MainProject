@@ -187,6 +187,20 @@ const hasServerAssignedCourseId = (value?: string | null): value is string => {
   return isUuid(value);
 };
 
+const COURSE_UPSERT_MAX_PAYLOAD_BYTES = Number(import.meta.env.VITE_ADMIN_COURSE_UPSERT_MAX_BYTES ?? 8 * 1024 * 1024);
+
+const estimateJsonPayloadBytes = (value: unknown): number => {
+  try {
+    const serialized = JSON.stringify(value ?? {});
+    if (typeof TextEncoder !== 'undefined') {
+      return new TextEncoder().encode(serialized).length;
+    }
+    return serialized.length;
+  } catch {
+    return 0;
+  }
+};
+
 const formatZodIssues = (error: ZodError, context: string): string[] => {
   return error.issues.map((issue) => {
     const path = issue.path && issue.path.length > 0 ? `${context}.${issue.path.join('.')}` : context;
@@ -610,7 +624,6 @@ export class CourseService {
           order_index: canonicalLesson.order ?? lessonIndex,
           duration_s: durationSeconds,
           content_json: content,
-          content,
           // Only attach course_id when the course is already persisted (UUID confirmed).
           ...(courseId ? { course_id: courseId } : {}),
           // Always propagate module_id so the server can link the lesson without guessing.
@@ -721,6 +734,15 @@ export class CourseService {
 
     const endpoint = isCreateOperation ? '/api/admin/courses' : `/api/admin/courses/${course.id}`;
     const method = isCreateOperation ? 'POST' : 'PUT';
+    const payloadSizeBytes = estimateJsonPayloadBytes(parsedBody);
+
+    if (payloadSizeBytes > COURSE_UPSERT_MAX_PAYLOAD_BYTES) {
+      const payloadSizeMb = (payloadSizeBytes / (1024 * 1024)).toFixed(1);
+      const maxMb = (COURSE_UPSERT_MAX_PAYLOAD_BYTES / (1024 * 1024)).toFixed(1);
+      throw new CourseValidationError('course', [
+        `Course save payload is too large (${payloadSizeMb}MB). Reduce large media/transcript content and try again (max ${maxMb}MB).`,
+      ]);
+    }
 
     let lastServerCourse: SupabaseCourseRecord | null = null;
 

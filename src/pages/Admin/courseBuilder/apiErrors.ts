@@ -32,6 +32,12 @@ export const extractApiErrorInfo = (error: unknown): ApiErrorInfo | null => {
 };
 
 export const formatApiErrorToast = (info: ApiErrorInfo, context: string): string => {
+  const normalizedCode = (info.code || '').toLowerCase();
+  const isPayloadTooLarge = info.status === 413 || normalizedCode === 'payload_too_large';
+  if (isPayloadTooLarge) {
+    return `${context} paused: this draft is too large to sync right now. Remove oversized media/transcript content and try again.`;
+  }
+
   const parts: string[] = [];
   if (info.status) {
     parts.push(String(info.status));

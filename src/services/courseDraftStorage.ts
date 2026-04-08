@@ -30,17 +30,44 @@ const DB_NAME = 'huddle_course_drafts';
 const STORE_NAME = 'course_drafts';
 const DB_VERSION = 1;
 const LOCAL_FALLBACK_PREFIX = 'huddle.courseDraft.';
+const LOCAL_FALLBACK_MAX_BYTES = 450_000;
 
 const memoryDrafts = new Map<string, DraftSnapshot>();
+const localFallbackOversizeSuppressed = new Set<string>();
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 const hasIndexedDb = () => typeof indexedDB !== 'undefined' && typeof window !== 'undefined';
 const hasLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
+const estimateSerializedSize = (serialized: string): number => {
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(serialized).length;
+  }
+  return serialized.length;
+};
+
 const writeLocalFallback = (record: DraftSnapshot) => {
   if (!hasLocalStorage()) return;
   try {
-    window.localStorage.setItem(`${LOCAL_FALLBACK_PREFIX}${record.id}`, JSON.stringify(record));
+    const serialized = JSON.stringify(record);
+    const bytes = estimateSerializedSize(serialized);
+    const key = `${LOCAL_FALLBACK_PREFIX}${record.id}`;
+
+    if (bytes > LOCAL_FALLBACK_MAX_BYTES) {
+      window.localStorage.removeItem(key);
+      if (!localFallbackOversizeSuppressed.has(record.id)) {
+        console.warn('[courseDraftStorage] Skipping oversized localStorage fallback snapshot', {
+          courseId: record.id,
+          bytes,
+          maxBytes: LOCAL_FALLBACK_MAX_BYTES,
+        });
+        localFallbackOversizeSuppressed.add(record.id);
+      }
+      return;
+    }
+
+    window.localStorage.setItem(key, serialized);
+    localFallbackOversizeSuppressed.delete(record.id);
   } catch (error) {
     console.warn('[courseDraftStorage] Failed to write localStorage fallback:', error);
   }
@@ -217,6 +244,7 @@ const readRecord = async (courseId: string): Promise<DraftSnapshot | null> => {
 
 const deleteRecord = async (courseId: string): Promise<void> => {
   memoryDrafts.delete(courseId);
+  localFallbackOversizeSuppressed.delete(courseId);
   deleteLocalFallback(courseId);
 
   if (!hasIndexedDb()) {

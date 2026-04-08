@@ -185,6 +185,17 @@ const generateStableLessonId = (): string => {
 
 const toMegabytes = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(0);
 
+const isPayloadTooLargeMessage = (message?: string | null): boolean => {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('payload_too_large') ||
+    normalized.includes('payload too large') ||
+    (normalized.includes('payload') && normalized.includes('exceed')) ||
+    (normalized.includes('too large') && normalized.includes('payload'))
+  );
+};
+
 const buildClearedVideoContent = (
   content?: LessonContent,
   sourceType?: LessonContent['videoSourceType'],
@@ -2239,6 +2250,7 @@ const scheduleAutosave = useCallback(
   );
   const hasUnsavedChanges = hasPendingChanges || draftRevisionState.localRevision > draftRevisionState.lastSavedLocalRevision;
   const isOfflineMode = !isOnline || saveErrorMessage === 'Offline — changes stored locally';
+  const showPayloadLearnMore = isPayloadTooLargeMessage(saveErrorMessage);
   const eliteSaveLabel = saveStatus === 'saving'
     ? 'Saving...'
     : saveStatus === 'error'
@@ -2816,7 +2828,9 @@ const scheduleAutosave = useCallback(
         return;
       }
       if (error instanceof CourseValidationError) {
-        setSaveErrorMessage('Save failed');
+        const validationMessage =
+          error.issues.find((issue) => typeof issue === 'string' && issue.trim().length > 0) ?? 'Save failed';
+        setSaveErrorMessage(validationMessage);
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
         const details = mapValidationErrorDetails(error, 'local.validation');
@@ -5693,6 +5707,21 @@ const scheduleAutosave = useCallback(
                   className="rounded border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50"
                 >
                   Retry
+                </button>
+              )}
+              {saveStatus === 'error' && showPayloadLearnMore && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    showToast(
+                      'This draft is over the sync size limit. Trim long transcript text or embedded/base64 media, then retry. Uploaded files should stay as linked URLs.',
+                      'info',
+                      9000,
+                    );
+                  }}
+                  className="rounded border border-blue-200 px-2 py-1 text-blue-700 hover:bg-blue-50"
+                >
+                  Learn more
                 </button>
               )}
             </div>
