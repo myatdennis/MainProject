@@ -59,6 +59,8 @@ import { progressService } from '../../dal/progress';
 import GuidedReflectionFlow from './GuidedReflectionFlow';
 import LearnerSurveyLesson from './LearnerSurveyLesson';
 
+const ScenarioLesson = React.lazy(() => import('./ScenarioLesson'));
+
 const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
 const AUTOPLAY_NEXT_PREF_KEY = 'courseplayer:autoplay-next-enabled';
 const PROGRESS_SYNC_DEBOUNCE_MS = 4000;
@@ -276,6 +278,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const nextLesson = currentLesson && course ? getNextLesson(currentLesson, course) : null;
   const canGoPrevious = Boolean(previousLesson);
   const canGoNext = Boolean(nextLesson);
+  const isReflectionLessonLayout = currentLesson?.type === 'reflection';
 
   const calculateOverallPercent = useCallback(
     (progressMap: Record<string, number>, completedSet: Set<string>) => {
@@ -1682,73 +1685,168 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
               );
             })()}
 
-            <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-              <div className="space-y-6">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="font-heading text-2xl font-semibold text-charcoal">{currentLesson.title}</h2>
-                    {currentLesson.description && (
-                      <p className="mt-1 text-sm text-slate/80">{currentLesson.description}</p>
-                    )}
+            {isReflectionLessonLayout ? (
+              <div className="p-6">
+                <div className="mx-auto w-full max-w-[900px] space-y-8">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <h2 className="font-heading text-3xl font-bold leading-tight text-charcoal sm:text-4xl">
+                        {currentLesson.title}
+                      </h2>
+                      {currentLesson.description && (
+                        <p className="mt-2 text-[15px] leading-7 text-slate/75 sm:text-base">
+                          {currentLesson.description}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <IconToggle onClick={addBookmark} icon={<Bookmark className="h-4 w-4" />} label="Bookmark lesson" />
+                      <IconToggle onClick={() => setShowNotes(!showNotes)} icon={<MessageCircle className="h-4 w-4" />} label="Toggle notes" active={showNotes} />
+                      <IconToggle onClick={() => setShowTranscript(!showTranscript)} icon={<FileText className="h-4 w-4" />} label="Toggle transcript" active={showTranscript} />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <IconToggle onClick={addBookmark} icon={<Bookmark className="h-4 w-4" />} label="Bookmark lesson" />
-                    <IconToggle onClick={() => setShowNotes(!showNotes)} icon={<MessageCircle className="h-4 w-4" />} label="Toggle notes" active={showNotes} />
-                    <IconToggle onClick={() => setShowTranscript(!showTranscript)} icon={<FileText className="h-4 w-4" />} label="Toggle transcript" active={showTranscript} />
+
+                  <LessonContent
+                    lesson={currentLesson}
+                    courseId={course.id}
+                    learnerId={learnerId}
+                    onComplete={() => void markLessonComplete()}
+                    onSubmitAndAdvance={
+                      currentLesson ? () => completeLessonAndAdvance(currentLesson) : undefined
+                    }
+                    onShowQuizModal={setShowQuizModal}
+                  />
+
+                  {showTranscript && currentLesson.content.transcript && (
+                    <TranscriptPanel transcript={currentLesson.content.transcript} currentTime={currentTime} onSeek={handleSeek} />
+                  )}
+
+                  {showNotes && (
+                    <NotesPanel
+                      notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
+                      bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
+                      noteText={noteText}
+                      onNoteTextChange={setNoteText}
+                      onAddNote={addNote}
+                    />
+                  )}
+
+                  <div className="flex flex-col gap-4 border-t border-mist/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-mist bg-white px-3 py-2 text-xs text-slate/80 sm:text-sm">
+                      <span>Autoplay next lesson</span>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-mist text-skyblue focus:ring-skyblue"
+                        checked={autoplayNextLesson}
+                        onChange={(event) => setAutoplayNextLesson(event.target.checked)}
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => navigateLesson('prev')}
+                        disabled={!canGoPrevious}
+                        leadingIcon={<ArrowLeft className="h-4 w-4" />}
+                      >
+                        Back
+                      </Button>
+                      <Button
+                        onClick={() => navigateLesson('next')}
+                        disabled={!canGoNext}
+                        trailingIcon={<ArrowRight className="h-4 w-4" />}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        variant="success"
+                        onClick={() => void markLessonComplete()}
+                        leadingIcon={<CheckCircle className="h-4 w-4" />}
+                      >
+                        Mark complete
+                      </Button>
+                    </div>
                   </div>
+
+                  {nextLesson && (
+                    <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-skyblue">Up next</p>
+                      <p className="mt-2 text-sm font-semibold text-charcoal">{nextLesson.title}</p>
+                      <p className="mt-1 text-xs text-slate/70">
+                        {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next” anytime to keep momentum.'}
+                      </p>
+                    </Card>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+                <div className="space-y-6">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-heading text-2xl font-semibold text-charcoal">{currentLesson.title}</h2>
+                      {currentLesson.description && (
+                        <p className="mt-1 text-sm text-slate/80">{currentLesson.description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <IconToggle onClick={addBookmark} icon={<Bookmark className="h-4 w-4" />} label="Bookmark lesson" />
+                      <IconToggle onClick={() => setShowNotes(!showNotes)} icon={<MessageCircle className="h-4 w-4" />} label="Toggle notes" active={showNotes} />
+                      <IconToggle onClick={() => setShowTranscript(!showTranscript)} icon={<FileText className="h-4 w-4" />} label="Toggle transcript" active={showTranscript} />
+                    </div>
+                  </div>
+
+                  <LessonContent
+                    lesson={currentLesson}
+                    courseId={course.id}
+                    learnerId={learnerId}
+                    onComplete={() => void markLessonComplete()}
+                    onSubmitAndAdvance={
+                      currentLesson ? () => completeLessonAndAdvance(currentLesson) : undefined
+                    }
+                    onShowQuizModal={setShowQuizModal}
+                  />
+
+                  {showTranscript && currentLesson.content.transcript && (
+                    <TranscriptPanel transcript={currentLesson.content.transcript} currentTime={currentTime} onSeek={handleSeek} />
+                  )}
                 </div>
 
-                <LessonContent
-                  lesson={currentLesson}
-                  courseId={course.id}
-                  learnerId={learnerId}
-                  onComplete={() => void markLessonComplete()}
-                  onSubmitAndAdvance={
-                    currentLesson ? () => completeLessonAndAdvance(currentLesson) : undefined
-                  }
-                  onShowQuizModal={setShowQuizModal}
-                />
+                <div className="space-y-6">
+                  {nextLesson && (
+                    <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
+                      <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Next step</p>
+                      <p className="mt-2 text-sm font-semibold text-charcoal">Up next: {nextLesson.title}</p>
+                      <p className="mt-1 text-xs text-slate/70">
+                        {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next lesson” anytime to keep momentum.'}
+                      </p>
+                      <Button size="sm" className="mt-3" onClick={() => navigateLesson('next')}>
+                        Start next lesson
+                      </Button>
+                    </Card>
+                  )}
 
-                {showTranscript && currentLesson.content.transcript && (
-                  <TranscriptPanel transcript={currentLesson.content.transcript} currentTime={currentTime} onSeek={handleSeek} />
-                )}
-              </div>
+                  {showNotes && (
+                    <NotesPanel
+                      notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
+                      bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
+                      noteText={noteText}
+                      onNoteTextChange={setNoteText}
+                      onAddNote={addNote}
+                    />
+                  )}
 
-              <div className="space-y-6">
-                {nextLesson && (
-                  <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Next step</p>
-                    <p className="mt-2 text-sm font-semibold text-charcoal">Up next: {nextLesson.title}</p>
-                    <p className="mt-1 text-xs text-slate/70">
-                      {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next lesson” anytime to keep momentum.'}
-                    </p>
-                    <Button size="sm" className="mt-3" onClick={() => navigateLesson('next')}>
-                      Start next lesson
-                    </Button>
-                  </Card>
-                )}
-
-                {showNotes && (
-                  <NotesPanel
-                    notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
-                    bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
-                    noteText={noteText}
-                    onNoteTextChange={setNoteText}
-                    onAddNote={addNote}
+                  <NavigationPanel
+                    onPrevious={() => navigateLesson('prev')}
+                    onNext={() => navigateLesson('next')}
+                    canGoPrevious={canGoPrevious}
+                    canGoNext={canGoNext}
+                    onMarkComplete={() => void markLessonComplete()}
+                    autoplayNextLesson={autoplayNextLesson}
+                    onAutoplayNextLessonChange={setAutoplayNextLesson}
                   />
-                )}
-
-                <NavigationPanel
-                  onPrevious={() => navigateLesson('prev')}
-                  onNext={() => navigateLesson('next')}
-                  canGoPrevious={canGoPrevious}
-                  canGoNext={canGoNext}
-                  onMarkComplete={() => void markLessonComplete()}
-                  autoplayNextLesson={autoplayNextLesson}
-                  onAutoplayNextLessonChange={setAutoplayNextLesson}
-                />
+                </div>
               </div>
-            </div>
+            )}
           </Card>
         </div>
       </div>
@@ -2417,49 +2515,21 @@ const LessonContent: React.FC<{
   }
 
   if (lessonType === 'scenario') {
-    const scenarioText = lesson.content.scenarioText || lesson.content.textContent || lesson.description || '';
-    const options = lesson.content.options || [];
-    
+    if (!courseId || !lesson?.id) {
+      return renderFallback('Scenario lesson unavailable. Please check back later.');
+    }
+
     return (
-      <div className="space-y-6">
-        <Card className="p-6">
-          <h3 className="font-heading text-xl font-bold text-charcoal mb-4">
-            Scenario: {lesson.title}
-          </h3>
-          
-          {scenarioText && (
-            <div className="prose max-w-none mb-6 p-4 bg-sky-50 rounded-lg border border-sky-100">
-              <div dangerouslySetInnerHTML={{ __html: scenarioText }} />
-            </div>
-          )}
-          
-          {options.length > 0 && (
-            <div className="space-y-4">
-              <h4 className="font-semibold text-charcoal">What would you do?</h4>
-              {options.map((option: any, index: number) => (
-                <Card 
-                  key={index} 
-                  className={cn(
-                    'p-4 cursor-pointer transition-colors',
-                    option.isCorrect ? 'border-forest bg-forest/5 hover:bg-forest/10' : 'hover:border-skyblue'
-                  )}
-                >
-                  <p className="font-medium text-charcoal mb-2">{option.text}</p>
-                  {option.feedback && (
-                    <p className="text-sm text-slate/70 italic">{option.feedback}</p>
-                  )}
-                </Card>
-              ))}
-            </div>
-          )}
-          
-          <div className="mt-6 flex justify-end">
-            <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
-              Complete Scenario
-            </Button>
-          </div>
-        </Card>
-      </div>
+      <React.Suspense fallback={<LoadingSpinner className="mx-auto my-10" />}>
+        <ScenarioLesson
+          courseId={courseId}
+          learnerId={learnerId}
+          lessonId={lesson.id}
+          lessonTitle={lesson.title}
+          lessonContent={lesson.content as Record<string, unknown>}
+          onComplete={onSubmitAndAdvance ?? onComplete}
+        />
+      </React.Suspense>
     );
   }
 

@@ -29,6 +29,10 @@ export type EventType =
   | 'course_started' | 'course_resumed' | 'course_completed' | 'course_abandoned'
   // Lesson Events  
   | 'lesson_started' | 'lesson_completed' | 'lesson_paused' | 'lesson_replay'
+  // Scenario Events
+  | 'scenario_started' | 'scenario_decision' | 'scenario_completed'
+  // Reflection Events
+  | 'reflection_saved'
   // Video Events
   | 'video_play' | 'video_pause' | 'video_seek' | 'video_speed_change' | 'video_fullscreen'
   // Engagement Events

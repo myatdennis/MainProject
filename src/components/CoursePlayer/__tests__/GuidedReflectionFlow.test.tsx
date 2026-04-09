@@ -72,17 +72,23 @@ describe('GuidedReflectionFlow', () => {
     await user.click(screen.getByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
 
-    await user.type(await screen.findByPlaceholderText('Write your initial thoughts here…'), 'Initial reflection');
+    await user.type(
+      await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...'),
+      'Initial reflection',
+    );
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(1), { timeout: 2500 });
 
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(await screen.findByPlaceholderText('Write a deeper reflection here…'), 'Depth one');
+    await user.type(await screen.findByPlaceholderText('Write a deeper reflection here...'), 'Depth one');
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(2), { timeout: 2500 });
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(await screen.findByPlaceholderText('Write a deeper reflection here…'), 'Depth two');
+    await user.type(await screen.findByPlaceholderText('Write a deeper reflection here...'), 'Depth two');
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(3), { timeout: 2500 });
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(await screen.findByPlaceholderText('Describe one action you can take moving forward…'), 'One action');
+    await user.type(
+      await screen.findByPlaceholderText('Describe one action you can take moving forward...'),
+      'One action',
+    );
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(4), { timeout: 2500 });
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
@@ -158,7 +164,7 @@ describe('GuidedReflectionFlow', () => {
     await user.click(screen.getByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
 
-    const input = await screen.findByPlaceholderText('Write your initial thoughts here…');
+    const input = await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...');
     await user.type(input, 'Initial reflection');
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(1), { timeout: 2500 });
 
@@ -234,7 +240,10 @@ describe('GuidedReflectionFlow', () => {
 
     await user.click(await screen.findByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
-    await user.type(await screen.findByPlaceholderText('Write your initial thoughts here…'), 'Initial reflection');
+    await user.type(
+      await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...'),
+      'Initial reflection',
+    );
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(1), { timeout: 2500 });
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));

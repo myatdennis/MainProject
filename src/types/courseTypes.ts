@@ -198,6 +198,7 @@ export interface LessonContent {
   currentScenarioId?: string; // For tracking scenario state
   userChoices?: Record<string, any>; // For storing user choices in scenarios
   completedElements?: string[]; // For tracking completed elements
+  scenario?: any;
   
   // Quiz settings
   passingScore?: number; // For quiz lessons

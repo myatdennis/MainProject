@@ -28,7 +28,7 @@ type GuidedReflectionFlowProps = {
 type StepDefinition =
   | { id: 'intro'; title: string; subtitle: string }
   | { id: 'prompt'; title: string; subtitle: string }
-  | { id: 'initial'; title: string; subtitle: string; field: 'promptResponse'; label: 'Your initial thoughts'; placeholder: 'Write your initial thoughts here…' }
+  | { id: 'initial'; title: string; subtitle: string; field: 'promptResponse'; label: 'Your reflection'; placeholder: 'Take a moment to reflect and write your thoughts here...' }
   | {
       id: 'deepen-1' | 'deepen-2' | 'deepen-3';
       title: string;
@@ -125,8 +125,8 @@ const GuidedReflectionFlow = ({
         title: 'Your Initial Thoughts',
         subtitle: 'Start with what feels most true right now.',
         field: 'promptResponse',
-        label: 'Your initial thoughts',
-        placeholder: 'Write your initial thoughts here…',
+        label: 'Your reflection',
+        placeholder: 'Take a moment to reflect and write your thoughts here...',
       },
       ...deepenPrompts.map((prompt, index) => {
         const stepId = (`deepen-${index + 1}` as 'deepen-1' | 'deepen-2' | 'deepen-3');
@@ -137,7 +137,7 @@ const GuidedReflectionFlow = ({
           subtitle: 'Stay curious. Let the next layer come into focus.',
           field,
           prompt,
-          placeholder: 'Write a deeper reflection here…',
+          placeholder: 'Write a deeper reflection here...',
         };
       }),
       {
@@ -146,7 +146,7 @@ const GuidedReflectionFlow = ({
         subtitle: 'Name one practical step you can carry forward.',
         field: 'actionCommitment',
         prompt: config.actionPrompt,
-        placeholder: 'Describe one action you can take moving forward…',
+        placeholder: 'Describe one action you can take moving forward...',
       },
       { id: 'review', title: 'Review & Submit', subtitle: 'Look back over your reflection before you submit it.' },
       { id: 'confirmation', title: 'Reflection Saved', subtitle: config.confirmationMessage },
@@ -175,6 +175,7 @@ const GuidedReflectionFlow = ({
   const lastInputEventRef = useRef<string | null>(null);
   const [manualSaving, setManualSaving] = useState(false);
   const saveDelayMs = 1000;
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const currentStepIndex = Math.max(0, baseSteps.findIndex((step) => step.id === currentStepId));
   const currentStep = baseSteps[currentStepIndex] ?? baseSteps[0];
@@ -193,6 +194,10 @@ const GuidedReflectionFlow = ({
 
   const canSubmit = !required || reflectionData.promptResponse.trim().length > 0;
   const hasPendingChanges = hydratedRef.current && JSON.stringify(reflectionData) !== syncedSerializedRef.current;
+  const currentEditableValue = useMemo(() => {
+    if (!('field' in currentStep) || !currentStep.field) return '';
+    return reflectionData[currentStep.field] ?? '';
+  }, [currentStep, reflectionData]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -485,17 +490,31 @@ const GuidedReflectionFlow = ({
       ? 'Advancing…'
       : 'Ready';
 
+  const autosizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const minHeight = 220;
+    el.style.height = '0px';
+    const nextHeight = Math.max(minHeight, el.scrollHeight);
+    el.style.height = `${nextHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    if (!('field' in currentStep)) return;
+    autosizeTextarea();
+  }, [autosizeTextarea, currentEditableValue, currentStepId]);
+
   const renderStepBody = () => {
     if (currentStep.id === 'intro') {
       return (
-        <div className="space-y-6 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-skyblue/10 text-skyblue">
-            <Sparkles className="h-7 w-7" />
+        <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+          <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-skyblue/10 text-skyblue">
+            <Sparkles className="h-6 w-6" />
           </div>
           <div className="space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-skyblue">Guided Reflection</p>
-            <h3 className="font-heading text-3xl font-bold text-charcoal">{lessonTitle}</h3>
-            <p className="mx-auto max-w-2xl text-base leading-8 text-slate/80">{currentStep.subtitle}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-skyblue">Guided Reflection</p>
+            <h3 className="font-heading text-3xl font-bold leading-tight text-charcoal sm:text-4xl">{lessonTitle}</h3>
+            <p className="max-w-none text-[17px] leading-8 text-slate/80">{currentStep.subtitle}</p>
           </div>
         </div>
       );
@@ -503,14 +522,23 @@ const GuidedReflectionFlow = ({
 
     if (currentStep.id === 'prompt') {
       return (
-        <div className="space-y-6 text-center">
-          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-skyblue">Reflection Prompt</p>
-          <div className="mx-auto max-w-4xl">
-            <p className="text-3xl font-semibold leading-[1.45] text-charcoal sm:text-4xl">{config.prompt}</p>
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate/60">Reflection prompt</p>
+            <h3 className="font-heading text-3xl font-bold leading-tight text-charcoal sm:text-4xl">
+              {currentStep.title}
+            </h3>
+            <p className="text-[17px] leading-8 text-slate/75">{currentStep.subtitle}</p>
           </div>
-         <p className="mx-auto max-w-2xl text-base leading-8 text-slate/75">{currentStep.subtitle}</p>
-         {config.instructions && <p className="mx-auto max-w-2xl text-sm leading-7 text-slate/65">{config.instructions}</p>}
-       </div>
+          <div className="rounded-2xl border border-mist bg-slate-50/70 p-5 sm:p-6">
+            <p className="text-[18px] font-semibold leading-8 text-charcoal sm:text-xl sm:leading-9">
+              {config.prompt}
+            </p>
+            {config.instructions && (
+              <p className="mt-4 text-sm leading-7 text-slate/70">{config.instructions}</p>
+            )}
+          </div>
+        </div>
       );
     }
 
@@ -521,7 +549,7 @@ const GuidedReflectionFlow = ({
             <div key={section.label} className="rounded-2xl border border-slate/15 bg-white/80 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate/60">{section.label}</p>
               {'prompt' in section && section.prompt && <p className="mt-2 text-sm text-slate/70">{section.prompt}</p>}
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-charcoal">
+              <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-charcoal">
                 {section.value?.trim() ? section.value : 'No response yet.'}
               </p>
             </div>
@@ -532,14 +560,16 @@ const GuidedReflectionFlow = ({
 
     if (currentStep.id === 'confirmation') {
       return (
-        <div className="space-y-6 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+        <div className="space-y-6">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <div className="space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-emerald-600">Reflection Saved</p>
-            <h3 className="font-heading text-3xl font-bold text-charcoal">You captured something meaningful.</h3>
-            <p className="mx-auto max-w-2xl text-base leading-8 text-slate/80">{config.confirmationMessage}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Reflection saved</p>
+            <h3 className="font-heading text-3xl font-bold leading-tight text-charcoal sm:text-4xl">
+              You captured something meaningful.
+            </h3>
+            <p className="text-[17px] leading-8 text-slate/80">{config.confirmationMessage}</p>
             {advancing && <p className="text-sm font-medium text-slate/65">Taking you to the next lesson…</p>}
             {saveState === 'error' && saveError && <p className="text-sm font-medium text-red-600">{saveError}</p>}
           </div>
@@ -553,33 +583,48 @@ const GuidedReflectionFlow = ({
     const placeholder = 'placeholder' in currentStep ? currentStep.placeholder : '';
 
     return (
-      <div className="space-y-5">
+      <div className="space-y-6">
+        {config.prompt && (
+          <div className="rounded-2xl border border-mist bg-slate-50/70 p-5 sm:p-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate/60">Reflection prompt</p>
+            <p className="mt-3 text-[17px] font-semibold leading-8 text-charcoal sm:text-lg sm:leading-9">
+              {config.prompt}
+            </p>
+          </div>
+        )}
+
         <div className="space-y-3">
-          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-skyblue">{label}</p>
-          {prompt && <p className="text-2xl font-semibold leading-10 text-charcoal">{prompt}</p>}
-          <p className="text-sm leading-7 text-slate/70">{currentStep.subtitle}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate/60">{label}</p>
+          {prompt && <p className="text-xl font-semibold leading-8 text-charcoal sm:text-2xl sm:leading-9">{prompt}</p>}
+          <p className="text-[15px] leading-7 text-slate/75">{currentStep.subtitle}</p>
         </div>
         <textarea
           value={fieldValue}
-          onChange={(event) => updateField(currentStep.field, event.target.value)}
-          rows={currentStep.id === 'action' ? 8 : 10}
+          onChange={(event) => {
+            updateField(currentStep.field, event.target.value);
+            window.requestAnimationFrame(() => autosizeTextarea());
+          }}
+          ref={textareaRef}
+          rows={8}
           placeholder={placeholder}
-          className="min-h-[280px] w-full max-w-full resize-y rounded-[28px] border border-slate/15 bg-white px-6 py-5 text-base leading-8 text-charcoal shadow-sm transition focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/30"
+          className="min-h-[220px] w-full max-w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-4 text-[17px] leading-7 text-charcoal shadow-sm transition focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-600/10"
         />
       </div>
     );
   };
 
   return (
-    <Card tone="muted" className="mt-10 border border-skyblue/15 bg-gradient-to-b from-white to-skyblue/5 p-5 sm:mt-12 sm:p-8 lg:p-10">
-      <div className="mx-auto flex w-full max-w-none flex-col gap-9">
+    <div className="mt-10">
+      <div className="mx-auto w-full max-w-[900px] px-4 sm:px-6">
+        <Card tone="muted" className="border border-mist bg-gradient-to-b from-white to-skyblue/5 p-5 sm:p-8">
+          <div className="flex w-full flex-col gap-9">
         <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate/60">
                 Step {currentStepIndex + 1} of {baseSteps.length}
               </p>
-              <h2 className="mt-1 font-heading text-2xl font-bold text-charcoal">{currentStep.title}</h2>
+              <h2 className="mt-1 font-heading text-3xl font-bold leading-tight text-charcoal">{currentStep.title}</h2>
             </div>
             <div
               className={cn(
@@ -606,7 +651,7 @@ const GuidedReflectionFlow = ({
           </p>
         </div>
 
-        <div className="min-h-[420px] rounded-[32px] border border-white/70 bg-white/92 px-6 py-8 shadow-sm transition-all duration-300 sm:px-10 sm:py-10">
+        <div className="min-h-[420px] rounded-3xl border border-white/70 bg-white/92 px-5 py-7 shadow-sm transition-all duration-300 sm:px-8 sm:py-9">
           {renderStepBody()}
         </div>
 
@@ -681,8 +726,10 @@ const GuidedReflectionFlow = ({
           </div>
         )}
 
+          </div>
+        </Card>
       </div>
-    </Card>
+    </div>
   );
 };
 

@@ -24670,7 +24670,7 @@ app.post(
 );
 
 const REQUIRED_DOCUMENTS_TABLES = [
-  { table: 'documents', columns: ['id', 'name', 'category', 'created_at'] },
+  { table: 'documents', columns: ['id', 'name', 'category', 'created_at', 'visibility'] },
 ];
 const ensureDocumentsSchemaOrRespond = async (res, label) => {
   const requiredStatus = await ensureTablesReady(label, REQUIRED_DOCUMENTS_TABLES);

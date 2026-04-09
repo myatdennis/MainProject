@@ -72,6 +72,7 @@ import AIContentAssistant from '../../components/AIContentAssistant';
 import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
 import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
 import CourseSyncTruthIndicator from '../../components/Admin/CourseSyncTruthIndicator';
+import ScenarioBuilder from '../../components/Admin/ScenarioBuilder';
 import SortableItem from '../../components/SortableItem';
 import Button from '../../components/ui/Button';
 import useIsMobile from '../../hooks/useIsMobile';
@@ -4067,6 +4068,7 @@ const scheduleAutosave = useCallback(
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
             >
               <option value="video">Video</option>
+              <option value="scenario">Scenario Lesson</option>
               <option value="interactive">Interactive Exercise</option>
               <option value="quiz">Quiz</option>
               <option value="document">Download Resource</option>
@@ -4424,6 +4426,17 @@ const scheduleAutosave = useCallback(
                 />
               </div>
             </div>
+          )}
+
+          {lesson.type === 'scenario' && (
+            <ScenarioBuilder
+              value={lesson.content as LessonContent}
+              onChange={(nextContent) =>
+                updateLesson(moduleId, lesson.id, {
+                  content: nextContent,
+                })
+              }
+            />
           )}
 
           {lesson.type === 'interactive' && (
