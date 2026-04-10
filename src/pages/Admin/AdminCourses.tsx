@@ -722,10 +722,10 @@ const AdminCourses = () => {
 
             {/* Course Table */}
             <div className="rounded-[32px] border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="px-6 py-5 border-b border-slate-200 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Courses</h2>
-                  <p className="text-sm text-slate-500">A calm overview of active learning experiences and the next actions you can take.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Courses</h2>
+                  <p className="text-sm text-slate-500 max-w-xl">A calm overview of active learning experiences and the next actions you can take.</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -738,10 +738,10 @@ const AdminCourses = () => {
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200">
+                <table className="min-w-full divide-y divide-slate-200 text-sm text-slate-700">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="text-left py-4 px-6">
+                      <th className="text-left py-5 px-6">
                         <input
                           type="checkbox"
                           checked={selectedCourses.length === filteredCourses.length && filteredCourses.length > 0}
@@ -749,17 +749,17 @@ const AdminCourses = () => {
                           className="h-4 w-4 border-slate-300 rounded focus:ring-skyblue"
                         />
                       </th>
-                      <th className="text-left py-4 px-6 font-semibold text-slate-900">Course</th>
-                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Enrollments</th>
-                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Progress</th>
-                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Status</th>
-                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Actions</th>
+                      <th className="text-left py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Course</th>
+                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Enrollments</th>
+                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Progress</th>
+                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Status</th>
+                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 bg-white">
                     {filteredCourses.map((course: Course) => (
-                      <tr key={course.id} className="transition hover:bg-slate-50">
-                        <td className="py-5 px-6 align-top">
+                      <tr key={course.id} className="border-b border-slate-200 transition-colors duration-150 hover:bg-slate-50">
+                        <td className="py-6 px-6 align-middle">
                           <input
                             type="checkbox"
                             checked={selectedCourses.includes(course.id)}
@@ -767,8 +767,8 @@ const AdminCourses = () => {
                             className="h-4 w-4 border-slate-300 rounded focus:ring-skyblue"
                           />
                         </td>
-                        <td className="py-5 px-6 align-top">
-                          <div className="flex items-start gap-4">
+                        <td className="py-6 px-6 align-middle">
+                          <div className="flex items-center gap-4 min-w-0">
                             <LazyImage
                               src={course.thumbnail}
                               alt={course.title}
@@ -777,13 +777,10 @@ const AdminCourses = () => {
                               placeholder={<div className="w-14 h-14 rounded-2xl bg-slate-200 animate-pulse" />}
                             />
                             <div className="min-w-0">
-                              <div className="font-semibold text-gray-900 truncate">{course.title}</div>
-                              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                                <span>{course.lessons ?? 0} lessons</span>
-                                <span>•</span>
-                                <span>{course.duration ?? 'TBD'}</span>
-                                <span>•</span>
-                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${getTypeColor(course.type || 'mixed')}`}>
+                              <div className="text-sm font-semibold text-slate-900 truncate">{course.title}</div>
+                              <div className="mt-1 text-xs leading-5 text-slate-500">
+                                {course.lessons ?? 0} lessons · {course.duration ?? 'TBD'} · 
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${getTypeColor(course.type || 'mixed')}`}>
                                   {getTypeIcon(course.type || 'mixed')}
                                   <span className="capitalize">{course.type || 'Mixed'}</span>
                                 </span>
@@ -791,12 +788,12 @@ const AdminCourses = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="py-5 px-6 text-center align-top">
-                          <div className="text-base font-semibold text-slate-900">{course.enrollments ?? 0}</div>
-                          <div className="text-sm text-slate-500">learners</div>
+                        <td className="py-6 px-6 text-center align-middle">
+                          <div className="text-sm font-semibold text-slate-900">{course.enrollments ?? 0}</div>
+                          <div className="text-xs text-slate-500">learners</div>
                         </td>
-                        <td className="py-5 px-6 text-center align-top">
-                          <div className="mx-auto max-w-[160px] text-left">
+                        <td className="py-6 px-6 text-center align-middle">
+                          <div className="mx-auto max-w-[180px] text-left">
                             <div className="mb-2 text-sm font-semibold text-slate-900">{course.completionRate ?? 0}%</div>
                             <div className="h-2 overflow-hidden rounded-full bg-slate-200">
                               <div
@@ -806,23 +803,23 @@ const AdminCourses = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="py-5 px-6 text-center align-top">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(course.status)}`}>
+                        <td className="py-6 px-6 text-center align-middle">
+                          <span className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${getStatusColor(course.status)}`}>
                             {course.status}
                           </span>
                         </td>
-                        <td className="py-5 px-6 text-center align-top">
+                        <td className="py-6 px-6 text-center align-middle">
                           <div className="flex flex-wrap justify-center gap-2">
                             <Link
                               to={`/admin/courses/${course.id}/details?viewMode=learner`}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
                               title="Preview as participant"
                             >
                               <Eye className="h-4 w-4" />
                             </Link>
                             <Link
                               to={`/admin/course-builder/${course.id}`}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
                               title="Edit course"
                             >
                               <Edit className="h-4 w-4" />
@@ -830,7 +827,7 @@ const AdminCourses = () => {
                             <button
                               type="button"
                               onClick={() => void duplicateCourse(course.id)}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
                               title="Duplicate course"
                             >
                               <Copy className="h-4 w-4" />
