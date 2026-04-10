@@ -49,6 +49,12 @@ const LMSLogin: React.FC = () => {
   const [authMode, setAuthMode] = useState<'client' | 'admin'>('client');
   const navigate = useNavigate();
 
+  const panelHighlights = [
+    { label: 'Cohort-driven learning', description: 'Trusted pathways for every team and leader.' },
+    { label: 'Reflection-backed progress', description: 'Keep your development grounded in real insight.' },
+    { label: 'Secure team collaboration', description: 'Connect with your cohort in a protected learning space.' },
+  ];
+
   const adminLandingTarget = useMemo(() => {
     const params = new URLSearchParams(location.search);
     const rawReturnTo = params.get('returnTo');
@@ -229,349 +235,329 @@ const LMSLogin: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div className="text-center">
-          <Link to="/" className="inline-flex items-center justify-center gap-3 mx-auto mb-6 rounded-3xl bg-white/90 px-5 py-4 shadow-lg shadow-slate-200/60 ring-1 ring-slate-200 transition hover:shadow-slate-300/60">
-            <img src="/logo.svg" alt="The Huddle Co." className="h-12 w-12 rounded-3xl shadow-inner shadow-slate-200/40" />
-            <div className="text-left">
-              <p className="font-heading text-2xl font-bold text-gray-900">The Huddle Co.</p>
-              <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Learner Portal</p>
-            </div>
-          </Link>
-          <h2 className="text-4xl font-bold text-gray-900 mb-3">
-            {authMode === 'admin' ? 'Admin portal sign in' : 'Welcome back to your learning hub'}
-          </h2>
-          <p className="mx-auto max-w-xl text-base leading-7 text-gray-600">
-            {authMode === 'admin'
-              ? 'Secure admin access to manage cohorts, reports, and organization settings.'
-              : 'Sign in to continue your inclusive leadership journey with guided lessons, reflections, and feedback.'}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-gray-200 bg-white px-2 py-2 shadow-sm">
-          <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Login role">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={authMode === 'client'}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${authMode === 'client' ? 'bg-skyblue text-white' : 'text-gray-600 hover:bg-gray-100'}`}
-              onClick={() => setAuthMode('client')}
-            >
-              Client Login
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={authMode === 'admin'}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${authMode === 'admin' ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-100'}`}
-              onClick={() => {
-                setAuthMode('admin');
-                setActiveTab('login');
-              }}
-            >
-              Admin Login
-            </button>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-emerald-50">
+      <div className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 overflow-hidden lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="relative overflow-hidden bg-slate-950 px-6 py-16 text-white sm:px-10 lg:px-14">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.16),transparent_36%)]" />
+          <div className="pointer-events-none absolute -right-16 top-1/2 h-[420px] w-[420px] -translate-y-1/2 opacity-10 sm:-right-10">
+            <img src="/logo.svg" alt="" className="h-full w-full object-contain" />
           </div>
-        </div>
-
-        <div className="rounded-2xl border border-white/60 bg-white/80 p-5 shadow-xl text-left">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="h-5 w-5 text-green-500 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-gray-900">
-                {authMode === 'admin' ? 'Protected admin workspace' : 'Private learner workspace'}
-              </p>
-              <p className="text-sm text-gray-600">
-                {authMode === 'admin'
-                  ? 'Only authorized organization and platform administrators can access this surface.'
-                  : 'Only active cohorts and verified facilitators can sign in. Your progress, reflections, and certifications stay synced with your org lead.'}
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2 text-xs text-gray-600">
-            <span className="rounded-full bg-gray-100 px-3 py-1">Personalized modules unlocked weekly</span>
-            <span className="rounded-full bg-gray-100 px-3 py-1">Secure Supabase storage & auto-save</span>
-            <span className="rounded-full bg-gray-100 px-3 py-1">Access from any device</span>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className={`mb-6 border rounded-lg p-4 text-sm ${demoModeEnabled ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-green-50 border-green-100 text-green-700'}`}>
-            <div className="flex items-center mb-1">
-              {demoModeEnabled ? <Info className="h-4 w-4 mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
-              <span className="font-medium">
-                {demoModeEnabled ? 'Demo mode active' : 'Secure mode connected'}
-              </span>
-            </div>
-            {demoModeEnabled ? (
-              <div>
-                Email: <code className="font-mono bg-blue-100 px-1 rounded">{DEMO_EMAIL}</code> •
-                Password: <code className="font-mono bg-blue-100 px-1 rounded">{DEMO_PASSWORD}</code>
-                <p className="mt-2">Production signup and password reset are disabled until the platform is connected to Supabase.</p>
+          <div className="relative z-10 flex h-full flex-col justify-center">
+            <div className="max-w-xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-200/80 shadow-[0_10px_30px_rgba(15,23,42,0.1)]">
+                Premium leadership learning
               </div>
-            ) : (
-              <div>
-                Supabase is online and registration is enabled. Create an account with your organization ID or sign in below.
-                <p className="mt-2 flex items-center text-xs text-green-700">
-                  <span className="inline-flex items-center rounded-full bg-green-100 text-green-700 px-2 py-0.5 mr-2 text-[11px] uppercase tracking-wide">Status: {runtimeStatus.statusLabel}</span>
-                  Last check {runtimeStatus.lastChecked ? new Date(runtimeStatus.lastChecked).toLocaleTimeString() : 'pending'}
+              <h1 className="mt-10 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                Welcome back to your learning hub
+              </h1>
+              <p className="mt-6 max-w-xl text-base leading-8 text-slate-200/80 sm:text-lg">
+                Continue your leadership journey with guided lessons, reflections, and team connection.
+              </p>
+              <div className="mt-10 space-y-4">
+                {panelHighlights.map((item) => (
+                  <div key={item.label} className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm transition hover:border-white/20">
+                    <p className="text-sm font-semibold text-white">{item.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-200/75">{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="flex items-center justify-center bg-white px-6 py-12 sm:px-10 lg:px-14">
+          <div className="w-full max-w-md">
+            <div className="mb-8 space-y-4">
+              <div className="inline-flex items-center gap-3 rounded-3xl bg-slate-100 px-4 py-3 shadow-sm shadow-slate-200/70">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-400 to-red-500 text-white shadow-lg shadow-orange-500/10">
+                  <img src="/logo.svg" alt="The Huddle Co." className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">The Huddle Co.</p>
+                  <p className="text-2xl font-semibold tracking-tight text-slate-900">Sign in</p>
+                </div>
+              </div>
+              <p className="text-sm leading-6 text-slate-600">
+                Secure login for your leadership and cohort experience.
+              </p>
+            </div>
+
+            <div className="overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white p-8 shadow-[0_30px_80px_rgba(15,23,42,0.08)]">
+              <div className="rounded-full bg-slate-100 p-1 shadow-sm shadow-slate-200/60">
+                <div className="grid grid-cols-2 gap-1 rounded-full bg-transparent p-1">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('client')}
+                    className={`rounded-full px-4 py-3 text-sm font-semibold transition ${authMode === 'client' ? 'bg-white text-slate-900 shadow-sm shadow-slate-200/80' : 'text-slate-500 hover:text-slate-900'}`}
+                    aria-pressed={authMode === 'client'}
+                  >
+                    Client
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('admin');
+                      setActiveTab('login');
+                    }}
+                    className={`rounded-full px-4 py-3 text-sm font-semibold transition ${authMode === 'admin' ? 'bg-white text-slate-900 shadow-sm shadow-slate-200/80' : 'text-slate-500 hover:text-slate-900'}`}
+                    aria-pressed={authMode === 'admin'}
+                  >
+                    Admin
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-3xl border border-slate-200/70 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">{authMode === 'admin' ? 'Protected admin workspace' : 'Private learner workspace'}</p>
+                <p className="mt-2 text-slate-600">
+                  {authMode === 'admin'
+                    ? 'Only authorized admins can access this portal.'
+                    : 'Active cohorts and verified facilitators sign in here.'}
                 </p>
               </div>
-            )}
-          </div>
-          
-          {message && (
-            <div className={`mb-4 p-3 border rounded-lg text-sm ${getMessageStyles(messageType)}`}>
-              <div className="flex items-start">
-                <AlertCircle className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0" />
-                <div className="flex-1">{message}</div>
-              </div>
-            </div>
-          )}
 
-          <div className="flex mb-6 rounded-lg bg-gray-100 p-1 text-sm font-medium" role="tablist" aria-label="Authentication action">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'login'}
-              aria-controls="lms-login-panel"
-              id="lms-login-tab"
-              aria-label="Sign In tab"
-              onClick={() => setActiveTab('login')}
-              className={`flex-1 py-2 rounded-md transition ${activeTab === 'login' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'register'}
-              aria-controls="lms-register-panel"
-              id="lms-register-tab"
-              aria-label="Create Account tab"
-              onClick={() => registrationAvailable && authMode === 'client' && setActiveTab('register')}
-              disabled={!registrationAvailable || authMode === 'admin'}
-              className={`flex-1 py-2 rounded-md transition ${activeTab === 'register' ? 'bg-white shadow text-gray-900' : 'text-gray-500'} ${registrationAvailable && authMode === 'client' ? '' : 'opacity-50 cursor-not-allowed'}`}
-            >
-              Create Account
-            </button>
-          </div>
-
-          {activeTab === 'login' ? (
-            <>
-              {showTroubleshooting && (
-                <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
-                  <div className="flex items-center mb-2">
-                    <Info className="h-4 w-4 mr-2 text-yellow-600" />
-                    <span className="font-medium text-yellow-800">Troubleshooting Tips:</span>
+              <div className="mt-6 rounded-3xl border border-slate-200/80 bg-white p-4 text-sm text-slate-700">
+                <div className="flex items-center gap-3">
+                  {demoModeEnabled ? <Info className="h-4 w-4 text-blue-500" /> : <ShieldCheck className="h-4 w-4 text-emerald-500" />}
+                  <div>
+                    <p className="font-semibold text-slate-900">{demoModeEnabled ? 'Demo mode active' : 'Secure mode connected'}</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {demoModeEnabled
+                        ? 'Use the demo credentials below until Supabase is connected.'
+                        : 'Your data is protected and stored securely.'}
+                    </p>
                   </div>
-                  <ul className="text-yellow-700 space-y-1 ml-6 list-disc">
-                    <li>Double-check your email address and password</li>
-                    <li>Make sure Caps Lock is off</li>
-                    <li>Try the demo credentials: user@pacificcoast.edu / user123</li>
-                    <li>Check your internet connection</li>
-                    <li>If you have an account, try the "Forgot password?" link</li>
-                    <li>Contact support if the issue persists</li>
+                </div>
+              </div>
+
+              {showTroubleshooting && (
+                <div className="mt-6 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <div className="font-semibold">Troubleshooting tips</div>
+                  <ul className="mt-3 space-y-2 pl-5 text-amber-900">
+                    <li>Verify your email and password</li>
+                    <li>Disable Caps Lock and try again</li>
+                    <li>Use the demo credentials when in demo mode</li>
                   </ul>
                 </div>
               )}
-              <form
-                onSubmit={handleSubmit}
-                className="space-y-6"
-                id="lms-login-panel"
-                role="tabpanel"
-                aria-labelledby="lms-login-tab"
-              >
-                <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
+
+              {message && (
+                <div className={`mt-6 rounded-3xl border p-4 text-sm ${getMessageStyles(messageType)}`}>
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 mt-0.5" />
+                    <div>{message}</div>
+                  </div>
                 </div>
-                <input 
-                  id="email" 
-                  name="email" 
-                  type="email" 
-                  required 
-                  value={email} 
-                  onChange={(e) => setEmail(e.target.value)} 
-                  className={`block w-full pl-10 pr-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200 ${validationErrors.email ? 'border-red-500' : 'border-gray-300'}`}
-                  placeholder="Enter your email" 
-                  aria-invalid={validationErrors.email ? 'true' : 'false'}
-                  aria-describedby={validationErrors.email ? 'email-error' : undefined}
-                />
-              </div>
-              {validationErrors.email && (
-                <p id="email-error" className="mt-1 text-sm text-red-600">{validationErrors.email}</p>
               )}
-        </div>
 
-        <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
+              <div className="mt-6 rounded-3xl bg-slate-50 p-1">
+                <div className="flex gap-1 rounded-full bg-white p-1 text-sm font-semibold shadow-sm shadow-slate-200/60" role="tablist" aria-label="Authentication action">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'login'}
+                    onClick={() => setActiveTab('login')}
+                    className={`flex-1 rounded-full py-3 transition ${activeTab === 'login' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'}`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'register'}
+                    onClick={() => registrationAvailable && authMode === 'client' && setActiveTab('register')}
+                    disabled={!registrationAvailable || authMode === 'admin'}
+                    className={`flex-1 rounded-full py-3 transition ${activeTab === 'register' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'} ${(!registrationAvailable || authMode === 'admin') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    Create Account
+                  </button>
                 </div>
-                <input 
-                  id="password" 
-                  name="password" 
-                  type={showPassword ? 'text' : 'password'} 
-                  required 
-                  value={password} 
-                  onChange={(e) => setPassword(e.target.value)} 
-                  className={`block w-full pl-10 pr-10 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200 ${validationErrors.password ? 'border-red-500' : 'border-gray-300'}`}
-                  placeholder="Enter your password"
-                  aria-invalid={validationErrors.password ? 'true' : 'false'}
-                  aria-describedby={validationErrors.password ? 'password-error' : undefined}
-                />
-                <button type="button" className="absolute inset-y-0 right-0 pr-3 flex items-center" onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" /> : <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />}</button>
               </div>
-              {validationErrors.password && (
-                <p id="password-error" className="mt-1 text-sm text-red-600">{validationErrors.password}</p>
-              )}
-        </div>
 
-        <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <input id="remember-me" name="remember-me" type="checkbox" className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded" />
-                <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-700">Remember me</label>
-              </div>
-              <button type="button" onClick={handleForgot} className="text-sm text-orange-500 hover:text-orange-600">Forgot password?</button>
-        </div>
+              {activeTab === 'login' ? (
+                <form onSubmit={handleSubmit} className="mt-6 space-y-5" id="lms-login-panel" role="tabpanel" aria-labelledby="lms-login-tab">
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">Email address</label>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <Mail className="h-5 w-5" />
+                      </div>
+                      <input
+                        id="email"
+                        name="email"
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 pl-12 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${validationErrors.email ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="you@company.com"
+                        aria-invalid={!!validationErrors.email}
+                        aria-describedby={validationErrors.email ? 'email-error' : undefined}
+                      />
+                    </div>
+                    {validationErrors.email && <p id="email-error" className="mt-2 text-sm text-red-600">{validationErrors.email}</p>}
+                  </div>
 
-        <button type="submit" disabled={isLoading} data-test="lms-sign-in" className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white py-3 px-4 rounded-lg font-semibold text-lg hover:from-orange-500 hover:to-red-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
-              {isLoading ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Signing in...
-                </div>
+                  <div>
+                    <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-2">Password</label>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <Lock className="h-5 w-5" />
+                      </div>
+                      <input
+                        id="password"
+                        name="password"
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 pl-12 pr-12 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${validationErrors.password ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="Enter your password"
+                        aria-invalid={!!validationErrors.password}
+                        aria-describedby={validationErrors.password ? 'password-error' : undefined}
+                      />
+                      <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600">
+                        {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      </button>
+                    </div>
+                    {validationErrors.password && <p id="password-error" className="mt-2 text-sm text-red-600">{validationErrors.password}</p>}
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm text-slate-600">
+                    <button type="button" onClick={handleForgot} className="font-medium text-orange-500 hover:text-orange-600">Forgot password?</button>
+                    <span className="text-slate-500">Secure login</span>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="mt-4 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-orange-400 to-red-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-500/20 transition duration-200 hover:from-orange-500 hover:to-red-600 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isLoading ? (
+                      <div className="flex items-center gap-3">
+                        <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-white" />
+                        Signing in...
+                      </div>
+                    ) : (
+                      authMode === 'admin' ? 'Sign in to admin portal' : 'Sign in'
+                    )}
+                  </button>
+                </form>
               ) : (
-                authMode === 'admin' ? 'Sign In to Admin Portal' : 'Sign In'
+                <form onSubmit={handleRegisterSubmit} className="mt-6 space-y-5" id="lms-register-panel" role="tabpanel" aria-labelledby="lms-register-tab">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="firstName" className="block text-sm font-medium text-slate-700 mb-2">First name</label>
+                      <input
+                        id="firstName"
+                        type="text"
+                        value={registerForm.firstName}
+                        onChange={(e) => handleRegisterChange('firstName', e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${registerErrors.firstName ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="Jane"
+                      />
+                      {registerErrors.firstName && <p className="mt-2 text-sm text-red-600">{registerErrors.firstName}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="lastName" className="block text-sm font-medium text-slate-700 mb-2">Last name</label>
+                      <input
+                        id="lastName"
+                        type="text"
+                        value={registerForm.lastName}
+                        onChange={(e) => handleRegisterChange('lastName', e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${registerErrors.lastName ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="Doe"
+                      />
+                      {registerErrors.lastName && <p className="mt-2 text-sm text-red-600">{registerErrors.lastName}</p>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="registerEmail" className="block text-sm font-medium text-slate-700 mb-2">Work email</label>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <Mail className="h-5 w-5" />
+                      </div>
+                      <input
+                        id="registerEmail"
+                        type="email"
+                        value={registerForm.email}
+                        onChange={(e) => handleRegisterChange('email', e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 pl-12 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${registerErrors.email ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="you@company.com"
+                      />
+                    </div>
+                    {registerErrors.email && <p className="mt-2 text-sm text-red-600">{registerErrors.email}</p>}
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="registerPassword" className="block text-sm font-medium text-slate-700 mb-2">Password</label>
+                      <input
+                        id="registerPassword"
+                        type="password"
+                        value={registerForm.password}
+                        onChange={(e) => handleRegisterChange('password', e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${registerErrors.password ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="Create a password"
+                      />
+                      {registerErrors.password && <p className="mt-2 text-sm text-red-600">{registerErrors.password}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 mb-2">Confirm password</label>
+                      <input
+                        id="confirmPassword"
+                        type="password"
+                        value={registerForm.confirmPassword}
+                        onChange={(e) => handleRegisterChange('confirmPassword', e.target.value)}
+                        className={`block w-full rounded-2xl border px-4 py-3 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${registerErrors.confirmPassword ? 'border-red-500' : 'border-slate-200'}`}
+                        placeholder="Re-enter password"
+                      />
+                      {registerErrors.confirmPassword && <p className="mt-2 text-sm text-red-600">{registerErrors.confirmPassword}</p>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="organizationId" className="block text-sm font-medium text-slate-700 mb-2">Organization ID (optional)</label>
+                    <input
+                      id="organizationId"
+                      type="text"
+                      value={registerForm.organizationId ?? ''}
+                      onChange={(e) => handleRegisterChange('organizationId', e.target.value)}
+                      className={`block w-full rounded-2xl border px-4 py-3 text-sm text-slate-900 shadow-sm transition duration-200 focus:outline-none focus:ring-2 focus:ring-orange-400 ${registerErrors.organizationId ? 'border-red-500' : 'border-slate-200'}`}
+                      placeholder="Organization ID"
+                    />
+                    {registerErrors.organizationId && <p className="mt-2 text-sm text-red-600">{registerErrors.organizationId}</p>}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isRegistering}
+                    className="mt-4 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-green-500 to-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-green-500/20 transition duration-200 hover:from-green-600 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isRegistering ? (
+                      <div className="flex items-center gap-3">
+                        <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-white" />
+                        Creating account...
+                      </div>
+                    ) : (
+                      'Create account'
+                    )}
+                  </button>
+                </form>
               )}
-                </button>
-              </form>
-            </>
-          ) : (
-            <form
-              onSubmit={handleRegisterSubmit}
-              className="space-y-5"
-              id="lms-register-panel"
-              role="tabpanel"
-              aria-labelledby="lms-register-tab"
-            >
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-2">First Name</label>
-                  <input
-                    id="firstName"
-                    type="text"
-                    value={registerForm.firstName}
-                    onChange={(e) => handleRegisterChange('firstName', e.target.value)}
-                    className={`block w-full px-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${registerErrors.firstName ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="Jane"
-                  />
-                  {registerErrors.firstName && <p className="mt-1 text-sm text-red-600">{registerErrors.firstName}</p>}
-                </div>
-                <div>
-                  <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
-                  <input
-                    id="lastName"
-                    type="text"
-                    value={registerForm.lastName}
-                    onChange={(e) => handleRegisterChange('lastName', e.target.value)}
-                    className={`block w-full px-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${registerErrors.lastName ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="Doe"
-                  />
-                  {registerErrors.lastName && <p className="mt-1 text-sm text-red-600">{registerErrors.lastName}</p>}
-                </div>
+
+              <div className="mt-6 flex items-center justify-between text-sm text-slate-500">
+                <p>Need help accessing your account?</p>
+                <Link to="/contact" className="font-medium text-orange-500 hover:text-orange-600">Contact support</Link>
               </div>
+            </div>
 
-              <div>
-                <label htmlFor="registerEmail" className="block text-sm font-medium text-gray-700 mb-2">Work Email</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input
-                    id="registerEmail"
-                    type="email"
-                    value={registerForm.email}
-                    onChange={(e) => handleRegisterChange('email', e.target.value)}
-                    className={`block w-full pl-10 pr-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${registerErrors.email ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="you@company.com"
-                  />
-                </div>
-                {registerErrors.email && <p className="mt-1 text-sm text-red-600">{registerErrors.email}</p>}
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="registerPassword" className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-                  <input
-                    id="registerPassword"
-                    type="password"
-                    value={registerForm.password}
-                    onChange={(e) => handleRegisterChange('password', e.target.value)}
-                    className={`block w-full px-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${registerErrors.password ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="Create a password"
-                  />
-                  {registerErrors.password && <p className="mt-1 text-sm text-red-600">{registerErrors.password}</p>}
-                </div>
-                <div>
-                  <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">Confirm Password</label>
-                  <input
-                    id="confirmPassword"
-                    type="password"
-                    value={registerForm.confirmPassword}
-                    onChange={(e) => handleRegisterChange('confirmPassword', e.target.value)}
-                    className={`block w-full px-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${registerErrors.confirmPassword ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="Re-enter password"
-                  />
-                  {registerErrors.confirmPassword && <p className="mt-1 text-sm text-red-600">{registerErrors.confirmPassword}</p>}
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="organizationId" className="block text-sm font-medium text-gray-700 mb-2">Organization ID (optional)</label>
-                <input
-                  id="organizationId"
-                  type="text"
-                  value={registerForm.organizationId ?? ''}
-                  onChange={(e) => handleRegisterChange('organizationId', e.target.value)}
-                  className={`block w-full px-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${registerErrors.organizationId ? 'border-red-500' : 'border-gray-300'}`}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                />
-                {registerErrors.organizationId && <p className="mt-1 text-sm text-red-600">{registerErrors.organizationId}</p>}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isRegistering}
-                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white py-3 px-4 rounded-lg font-semibold text-lg hover:from-green-600 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isRegistering ? (
-                  <div className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                    Creating account...
-                  </div>
-                ) : (
-                  'Create Account'
-                )}
-              </button>
-            </form>
-          )}
-
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">Need help accessing your account?{' '}
-              <Link to="/contact" className="text-orange-500 hover:text-orange-600 font-medium">Contact support</Link>
-            </p>
+            <div className="mt-6 text-center text-sm text-slate-500">
+              <Link to="/" className="font-medium text-slate-600 hover:text-slate-900">← Back to main website</Link>
+            </div>
           </div>
-        </div>
-
-        <div className="text-center">
-          <Link to="/" className="text-sm text-gray-600 hover:text-gray-900">← Back to main website</Link>
-        </div>
+        </section>
       </div>
     </div>
   );

@@ -113,6 +113,9 @@ const STYLE_REGEX = /\.css$/i;
 async function handleRequest(request, url) {
   try {
     if (IMAGE_REGEX.test(url.pathname)) {
+      if (url.pathname === '/logo.svg') {
+        return await networkFirst(request, IMAGE_CACHE);
+      }
       return await handleImageRequest(request);
     }
 
