@@ -2,6 +2,7 @@ import type { Survey } from '../types/survey';
 import type { CourseAssignment } from '../types/assignment';
 import { request } from './http';
 import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
+import { buildOrgHeaders } from '../utils/orgHeaders';
 
 type SurveyApiRecord = any;
 
@@ -299,8 +300,28 @@ export type LearnerSurveyAssignment = {
 };
 
 export async function fetchAssignedSurveysForLearner(): Promise<LearnerSurveyAssignment[]> {
-  const json = await request<{ data: Array<{ assignment: any; survey?: any }> }>('/api/client/surveys/assigned');
-  const entries = Array.isArray(json.data) ? json.data : [];
+  type AssignedResponse = {
+    data: Array<{ assignment: any; survey?: any }>;
+    meta?: { hydrationPending?: boolean };
+  };
+
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  let lastJson: AssignedResponse | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const json = await request<AssignedResponse>('/api/client/surveys/assigned', {
+      headers: buildOrgHeaders(),
+    });
+    lastJson = json;
+    const entries = Array.isArray(json.data) ? json.data : [];
+    const hydrationPending = Boolean(json.meta?.hydrationPending);
+    if (entries.length > 0 || !hydrationPending) {
+      break;
+    }
+    await sleep(600);
+  }
+
+  const entries = Array.isArray(lastJson?.data) ? lastJson!.data : [];
   return entries
     .map((entry) => {
       const assignment = mapAssignmentsFromApiRows(entry.assignment ? [entry.assignment] : [])?.[0];
@@ -353,7 +374,9 @@ export async function fetchLearnerSurveyResults(surveyId: string, assignmentId?:
   const query = new URLSearchParams();
   if (assignmentId) query.set('assignmentId', assignmentId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/results${suffix}`);
+  const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/results${suffix}`, {
+    headers: buildOrgHeaders(),
+  });
   return json.data ?? null;
 }
 
@@ -381,6 +404,7 @@ export async function submitLearnerSurveyResponse(
   const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/submit`, {
     method: 'POST',
     body,
+    headers: buildOrgHeaders(),
   });
   return json.data ?? null;
 }

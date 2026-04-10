@@ -156,6 +156,25 @@ const AdminDashboard = () => {
 
   // Real analytics data
   const { data: analyticsData, loading: analyticsLoading } = useAnalyticsDashboard();
+  const [growthOverview, setGrowthOverview] = useState<any>(null);
+  const [growthLoading, setGrowthLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await apiRequest<{ data: any }>('/api/admin/growth/overview', { credentials: 'include' });
+        if (active) setGrowthOverview(res?.data ?? null);
+      } catch {
+        // non-fatal
+      } finally {
+        if (active) setGrowthLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
   const ov = analyticsData.overview;
 
 
@@ -668,6 +687,34 @@ const AdminDashboard = () => {
           })}
           </ErrorBoundary>
         </div>
+
+        <Card tone="muted" className="border border-mist/60 bg-white/80">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate/70">Engagement health</p>
+              <p className="mt-2 font-heading text-xl font-semibold text-charcoal">
+                {growthLoading ? 'Loading…' : `${Math.round(((growthOverview?.summary?.engagement_score ?? 0) / 3) * 100)}%`}
+              </p>
+              <p className="mt-1 text-sm text-slate/70">
+                A subtle rollup of consistency, reflection, and scenario practice—no leaderboards.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <div className="rounded-2xl border border-mist bg-softwhite px-4 py-3">
+                <p className="text-xs text-slate/70">Avg learning streak</p>
+                <p className="font-heading text-lg font-semibold text-charcoal">
+                  {growthLoading ? '…' : `${Math.round(growthOverview?.summary?.avg_learning_streak ?? 0)} days`}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-mist bg-softwhite px-4 py-3">
+                <p className="text-xs text-slate/70">Completion rate</p>
+                <p className="font-heading text-lg font-semibold text-charcoal">
+                  {growthLoading ? '…' : `${Math.round((growthOverview?.summary?.completion_rate ?? 0) * 100)}%`}
+                </p>
+              </div>
+            </div>
+          </div>
+        </Card>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <ErrorBoundary fallback={WidgetErrorFallback}>

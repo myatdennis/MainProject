@@ -181,6 +181,12 @@ export default async () => {
           chunkFileNames: 'assets/[name].[hash].js',
           assetFileNames: 'assets/[name].[hash][extname]',
           manualChunks(id: string) {
+            // Keep the sync service + its DAL facade together to avoid Rollup
+            // circular-chunk warnings caused by re-export style usage across
+            // lazily loaded admin/client entrypoints.
+            if (id.includes('src/services/syncService.ts') || id.includes('src/dal/sync.ts')) {
+              return 'sync';
+            }
             // Further split common large libraries
             if (id.includes('zod')) return 'zod';
             if (id.includes('date-fns')) return 'date-fns';
@@ -204,48 +210,8 @@ export default async () => {
               return 'vendor';
             }
 
-            if (
-              id.includes('/src/pages/Admin/AdminSurvey') ||
-              id.includes('/src/pages/Admin/AdminSurveys') ||
-              id.includes('/src/pages/Admin/AdminQueueMonitor') ||
-              id.includes('/src/components/Survey') ||
-              id.includes('/src/components/SurveyBuilder') ||
-              id.includes('/src/dal/surveys') ||
-              id.includes('/src/services/survey')
-            ) {
-              return 'admin-surveys';
-            }
-            if (
-              id.includes('/src/components/ui/') ||
-              id.includes('/src/components/SEO') ||
-              id.includes('/src/components/LoadingComponents') ||
-              id.includes('/src/context/') ||
-              id.includes('/src/config/') ||
-              id.includes('/src/hooks/useAnalyticsDashboard') ||
-              id.includes('/src/dal/orgs') ||
-              id.includes('/src/dal/analytics') ||
-              id.includes('/src/dal/adminCourses') ||
-              id.includes('/src/dal/clientCourses') ||
-              id.includes('/src/dal/http') ||
-              id.includes('/src/dal/sync') ||
-              id.includes('/src/lib/secureStorage') ||
-              id.includes('/src/state/runtimeStatus') ||
-              id.includes('/src/utils/apiClient')
-            ) {
-              return 'admin-shared';
-            }
-            if (id.includes('/src/pages/Admin/AdminCourseBuilder') || id.includes('/src/components/CourseBuilder')) {
-              return 'admin-courses';
-            }
-            if (id.includes('/src/pages/Admin/AdminAnalytics') || id.includes('/src/pages/Admin/AdminReports')) {
-              return 'admin-analytics';
-            }
-            if (id.includes('/src/pages/Admin/') && !id.includes('AdminDashboard') && !id.includes('AdminLogin')) {
-              return 'admin-secondary';
-            }
-            if (id.includes('/src/components/OrgWorkspace') || id.includes('/src/services/clientWorkspaceService')) {
-              return 'org-workspace';
-            }
+            // Keep org workspace code in default chunking to avoid circular chunk graphs
+            // when admin surfaces import org workspace components.
           },
         },
       },

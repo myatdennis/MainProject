@@ -113,4 +113,51 @@ describe.skipIf(!DB_URL)('Team Huddle schema + API contract', () => {
     expect(detailRes.status, detailText).toBe(200);
     expect(detailText.includes('PGRST205')).toBe(false);
   });
+
+  it('supports like, love, and dislike reactions with toggling', async () => {
+    const headers = await withAdminHeaders();
+
+    const createPostRes = await server!.fetch('/api/team-huddle/posts', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        organization_id: TEST_ORG_ID,
+        title: `Reaction test ${Date.now()}`,
+        body: `Reaction test body ${randomUUID()}`,
+        topics: ['reactions', 'team'],
+      }),
+    });
+    const createdPost = JSON.parse(await createPostRes.text())?.data;
+    expect(createPostRes.status).toBe(201);
+    expect(createdPost?.id).toBeTruthy();
+
+    const reactionTypes = ['like', 'love', 'dislike'] as const;
+    for (const reactionType of reactionTypes) {
+      const reactionRes = await server!.fetch(`/api/team-huddle/posts/${encodeURIComponent(createdPost.id)}/reactions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ reactionType }),
+      });
+      const reactionBody = JSON.parse(await reactionRes.text());
+      expect(reactionRes.status).toBe(200);
+      expect(reactionBody.data?.reactionSummary).toBeDefined();
+      expect(reactionBody.data?.viewerReaction).toBe(reactionType);
+    }
+
+    // Toggle the same reaction to remove it.
+    const toggleRes = await server!.fetch(`/api/team-huddle/posts/${encodeURIComponent(createdPost.id)}/reactions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ reactionType: 'dislike' }),
+    });
+    const toggleBody = JSON.parse(await toggleRes.text());
+    expect(toggleRes.status).toBe(200);
+    expect(toggleBody.data?.viewerReaction).toBeNull();
+    expect(toggleBody.data?.reactionSummary?.dislike).toBe(0);
+
+    const detailRes = await server!.fetch(`/api/team-huddle/posts/${encodeURIComponent(createdPost.id)}`, { headers });
+    const detailBody = JSON.parse(await detailRes.text());
+    expect(detailRes.status).toBe(200);
+    expect(detailBody.data?.reactionSummary).toEqual(expect.objectContaining({ like: 0, love: 0, dislike: 0 }));
+  });
 });

@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Bell, Megaphone, BookOpen, Check, MessageSquare, Sparkles } from 'lucide-react';
-import { listLearnerNotifications, markLearnerNotificationRead } from '../../dal/notifications';
+import { listLearnerNotifications, markLearnerNotificationRead, markLearnerNotificationsRead } from '../../dal/notifications';
 import type { Notification } from '../../dal/notifications';
+import { useMemo, useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+import Button from '../ui/Button';
 import { syncService } from '../../dal/sync';
 import { wsClient } from '../../dal/wsClient';
-import Button from '../ui/Button';
 
 const REALTIME_REFRESH_DEBOUNCE_MS = 300;
 
@@ -164,6 +165,17 @@ const ClientNotificationBell = () => {
     }
   }, []);
 
+  const markAllRead = useCallback(async () => {
+    const unreadIds = notifications.filter((notification) => !notification.read).map((notification) => notification.id);
+    if (!unreadIds.length) return;
+    setNotifications((prev) => prev.map((notification) => ({ ...notification, read: true })));
+    try {
+      await markLearnerNotificationsRead(unreadIds);
+    } catch {
+      // ignore error and keep UI optimistic
+    }
+  }, [notifications]);
+
   const resolveNotificationActionUrl = useCallback((notification: Notification): string | null => {
     const payload = (notification.payload ?? notification.metadata ?? null) as Record<string, unknown> | null;
     if (!payload || typeof payload !== 'object') return null;
@@ -203,37 +215,66 @@ const ClientNotificationBell = () => {
           <div className="flex items-center justify-between border-b border-slate/100 px-4 py-3">
             <div className="flex items-center gap-2">
               <Bell className="h-4 w-4 text-slate/70" />
-              <p className="text-sm font-semibold text-charcoal">Notifications</p>
+              <div>
+                <p className="text-sm font-semibold text-charcoal">Notifications</p>
+                {unreadCount > 0 ? (
+                  <p className="text-[11px] text-slate-500">{unreadCount} new item{unreadCount === 1 ? '' : 's'}</p>
+                ) : (
+                  <p className="text-[11px] text-slate-500">You are all caught up</p>
+                )}
+              </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={loadNotifications} disabled={loading}>
-              Refresh
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  onClick={markAllRead}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  Mark all read
+                </button>
+              )}
+              <Button size="sm" variant="ghost" onClick={loadNotifications} disabled={loading}>
+                Refresh
+              </Button>
+            </div>
           </div>
           <div className="max-h-96 overflow-y-auto divide-y divide-slate/50">
             {loading ? (
-              <div className="p-6 text-center text-slate/60">Loading…</div>
+              <div className="p-6 text-center text-slate-500">Loading…</div>
             ) : notifications.length === 0 ? (
-              <div className="p-6 text-center text-slate/60">No notifications yet.</div>
+              <div className="p-6 text-center text-slate-500">No notifications yet.</div>
             ) : (
-              notifications.map((notification) => {
-                const tone = notificationTone(notification);
-                return (
-                  <div
-                    key={notification.id}
-                    className={`flex items-start gap-3 px-4 py-3 cursor-pointer ${!notification.read ? 'bg-sky-50/40' : ''}`}
-                    onClick={() => {
-                      void handleNotificationClick(notification);
-                    }}
-                  >
-                    <div className={`flex-shrink-0 rounded-full p-2 ${tone.wrapper}`}>{tone.icon}</div>
-                    <div className="flex-1">
-                      <div className="font-semibold text-sm mb-0.5">{notification.title}</div>
-                      {notification.body && <div className="text-xs text-slate/70 mb-1">{notification.body}</div>}
-                      <div className="text-xs text-slate/50">{formatTimestamp(notification.createdAt)}</div>
+              <>
+                <div className="p-4 text-center text-slate-500">Browse your assigned tasks, surveys, and announcements here.</div>
+                {notifications.map((notification) => {
+                  const tone = notificationTone(notification);
+                  return (
+                    <div
+                      key={notification.id}
+                      className={`group flex items-start gap-3 px-4 py-4 cursor-pointer transition duration-150 ${!notification.read ? 'bg-sky-50/60 border border-sky-100 shadow-sm' : 'bg-white border border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
+                      onClick={() => {
+                        void handleNotificationClick(notification);
+                      }}
+                    >
+                      <div className={`flex-shrink-0 rounded-full p-2 ${tone.wrapper}`}>{tone.icon}</div>
+                      <div className="flex-1">
+                        <div className="font-semibold text-sm mb-1 flex items-center justify-between gap-3">
+                          <span>{notification.title}</span>
+                          {!notification.read && (
+                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-600">New</span>
+                          )}
+                        </div>
+                        {notification.body && <div className="text-xs text-slate/70 mb-1">{notification.body}</div>}
+                        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+                          <span>{formatTimestamp(notification.createdAt)}</span>
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{(notification.type || 'update').replace(/_/g, ' ')}</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </>
             )}
           </div>
         </div>

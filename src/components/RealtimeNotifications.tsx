@@ -257,7 +257,6 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     const candidates = [
       user?.activeOrgId,
       user?.organizationId,
-      user?.orgId,
       ...(Array.isArray((user as { organizationIds?: unknown[] } | null)?.organizationIds)
         ? (((user as { organizationIds?: unknown[] }).organizationIds as unknown[]) || [])
         : []),
@@ -285,6 +284,7 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   const [deletingNotification, setDeletingNotification] = useState(false);
 
   const unreadCount = useMemo(() => notifications.filter(notification => !notification.read).length, [notifications]);
+  const totalCount = useMemo(() => notifications.length, [notifications]);
 
   const fetchNotifications = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -477,9 +477,11 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
               <div className="px-6 py-4 border-b border-mutedgrey flex items-center justify-between bg-gradient-to-r from-sunrise/10 to-indigo-100">
                 <div>
                   <h3 className="text-xl font-heading text-charcoal">Notifications</h3>
-                  {refreshing && (
-                    <p className="text-xs text-gray-500 font-body">Syncing latest updates…</p>
-                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span className="rounded-full bg-white px-2 py-1 font-semibold text-slate-700">{totalCount} {totalCount === 1 ? 'item' : 'items'}</span>
+                    <span className="rounded-full bg-sunrise/10 px-2 py-1 font-semibold text-sunrise">{unreadCount} unread</span>
+                    {refreshing && <span className="text-slate-500">Syncing latest updates…</span>}
+                  </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <button
@@ -599,6 +601,12 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
                               <X className="w-4 h-4" />
                             </button>
                           </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-700">{notification.type.replace(/_/g, ' ')}</span>
+                          {!notification.read && (
+                            <span className="rounded-full bg-sunrise/10 px-2 py-1 text-[11px] font-semibold text-sunrise">New</span>
+                          )}
                         </div>
                       </motion.div>
                     ))}

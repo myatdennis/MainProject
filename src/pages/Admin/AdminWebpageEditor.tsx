@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
 import useNavTrace from '../../hooks/useNavTrace';
+import { apiRequest } from '../../utils/apiClient';
 
 interface EditableTextItem {
   key: string;
@@ -16,14 +16,14 @@ const AdminWebpageEditor: React.FC = () => {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    api('/api/text-content')
-      .then(res => res.json())
-      .then(data => {
-        setTextItems(data);
-        setLoading(false);
+    apiRequest<{ data: EditableTextItem[] }>('/api/text-content', { noTransform: true })
+      .then((payload) => {
+        setTextItems(Array.isArray(payload?.data) ? payload.data : []);
       })
       .catch(() => {
         setError('Failed to load content');
+      })
+      .finally(() => {
         setLoading(false);
       });
   }, []);
@@ -38,18 +38,17 @@ const AdminWebpageEditor: React.FC = () => {
 
   const handleSave = () => {
     setSaving(true);
-    api('/api/text-content', {
+    apiRequest('/api/text-content', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(textItems)
+      body: textItems,
     })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to save');
+      .then(() => {
         setSuccess(true);
-        setSaving(false);
       })
       .catch(() => {
         setError('Failed to save');
+      })
+      .finally(() => {
         setSaving(false);
       });
   };

@@ -8,6 +8,12 @@ dns.setDefaultResultOrder('ipv4first');
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
+// Guard against accidental sensitive console logs in production builds.
+// This codebase uses a structured logger; console.* is reserved for local dev.
+if (process.env.NODE_ENV === 'production') {
+  console.log = () => {};
+  console.debug = () => {};
+}
 import fs from 'fs';
 import multer from 'multer';
 import { randomUUID, createHash } from 'crypto';
@@ -146,11 +152,24 @@ import {
 
 const isDemoOrTestMode = E2E_TEST_MODE;
 const isFallbackMode = isDemoMode || E2E_TEST_MODE || TEST_IDEMPOTENCY_FALLBACK_MODE;
+
+// Hard guardrails: never allow demo/test fallbacks in production.
+if (process.env.NODE_ENV === 'production') {
+  if (E2E_TEST_MODE) {
+    throw new Error('E2E_TEST_MODE must never be enabled in production.');
+  }
+  if (String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true') {
+    throw new Error('DEV_FALLBACK must never be enabled in production.');
+  }
+  if (TEST_IDEMPOTENCY_FALLBACK_MODE) {
+    throw new Error('TEST_IDEMPOTENCY_FALLBACK_MODE must never be enabled in production.');
+  }
+}
 import { sendEmail, configureEmailLogging, getEmailConfigSummary, isEmailEnabled } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
 import { createNotificationService } from './services/notificationService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
-import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
+import { writeErrorDiagnostics, summarizeHeaders, summarizeRequestBody } from './utils/errorDiagnostics.js';
 import getUserMemberships, { buildMembershipFilterString } from './utils/memberships.js';
 import {
   COURSE_WITH_MODULES_LESSONS_SELECT,
@@ -304,13 +323,21 @@ const resolveUserIdentifierToUuid = async (req, identifier) => {
 };
 
 import sql, { pool, getDatabaseConnectionInfo } from './db.js';
+import {
+  computeLevelProgress,
+  deriveGrowthInsights,
+  processGamificationEvent,
+  upsertOrgEngagementMetrics,
+} from './lib/gamification.js';
 // ...existing imports...
 import { normalizeMembershipStatus, isMembershipActive, mergeMembershipWithProfile, resolveMembershipStatusUpdate } from './lib/membershipUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log('[startup] server file path', __filename);
+if (process.env.NODE_ENV !== 'production') {
+  console.debug('[startup] server file path', __filename);
+}
 
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -755,7 +782,7 @@ if (isFallbackMode) {
     `[startup] in-memory fallback mode | survey assignment persistence: ${assignmentPersistenceSimulated ? 'simulated' : 'real-db'}`,
   );
 } else {
-  console.log('[startup] DB-backed mode | survey assignment persistence: real-db');
+  logger.info('startup_mode', { mode: 'real-db', feature: 'survey_assignment_persistence' });
 }
 if (supabaseEnv.configured && isDemoMode) {
   logger.warn('dev_fallback_overrides_supabase', {
@@ -1005,7 +1032,6 @@ function savePersistedData(data) {
 }
 
 const app = express();
-console.log('[startup] Express app created');
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
 // CORS must run first — before any route handler — so that 401/403 responses
@@ -1014,12 +1040,13 @@ app.set('etag', false);
 // which meant browsers received CORS-less 401 responses and reported them as
 // network errors instead of auth errors.
 app.use(corsMiddleware);
-console.log('[startup] CORS middleware registered');
 
 const JSON_BODY_LIMIT = process.env.API_JSON_BODY_LIMIT || '25mb';
 
 app.use(attachRequestId);
 app.use(cookieParser());
+// Ensure the csrf_token cookie exists early so api clients can attach it via X-CSRF-Token.
+app.use(setDoubleSubmitCSRF);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // ---------------------------------------------------------------------------
@@ -1054,7 +1081,10 @@ app.use('/api', (req, res, next) => {
     if (keys.length === 1) {
       return source[keys[0]];
     }
-    return null;
+    // Fall back to returning the entire object so the canonical contract always
+    // has a meaningful `data` payload, even for legacy endpoints that return
+    // ad-hoc objects instead of { data: ... }.
+    return source;
   };
 
   const inferCode = (source, ok) => {
@@ -1075,13 +1105,10 @@ app.use('/api', (req, res, next) => {
   };
 
   const inferMeta = (source) => {
-    if (isPlainObject(source) && isPlainObject(source.meta)) {
-      return source.meta;
-    }
-    if (isPlainObject(source) && source.requestId) {
-      return { requestId: source.requestId };
-    }
-    return null;
+    const base = isPlainObject(source) && isPlainObject(source.meta) ? source.meta : {};
+    const requestId = req.requestId ?? (isPlainObject(source) && source.requestId ? source.requestId : null);
+    const merged = requestId ? { ...base, requestId } : base;
+    return Object.keys(merged).length ? merged : null;
   };
 
   res.json = function normalizedJson(body) {
@@ -1137,7 +1164,9 @@ app.use((req, res, next) => {
   }
   next();
 });
-console.log('[startup] JSON middleware registered before routes');
+if (process.env.NODE_ENV !== 'production') {
+  console.debug('[startup] JSON middleware registered before routes');
+}
 
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolveCorsOriginDecision, resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
@@ -1684,9 +1713,22 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     requestId: req.requestId,
   });
 
+  const debugAssign = (...args) => {
+    if (!isProduction && shouldLogAuthDebug) {
+      try {
+        console.info(...args);
+      } catch (_) {}
+    }
+  };
+
   // If the client provided an org id via headers (common in E2E helpers), inject
   // it into the normalized body so the rest of the handler resolves it reliably.
   try {
+    if (isProduction) {
+      // Never accept org context from headers in production. Org selection must
+      // come from the authenticated session/cookie or explicit request body.
+      throw new Error('skip_header_org_injection');
+    }
     const headerOrg = req.headers['x-org-id'] || req.headers['x-organization-id'];
     const maybeHeaderValue = Array.isArray(headerOrg) ? headerOrg[0] : headerOrg;
     if (maybeHeaderValue && (!body || !body.organization_id) && !body?.organization) {
@@ -1695,7 +1737,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         body.organization_id = headerValStr;
         body.organizationId = headerValStr;
         body.orgId = headerValStr;
-        console.info('[assign] injected org id from header into body', { headerValStr, requestId: req.requestId ?? null });
+        debugAssign('[assign] injected org id from header into body', { headerValStr, requestId: req.requestId ?? null });
       }
     }
   } catch (_) {}
@@ -1708,7 +1750,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     const directOrg = body && (body.organization_id || body.organizationId || body.orgId || body.org_id);
     if (directOrg) {
       finalOrganizationId = String(directOrg).trim();
-      console.info('[assign] using direct top-level org from body', { finalOrganizationId, requestId: req.requestId ?? null });
+      debugAssign('[assign] using direct top-level org from body', { finalOrganizationId, requestId: req.requestId ?? null });
     }
   } catch (_) {}
   try {
@@ -1720,8 +1762,8 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       body.organization && body.organization.id,
       body.organization && body.organization.organization_id,
       body.organization && body.organization.organizationId,
-      req.headers['x-org-id'],
-      req.headers['x-organization-id'],
+      !isProduction ? req.headers['x-org-id'] : null,
+      !isProduction ? req.headers['x-organization-id'] : null,
       req.query && (req.query.organization_id || req.query.organizationId || req.query.orgId),
     );
   } catch (err) {
@@ -1734,10 +1776,10 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   // This ensures demo helpers that rely on sandbox org can run even if org resolution fails.
   if (!finalOrganizationId && isDemoOrTestMode) {
      finalOrganizationId = DEFAULT_SANDBOX_ORG_ID;
-     console.info('[assign][demo] forcing sandbox org for demo mode', { finalOrganizationId, requestId: req.requestId ?? null });
+     debugAssign('[assign][demo] forcing sandbox org for demo mode', { finalOrganizationId, requestId: req.requestId ?? null });
   }
 
-  console.info('[assign] initial org debug', {
+  debugAssign('[assign] initial org debug', {
     resolvedCandidate: finalOrganizationId,
     isTestMode: !!isTestMode,
     isDemoMode: !!isDemoMode,
@@ -1751,10 +1793,10 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     const resolvedOrg = await coerceOrgIdentifierToUuid(req, finalOrganizationId);
     if (resolvedOrg) {
       finalOrganizationId = resolvedOrg;
-      console.info('[assign] resolved org id to canonical UUID', { finalOrganizationId, requestId: req.requestId ?? null });
+      debugAssign('[assign] resolved org id to canonical UUID', { finalOrganizationId, requestId: req.requestId ?? null });
     }
   } catch (err) {
-    console.warn('[assign] failed to resolve org identifier', { error: err?.message || String(err), requestId: req.requestId ?? null });
+    debugAssign('[assign] failed to resolve org identifier', { error: err?.message || String(err), requestId: req.requestId ?? null });
   }
 
   // Additional strict header fallback: if client included an x-org-id/header and the
@@ -1762,9 +1804,9 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   if (!finalOrganizationId) {
     try {
       const headerOrgStrict = req.headers['x-org-id'] || req.headers['x-organization-id'];
-      if (headerOrgStrict) {
+      if (!isProduction && headerOrgStrict) {
         finalOrganizationId = Array.isArray(headerOrgStrict) ? String(headerOrgStrict[0]).trim() : String(headerOrgStrict).trim();
-        console.info('[assign] using strict headerOrgStrict fallback', { headerOrgStrict: finalOrganizationId, requestId: req.requestId ?? null });
+        debugAssign('[assign] using strict headerOrgStrict fallback', { headerOrgStrict: finalOrganizationId, requestId: req.requestId ?? null });
       }
     } catch (_) {}
   }
@@ -1778,15 +1820,15 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
 
     if (!isProduction && (isDemoOrTestMode || userRoleHeader === 'admin' || looksLocal)) {
       finalOrganizationId = DEFAULT_SANDBOX_ORG_ID;
-      console.info('[assign] using DEFAULT_SANDBOX_ORG_ID for demo/E2E/admin-header/localhost fallback', { finalOrganizationId, requestId: req.requestId ?? null, remoteIp, hostHeader });
+      debugAssign('[assign] using DEFAULT_SANDBOX_ORG_ID for demo/E2E/admin-header/localhost fallback', { finalOrganizationId, requestId: req.requestId ?? null, remoteIp, hostHeader });
     } else {
       res.locals = res.locals || {};
       res.locals.errorCode = 'organization_required';
       try {
-        console.error('[assign][ERR] organization_id missing', {
+        logger.warn('[assign] organization_id missing', {
           requestId: req.requestId ?? null,
-          headers: req.headers,
-          sampleBody: typeof req.body === 'object' ? JSON.stringify(req.body).slice(0, 2000) : String(req.body),
+          headersSummary: summarizeHeaders(req.headers),
+          bodySummary: summarizeRequestBody(req.body ?? null),
           finalOrganizationId: finalOrganizationId ?? null,
         });
       } catch (_) {}
@@ -2854,16 +2896,11 @@ app.use(setDoubleSubmitCSRF);
 // Protect all non-auth state-changing endpoints with CSRF tokens.
 app.use((req, res, next) => {
   const path = req.path || '';
-  console.log('[csrf] check', { path, method: req.method });
   if (
     path.startsWith('/api/auth') ||
     path.startsWith('/api/health') ||
-    path.startsWith('/api/ws') ||
-    path.startsWith('/api/analytics') ||
-    path.startsWith('/api/audit-log') ||
-    path.startsWith('/api/admin')
+    path.startsWith('/api/ws')
   ) {
-    console.log('[csrf] bypass', { path });
     return next();
   }
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -3002,7 +3039,7 @@ app.use((req, res, next) => {
       durationMs: ms,
       requestId,
       userId: req.user?.userId ?? null,
-      organizationId: req.activeOrgId ?? req.user?.organizationId ?? null,
+      organizationId: req.activeOrgId ?? null,
       authBypassed: Boolean(req.authBypassed),
       ip: req.ip,
     });
@@ -3468,6 +3505,11 @@ app.use('/api/admin', (req, res, next) => {
   if (req.path === '/me') {
     return next();
   }
+  // Surveys endpoints use `requireAdminAccess` (org-admin capable) on the individual
+  // routes; they must not be gated by the platform-admin `requireAdmin` barrier.
+  if (req.path === '/surveys' || req.path.startsWith('/surveys/')) {
+    return next();
+  }
   return authenticate(req, res, (err) => {
     if (err) {
       return next(err);
@@ -3736,6 +3778,28 @@ const isConflictConstraintMissing = (error) => {
   return error?.code === '42P10' || message.includes('no unique') && message.includes('on conflict');
 };
 
+// Supabase schema probes (head selects) should never hang a request.
+// We use a short timeout here because these checks may happen on hot paths
+// (e.g. learner survey lists) before the broader query-timeout helpers.
+const SUPABASE_SCHEMA_PROBE_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.SUPABASE_SCHEMA_PROBE_TIMEOUT_MS || 1500), 250),
+  8000,
+);
+
+const withSchemaProbeTimeout = (promise, label = 'supabase_schema_probe') =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${SUPABASE_SCHEMA_PROBE_TIMEOUT_MS}ms`);
+      err.code = 'SUPABASE_TIMEOUT';
+      err.label = label;
+      reject(err);
+    }, SUPABASE_SCHEMA_PROBE_TIMEOUT_MS);
+
+    Promise.resolve(promise)
+      .then((value) => { clearTimeout(timer); resolve(value); })
+      .catch((error) => { clearTimeout(timer); reject(error); });
+  });
+
 const detectAssignmentsUserIdUuidColumnAvailability = async () => {
   if (!supabase) return false;
   if (typeof assignmentsUserIdUuidColumnAvailable === 'boolean') {
@@ -3743,10 +3807,10 @@ const detectAssignmentsUserIdUuidColumnAvailability = async () => {
   }
 
   try {
-    const { error } = await supabase
-      .from('assignments')
-      .select('id', { head: true, count: 'exact' })
-      .is('user_id_uuid', null);
+    const { error } = await withSchemaProbeTimeout(
+      supabase.from('assignments').select('user_id_uuid', { head: true }).limit(1),
+      'schema.assignments.user_id_uuid',
+    );
     if (error) throw error;
     assignmentsUserIdUuidColumnAvailable = true;
   } catch (error) {
@@ -3770,10 +3834,10 @@ const detectAssignmentsOrganizationIdColumnAvailability = async () => {
   }
 
   try {
-    const { error } = await supabase
-      .from('assignments')
-      .select('id', { head: true, count: 'exact' })
-      .is('organization_id', null);
+    const { error } = await withSchemaProbeTimeout(
+      supabase.from('assignments').select('organization_id', { head: true }).limit(1),
+      'schema.assignments.organization_id',
+    );
     if (error) throw error;
     assignmentsOrganizationIdColumnAvailable = true;
   } catch (error) {
@@ -3985,6 +4049,10 @@ const e2eStore = {
   huddleReactions: new Map(persistedData.huddleReactions || []),
   huddleReports: new Map(persistedData.huddleReports || []),
   auditLogs: [],
+  gamificationProfiles: new Map(), // key user_id -> profile snapshot
+  userAchievements: [], // array of { user_id, org_id, achievement_type, achieved_at, metadata }
+  userActivity: [], // array of { user_id, org_id, activity_type, created_at, payload, event_id? }
+  orgEngagementMetrics: new Map(), // key org_id -> rollup
 };
 
 
@@ -4203,7 +4271,7 @@ const coerceOrgIdentifierToUuid = async (req, identifier) => {
     }
 
     const sandboxOrgAliases = new Set([DEFAULT_SANDBOX_ORG_ID, 'demo-org', 'demo-sandbox-org']);
-    if (sandboxOrgAliases.has(normalized)) {
+    if (!isProduction && sandboxOrgAliases.has(normalized)) {
       let fallbackOrgId = null;
       if (Array.isArray(req?.user?.memberships) && req.user.memberships.length > 0) {
         const directMatch = req.user.memberships.find((membership) => {
@@ -4224,7 +4292,9 @@ const coerceOrgIdentifierToUuid = async (req, identifier) => {
       if (!fallbackOrgId && req.user?.activeOrgId) {
         fallbackOrgId = normalizeOrgIdValue(req.user.activeOrgId);
       }
-      if (!fallbackOrgId && req.user?.organizationId) {
+      // Do not use req.user.organizationId as an implicit fallback in production.
+      // It may represent a non-deterministic first membership org.
+      if (!fallbackOrgId && !isProduction && req.user?.organizationId) {
         fallbackOrgId = normalizeOrgIdValue(req.user.organizationId);
       }
       if (!fallbackOrgId && Array.isArray(req.user?.organizationIds) && req.user.organizationIds.length > 0) {
@@ -4414,7 +4484,9 @@ const collectOrgIdsFromContext = (context = {}, req = {}) => {
   push(context.requestedOrgId);
   push(req.activeOrgId);
   push(req.user?.activeOrgId);
-  push(req.user?.organizationId);
+  if (!isProduction) {
+    push(req.user?.organizationId);
+  }
   return ids;
 };
 
@@ -4435,7 +4507,9 @@ const resolveOrgScopeForRequest = async (
     req.activeOrgId,
     req.user?.activeOrgId,
     context?.requestedOrgId,
-    req.user?.organizationId,
+    // req.user.organizationId is no longer a stable fallback when the user
+    // belongs to multiple orgs; rely on activeOrgId / explicit selection.
+    null,
   );
   let resolvedOrgId = null;
   for (const candidate of candidateIdentifiers) {
@@ -5675,14 +5749,16 @@ const loadSurveyRecordsByAssignmentIds = async (surveyIds = []) => {
     return emptyResult;
   }
 
-  const { data: surveyRows, error: surveyError } = await supabase
-    .from('surveys')
-    .select('*')
-    .in('id', resolvedIds);
-  if (surveyError) throw surveyError;
+  const surveyResult = await runTimedQuery('survey.records.load', () =>
+    supabase
+      .from('surveys')
+      .select('*')
+      .in('id', resolvedIds),
+  );
+  const surveyRows = Array.isArray(surveyResult?.data) ? surveyResult.data : [];
 
   const assignmentMap = await fetchSurveyAssignmentsMap(resolvedIds);
-  const hydratedRows = (surveyRows || []).map((row) => applyAssignmentToSurvey({ ...row }, assignmentMap.get(row.id)));
+  const hydratedRows = surveyRows.map((row) => applyAssignmentToSurvey({ ...row }, assignmentMap.get(row.id)));
   const surveyMap = new Map();
   hydratedRows.forEach((survey) => {
     if (!survey?.id) return;
@@ -5979,39 +6055,69 @@ const refreshSurveyAssignmentAggregates = async (surveyId) => {
   }
 };
 
-const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [], surveyFilter = [] } = {}) => {
+const ensureSurveyAssignmentsForUserFromOrgScope = async (
+  { userId, orgIds = [], surveyFilter = [], refreshAggregates = true } = {},
+) => {
   if (!supabase || !userId || !Array.isArray(orgIds) || orgIds.length === 0) return;
   try {
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const includeUserIdUuid = assignmentsSupportUserIdUuid && isUuid(userId);
 
-    let orgQuery = supabase
-      .from('assignments')
-      .select(SURVEY_ASSIGNMENT_SELECT)
-      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-      .in(assignmentsOrgColumn, orgIds)
-      .is('user_id', null)
-      .eq('active', true);
+    const ORG_ROLLUP_SELECT =
+      'survey_id,status,due_at,note,assigned_by,metadata,active,organization_id,org_id';
+    let orgQueryBuilder = () =>
+      supabase
+        .from('assignments')
+        .select(ORG_ROLLUP_SELECT)
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+        .in(assignmentsOrgColumn, orgIds)
+        .is('user_id', null)
+        .eq('active', true);
 
     if (Array.isArray(surveyFilter) && surveyFilter.length > 0) {
-      orgQuery = orgQuery.in('survey_id', surveyFilter);
+      const filter = [...surveyFilter];
+      const prev = orgQueryBuilder;
+      orgQueryBuilder = () => prev().in('survey_id', filter);
     }
 
-    const { data: orgAssignments, error: orgError } = await orgQuery;
-    if (orgError) throw orgError;
+    const orgResult = await runTimedQuery('survey.assignments.org_rollup', () => orgQueryBuilder());
+    const orgAssignments = Array.isArray(orgResult?.data) ? orgResult.data : [];
     if (!orgAssignments || orgAssignments.length === 0) return;
 
-    const surveyIds = Array.from(new Set(orgAssignments.map((row) => row?.survey_id).filter(Boolean)));
+    const sourceBySurveyId = new Map();
+    for (const row of orgAssignments) {
+      const surveyId = row?.survey_id ?? null;
+      if (!surveyId) continue;
+      if (!sourceBySurveyId.has(surveyId)) {
+        sourceBySurveyId.set(surveyId, row);
+      }
+    }
+    const surveyIds = Array.from(sourceBySurveyId.keys());
     if (surveyIds.length === 0) return;
 
-    const { data: existingRows, error: existingError } = await supabase
-      .from('assignments')
-      .select('survey_id')
-      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-      .eq('user_id', userId)
-      .in('survey_id', surveyIds);
-    if (existingError) throw existingError;
+    const loadExistingSurveyIds = async (column, value) => {
+      const result = await runTimedQuery('survey.assignments.existing_by_user', () =>
+        supabase
+          .from('assignments')
+          .select('survey_id')
+          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+          .eq(column, value)
+          .in('survey_id', surveyIds),
+      );
+      return Array.isArray(result?.data) ? result.data : [];
+    };
+
+    let existingRows = [];
+    if (assignmentsSupportUserIdUuid && isUuid(userId)) {
+      const [uuidRows, legacyRows] = await Promise.all([
+        loadExistingSurveyIds('user_id_uuid', userId).catch(() => []),
+        loadExistingSurveyIds('user_id', userId),
+      ]);
+      existingRows = [...uuidRows, ...legacyRows];
+    } else {
+      existingRows = await loadExistingSurveyIds('user_id', userId);
+    }
 
     const existingSet = new Set((existingRows || []).map((row) => row?.survey_id).filter(Boolean));
     const inserts = [];
@@ -6019,7 +6125,7 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
       if (existingSet.has(surveyId)) {
         return;
       }
-      const source = orgAssignments.find((row) => row?.survey_id === surveyId);
+      const source = sourceBySurveyId.get(surveyId) ?? null;
       if (!source) return;
       const sourceOrganizationId = getAssignmentOrganizationId(source);
       const insertRow = {
@@ -6048,11 +6154,12 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
 
     if (!inserts.length) return;
 
-    const { error: insertError } = await supabase.from('assignments').insert(inserts);
-    if (insertError) throw insertError;
+    await runTimedQuery('survey.assignments.materialize', () => supabase.from('assignments').insert(inserts));
 
-    const affectedSurveyIds = Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean)));
-    await Promise.all(affectedSurveyIds.map((surveyId) => refreshSurveyAssignmentAggregates(surveyId)));
+    if (refreshAggregates) {
+      const affectedSurveyIds = Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean)));
+      await Promise.all(affectedSurveyIds.map((surveyId) => refreshSurveyAssignmentAggregates(surveyId)));
+    }
   } catch (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
       logger.warn('survey_assignment_user_materialize_skipped', {
@@ -7527,17 +7634,47 @@ const requireOrgAccess = async (
     return { userId: context.userId, role: 'platform_admin', membership: null };
   }
 
-  try {
-    if (isDemoOrTestMode) {
-      if (FORCE_ORG_ENFORCEMENT) {
-        res.status(503).json({
-          error: 'org_membership_unavailable',
-          message: 'Organization enforcement is enabled but membership verification is unavailable in this environment.',
-        });
-        return null;
-      }
-      return { userId: context.userId, role: 'owner', membership: null };
-    }
+	  try {
+	    if (isDemoOrTestMode) {
+	      const membershipRows = Array.isArray(context.memberships) ? context.memberships : [];
+	      const membership = membershipRows.find(
+	        (row) => normalizeOrgIdValue(pickOrgId(row.orgId, row.organizationId, row.organization_id, row.org_id)) === String(orgId),
+	      ) ?? null;
+	      const membershipOrgIds = membershipRows
+	        .map((row) => normalizeOrgIdValue(pickOrgId(row.orgId, row.organizationId, row.organization_id, row.org_id)))
+	        .filter(Boolean);
+	      const orgIds = new Set([
+	        ...membershipOrgIds,
+	        ...(Array.isArray(context.organizationIds) ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean) : []),
+	      ]);
+
+	      // If we have an explicit membership/org scope in the request context (e.g. E2E tests),
+	      // enforce it even in demo/test mode to prevent cross-org admin actions.
+	      if (orgIds.size > 0 && !orgIds.has(String(orgId))) {
+	        res.status(403).json({ error: 'org_access_denied', message: 'You do not have access to this organization.' });
+	        return null;
+	      }
+
+	      if (requireOrgAdmin && !membership) {
+	        res.status(403).json({ error: 'org_access_denied', message: 'Organization admin role required.' });
+	        return null;
+	      }
+
+	      const memberRole = membership?.role ? String(membership.role).toLowerCase() : 'member';
+	      if (requireOrgAdmin && membership && !hasOrgAdminRole(memberRole)) {
+	        res.status(403).json({ error: 'org_access_denied', message: 'Organization admin role required.' });
+	        return null;
+	      }
+	      if (FORCE_ORG_ENFORCEMENT && orgIds.size === 0) {
+	        res.status(503).json({
+	          error: 'org_membership_unavailable',
+	          message: 'Organization enforcement is enabled but membership verification is unavailable in this environment.',
+	        });
+	        return null;
+	      }
+
+	      return { userId: context.userId, role: requireOrgAdmin ? memberRole : context.userRole, membership };
+	    }
 
     const membership = req.orgMemberships?.get(orgId) || (await resolveOrgMembership(req, orgId, context.userId));
     if (!membership || (membership.status && membership.status !== 'active')) {
@@ -12134,7 +12271,7 @@ app.get('/api/auth/verify', authenticate, (req, res) => {
       role: req.user.role,
       platformRole: req.user.platformRole || null,
       organizationIds: req.user.organizationIds || [],
-      activeOrgId: req.activeOrgId || req.user.organizationId || null,
+      activeOrgId: req.activeOrgId || null,
       memberships: req.user.memberships || [],
     },
   });
@@ -13976,7 +14113,6 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.body?.organizationId,
     req.activeOrgId,
     req.user?.activeOrgId,
-    req.user?.organizationId,
   ];
   // ...existing code...
   console.log('[admin-courses] handleAdminCourseUpsert start', { userId: context.userId, isPlatformAdmin: context.isPlatformAdmin });
@@ -15575,6 +15711,13 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
     });
     return;
   }
+  if (!context.isPlatformAdmin && scopedOrgIds.length === 0) {
+    res.status(403).json({
+      error: 'org_membership_required',
+      message: 'Organization membership is required to load assigned surveys.',
+    });
+    return;
+  }
 
   const parseBoolean = (value, defaultValue = true) => {
     if (value === undefined || value === null) return defaultValue;
@@ -15676,37 +15819,118 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
       authResolved: Boolean(context.userId),
     });
 
-    await ensureSurveyAssignmentsForUserFromOrgScope({
+    // ---------------------------------------------------------------------
+    // IMPORTANT: Never block the learner surveys list on org→user materialize.
+    //
+    // In real data sets, materializing org-level survey assignments into
+    // user-scoped assignments can take longer than the browser DAL timeout.
+    // We kick it off in the background and only wait briefly if the user has
+    // no assigned surveys yet.
+    // ---------------------------------------------------------------------
+
+    const materializePromise = ensureSurveyAssignmentsForUserFromOrgScope({
       userId: context.userId,
       orgIds: scopedOrgIds,
+      refreshAggregates: false,
     });
+
+    const materializeOutcome = materializePromise
+      .then(() => ({ state: 'done' }))
+      .catch((error) => ({ state: 'error', error }));
+
+    const waitForMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const MATERIALIZE_BUDGET_MS = Math.min(
+      Math.max(Number(process.env.SURVEY_ASSIGNMENT_MATERIALIZE_BUDGET_MS || 2500), 250),
+      8000,
+    );
 
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     const isUserIdUuid = isUuid(context.userId);
 
-    let assignmentQuery = supabase
-      .from('assignments')
-      .select(SURVEY_ASSIGNMENT_SELECT)
-      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE);
+    const loadAssignmentsForUser = async (column, value) => {
+      const buildQuery = () => {
+        let query = supabase
+          .from('assignments')
+          .select(SURVEY_ASSIGNMENT_SELECT)
+          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+          .eq(column, value);
+        if (scopedOrgIds.length > 0) {
+          query = query.in(assignmentsOrgColumn, scopedOrgIds);
+        }
+        if (!includeCompleted) {
+          query = query.eq('active', true).in('status', ['assigned', 'in-progress']);
+        }
+        return query;
+      };
+      const result = await runTimedQuery('survey.assigned.load_assignments', () => buildQuery());
+      return Array.isArray(result?.data) ? result.data : [];
+    };
 
-    if (assignmentsSupportUserIdUuid && isUserIdUuid) {
-      assignmentQuery = assignmentQuery.or(`user_id.eq.${context.userId},user_id_uuid.eq.${context.userId}`);
-    } else {
-      assignmentQuery = assignmentQuery.eq('user_id', context.userId);
+    const loadMergedUserAssignments = async () => {
+      if (assignmentsSupportUserIdUuid && isUserIdUuid) {
+        const [uuidRows, legacyRows] = await Promise.all([
+          loadAssignmentsForUser('user_id_uuid', context.userId).catch(() => []),
+          loadAssignmentsForUser('user_id', context.userId),
+        ]);
+        const merged = [...uuidRows, ...legacyRows];
+        const seen = new Set();
+        return merged.filter((row) => {
+          const id = row?.id ? String(row.id) : '';
+          if (!id) return false;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+      }
+      return loadAssignmentsForUser('user_id', context.userId);
+    };
+
+    let hydrationPending = false;
+    let assignments = [];
+    try {
+      assignments = await loadMergedUserAssignments();
+    } catch (error) {
+      if (isSupabaseTransientError(error)) {
+        res.status(503).json({
+          error: 'upstream_unavailable',
+          code: error?.code ?? 'SUPABASE_UNAVAILABLE',
+          message: 'Unable to load assigned surveys right now. Please retry.',
+        });
+        return;
+      }
+      throw error;
     }
 
-    if (scopedOrgIds.length > 0) {
-      assignmentQuery = assignmentQuery.in(assignmentsOrgColumn, scopedOrgIds);
+    if (assignments.length === 0) {
+      const outcome = await Promise.race([
+        materializeOutcome,
+        waitForMs(MATERIALIZE_BUDGET_MS).then(() => ({ state: 'timeout' })),
+      ]);
+
+      if (outcome?.state === 'done') {
+        assignments = await loadMergedUserAssignments();
+      } else if (outcome?.state === 'error') {
+        if (isSupabaseTransientError(outcome.error)) {
+          res.status(503).json({
+            error: 'upstream_unavailable',
+            code: outcome.error?.code ?? 'SUPABASE_UNAVAILABLE',
+            message: 'Unable to hydrate assigned surveys right now. Please retry.',
+          });
+          return;
+        }
+        logger.warn('client_assigned_surveys_materialize_failed', {
+          requestId: req.requestId ?? null,
+          userId: context.userId,
+          orgId: orgScope.orgId ?? null,
+          code: outcome.error?.code ?? null,
+          message: outcome.error?.message ?? String(outcome.error),
+        });
+      } else {
+        hydrationPending = true;
+      }
     }
 
-    if (!includeCompleted) {
-      assignmentQuery = assignmentQuery.eq('active', true).in('status', ['assigned', 'in-progress']);
-    }
-
-    const { data: assignmentRows, error: assignmentError } = await assignmentQuery;
-    if (assignmentError) throw assignmentError;
-    const assignments = assignmentRows || [];
     logger.info('client_assigned_surveys_fetched', {
       requestId: req.requestId ?? null,
       route: '/api/client/surveys/assigned',
@@ -15726,8 +15950,23 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
       rawRowCount: 0,
     };
     if (surveyIds.length) {
-      surveyResolution = await loadSurveyRecordsByAssignmentIds(surveyIds);
-      surveyMap = surveyResolution.surveyMap;
+      try {
+        surveyResolution = await loadSurveyRecordsByAssignmentIds(surveyIds);
+        surveyMap = surveyResolution.surveyMap;
+      } catch (error) {
+        if (isSupabaseTransientError(error)) {
+          logger.warn('client_assigned_surveys_survey_lookup_unavailable', {
+            requestId: req.requestId ?? null,
+            userId: context.userId,
+            orgId: orgScope.orgId ?? null,
+            code: error?.code ?? null,
+            message: error?.message ?? null,
+            surveyIdCount: surveyIds.length,
+          });
+        } else {
+          throw error;
+        }
+      }
     }
 
     const shaped = assignments.map((assignment) => ({
@@ -15751,7 +15990,13 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
       missingSurveyCount,
     });
 
-    res.json({ data: shaped });
+    res.json({
+      data: shaped,
+      meta: {
+        hydrationPending,
+        orgId: orgScope.orgId ?? null,
+      },
+    });
   } catch (error) {
     logger.error('client_assigned_surveys_failed', {
       requestId: req.requestId ?? null,
@@ -19750,7 +19995,31 @@ const normalizeReflectionText = (value) => {
   return '';
 };
 
+const normalizeReflectionAnswerMap = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (trimmed) out[key] = trimmed;
+    }
+  }
+  return out;
+};
+
+const normalizeReflectionStepOrder = (value) => {
+  if (!Array.isArray(value)) return null;
+  const out = value
+    .filter((entry) => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return out.length > 0 ? out : null;
+};
+
 const createEmptyReflectionResponseData = () => ({
+  version: 2,
+  answers: {},
+  step_order: null,
   prompt_response: '',
   deeper_reflection_1: '',
   deeper_reflection_2: '',
@@ -19762,12 +20031,27 @@ const createEmptyReflectionResponseData = () => ({
 
 const normalizeReflectionResponseData = (value) => {
   const record = value && typeof value === 'object' ? value : {};
+  const answers = normalizeReflectionAnswerMap(record.answers);
+  const stepOrder = normalizeReflectionStepOrder(record.step_order ?? record.stepOrder);
+  const promptResponseFallback =
+    answers.promptResponse ?? answers.prompt_response ?? answers.prompt ?? '';
+  const deeper1Fallback =
+    answers.deeperReflection1 ?? answers.deeper_reflection_1 ?? '';
+  const deeper2Fallback =
+    answers.deeperReflection2 ?? answers.deeper_reflection_2 ?? '';
+  const deeper3Fallback =
+    answers.deeperReflection3 ?? answers.deeper_reflection_3 ?? '';
+  const actionFallback =
+    answers.actionCommitment ?? answers.action_commitment ?? '';
   return {
-    prompt_response: normalizeReflectionText(record.prompt_response ?? record.promptResponse),
-    deeper_reflection_1: normalizeReflectionText(record.deeper_reflection_1 ?? record.deeperReflection1),
-    deeper_reflection_2: normalizeReflectionText(record.deeper_reflection_2 ?? record.deeperReflection2),
-    deeper_reflection_3: normalizeReflectionText(record.deeper_reflection_3 ?? record.deeperReflection3),
-    action_commitment: normalizeReflectionText(record.action_commitment ?? record.actionCommitment),
+    version: record.version === 2 ? 2 : 1,
+    answers,
+    step_order: stepOrder,
+    prompt_response: normalizeReflectionText(record.prompt_response ?? record.promptResponse ?? promptResponseFallback),
+    deeper_reflection_1: normalizeReflectionText(record.deeper_reflection_1 ?? record.deeperReflection1 ?? deeper1Fallback),
+    deeper_reflection_2: normalizeReflectionText(record.deeper_reflection_2 ?? record.deeperReflection2 ?? deeper2Fallback),
+    deeper_reflection_3: normalizeReflectionText(record.deeper_reflection_3 ?? record.deeperReflection3 ?? deeper3Fallback),
+    action_commitment: normalizeReflectionText(record.action_commitment ?? record.actionCommitment ?? actionFallback),
     current_step_id: normalizeReflectionText(record.current_step_id ?? record.currentStepId) || 'intro',
     submitted_at:
       typeof (record.submitted_at ?? record.submittedAt) === 'string'
@@ -19785,6 +20069,11 @@ const mergeReflectionResponseData = ({ responseData, responseText, status }) => 
   if (normalizeReflectionText(responseText) && !normalized.prompt_response) {
     normalized.prompt_response = normalizeReflectionText(responseText);
   }
+  if (normalized.prompt_response && normalized.answers && typeof normalized.answers === 'object') {
+    if (!normalized.answers.promptResponse) {
+      normalized.answers.promptResponse = normalized.prompt_response;
+    }
+  }
   if (status === 'submitted' && !normalized.submitted_at) {
     normalized.submitted_at = new Date().toISOString();
   }
@@ -19794,8 +20083,17 @@ const mergeReflectionResponseData = ({ responseData, responseText, status }) => 
   return normalized;
 };
 
-const summarizeReflectionResponseData = (responseData) =>
-  [
+const summarizeReflectionResponseData = (responseData) => {
+  const answers = responseData?.answers;
+  if (answers && typeof answers === 'object' && !Array.isArray(answers)) {
+    const order = normalizeReflectionStepOrder(responseData?.step_order) ?? null;
+    const keys = order ?? Object.keys(answers);
+    return keys
+      .map((key) => normalizeReflectionText(answers[key]))
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return [
     responseData?.prompt_response,
     responseData?.deeper_reflection_1,
     responseData?.deeper_reflection_2,
@@ -19805,6 +20103,7 @@ const summarizeReflectionResponseData = (responseData) =>
     .map((value) => normalizeReflectionText(value))
     .filter(Boolean)
     .join('\n\n');
+};
 
 const buildReflectionStoreKey = ({ orgId, courseId, lessonId, userId }) =>
   `${String(orgId || 'no-org').toLowerCase()}:${String(courseId).toLowerCase()}:${String(lessonId).toLowerCase()}:${String(userId).toLowerCase()}`;
@@ -19900,13 +20199,23 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
 
   if (!ensureSupabase(res)) return null;
 
-  let lessonResult = await supabase
+  const lessonResult = await supabase
     .from('lessons')
-    .select('id,course_id,module_id,title')
+    .select('id,module_id,title')
     .eq('id', lessonId)
     .maybeSingle();
   if (lessonResult.error) {
     if (isMissingRelationError(lessonResult.error) || isMissingColumnError(lessonResult.error)) {
+      if (courseId) {
+        return {
+          courseId: String(courseId),
+          lessonId: String(lessonId),
+          moduleId: null,
+          lessonTitle: null,
+          moduleTitle: null,
+          orgId,
+        };
+      }
       res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
       return null;
     }
@@ -19917,20 +20226,75 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
     return null;
   }
 
-  if (courseId && String(lessonResult.data.course_id) !== String(courseId)) {
-    const strictLessonResult = await supabase
-      .from('lessons')
-      .select('id,course_id,module_id,title')
-      .eq('id', lessonId)
-      .eq('course_id', courseId)
-      .maybeSingle();
-    if (!strictLessonResult.error && strictLessonResult.data) {
-      lessonResult = strictLessonResult;
+  const moduleId = lessonResult.data.module_id ?? null;
+  if (!moduleId) {
+    if (courseId) {
+      return {
+        courseId: String(courseId),
+        lessonId: String(lessonId),
+        moduleId: null,
+        lessonTitle: lessonResult.data.title ?? null,
+        moduleTitle: null,
+        orgId,
+      };
     }
+    res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection lesson is missing module context.' });
+    return null;
   }
 
-  const resolvedCourseId = lessonResult.data.course_id ?? courseId ?? null;
+  const moduleResult = await supabase
+    .from('modules')
+    .select('id,course_id,title')
+    .eq('id', moduleId)
+    .maybeSingle();
+  if (moduleResult.error) {
+    if (isMissingRelationError(moduleResult.error) || isMissingColumnError(moduleResult.error)) {
+      if (courseId) {
+        return {
+          courseId: String(courseId),
+          lessonId: String(lessonId),
+          moduleId,
+          lessonTitle: lessonResult.data.title ?? null,
+          moduleTitle: null,
+          orgId,
+        };
+      }
+      res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
+      return null;
+    }
+    throw moduleResult.error;
+  }
+  if (!moduleResult.data?.course_id) {
+    if (courseId) {
+      return {
+        courseId: String(courseId),
+        lessonId: String(lessonId),
+        moduleId,
+        lessonTitle: lessonResult.data.title ?? null,
+        moduleTitle: moduleResult.data?.title ?? null,
+        orgId,
+      };
+    }
+    res.status(404).json({ error: 'course_not_found', message: 'Course not found.' });
+    return null;
+  }
+
+  const resolvedCourseId = moduleResult.data.course_id ?? null;
+  if (courseId && String(resolvedCourseId) !== String(courseId)) {
+    res.status(404).json({ error: 'lesson_not_found', message: 'The requested reflection lesson was not found in this course.' });
+    return null;
+  }
   if (!resolvedCourseId) {
+    if (courseId) {
+      return {
+        courseId: String(courseId),
+        lessonId: String(lessonId),
+        moduleId,
+        lessonTitle: lessonResult.data.title ?? null,
+        moduleTitle: moduleResult.data?.title ?? null,
+        orgId,
+      };
+    }
     res.status(404).json({ error: 'course_not_found', message: 'Course not found.' });
     return null;
   }
@@ -19942,6 +20306,16 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
     .maybeSingle();
   if (courseResult.error) {
     if (isMissingRelationError(courseResult.error) || isMissingColumnError(courseResult.error)) {
+      if (courseId) {
+        return {
+          courseId: String(courseId),
+          lessonId: String(lessonId),
+          moduleId,
+          lessonTitle: lessonResult.data.title ?? null,
+          moduleTitle: moduleResult.data?.title ?? null,
+          orgId,
+        };
+      }
       res.status(503).json({ error: 'reflection_storage_unavailable', message: 'Reflection storage is not ready yet.' });
       return null;
     }
@@ -19960,22 +20334,12 @@ const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lesso
     return null;
   }
 
-  let moduleTitle = null;
-  if (lessonResult.data.module_id) {
-    const moduleResult = await supabase
-      .from('modules')
-      .select('id,title')
-      .eq('id', lessonResult.data.module_id)
-      .maybeSingle();
-    if (!moduleResult.error && moduleResult.data) {
-      moduleTitle = moduleResult.data.title ?? null;
-    }
-  }
+  const moduleTitle = moduleResult.data.title ?? null;
 
   return {
     courseId: String(resolvedCourseId),
     lessonId: String(lessonId),
-    moduleId: lessonResult.data.module_id ?? null,
+    moduleId,
     lessonTitle: lessonResult.data.title ?? null,
     moduleTitle,
     orgId: courseOrgId ?? orgId,
@@ -20105,6 +20469,33 @@ const handleLearnerReflectionPost = async (req, res) => {
     };
     e2eStore.lessonReflections.set(key, record);
     persistE2EStore();
+    // Best-effort Growth Journey: count submitted reflections once per lesson.
+    if (status === 'submitted' && isUuid(orgId) && isUuid(userId)) {
+      try {
+        const deterministicEventId = `reflection_submitted:${userId}:${lessonContext.courseId}:${lessonContext.lessonId}`;
+        await sql.begin(async (tx) => {
+          await processGamificationEvent(tx, {
+            userId: String(userId),
+            orgId: String(orgId),
+            courseId: String(lessonContext.courseId),
+            lessonId: String(lessonContext.lessonId),
+            eventType: 'reflection_saved',
+            source: 'reflection',
+            eventId: deterministicEventId,
+            payload: { status: 'submitted' },
+            occurredAt: nowIso,
+          });
+          await upsertOrgEngagementMetrics(tx, String(orgId));
+        });
+      } catch (gErr) {
+        logger.warn('gamification_reflection_demo_failed', {
+          requestId: req.requestId ?? null,
+          userId,
+          orgId,
+          message: gErr instanceof Error ? gErr.message : String(gErr),
+        });
+      }
+    }
     logger.info('learner_reflection_save_success', {
       requestId: req.requestId ?? null,
       userId,
@@ -20161,6 +20552,33 @@ const handleLearnerReflectionPost = async (req, res) => {
 
   if (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      // Best-effort Growth Journey: count submitted reflections once per lesson even when reflection storage is degraded.
+      if (status === 'submitted' && isUuid(orgId) && isUuid(userId)) {
+        try {
+          const deterministicEventId = `reflection_submitted:${userId}:${lessonContext.courseId}:${lessonContext.lessonId}`;
+          await sql.begin(async (tx) => {
+            await processGamificationEvent(tx, {
+              userId: String(userId),
+              orgId: String(orgId),
+              courseId: String(lessonContext.courseId),
+              lessonId: String(lessonContext.lessonId),
+              eventType: 'reflection_saved',
+              source: 'reflection',
+              eventId: deterministicEventId,
+              payload: { status: 'submitted' },
+              occurredAt: nowIso,
+            });
+            await upsertOrgEngagementMetrics(tx, String(orgId));
+          });
+        } catch (gErr) {
+          logger.warn('gamification_reflection_degraded_failed', {
+            requestId: req.requestId ?? null,
+            userId,
+            orgId,
+            message: gErr instanceof Error ? gErr.message : String(gErr),
+          });
+        }
+      }
       res.status(202).json({
         data: {
           id: `reflection-local-${Date.now()}`,
@@ -20205,6 +20623,35 @@ const handleLearnerReflectionPost = async (req, res) => {
     timingMs: Date.now() - saveStartedAt,
     mode: 'db',
   });
+  // Best-effort Growth Journey: count submitted reflections once per lesson.
+  if (status === 'submitted' && isUuid(orgId) && isUuid(userId)) {
+    try {
+      const deterministicEventId = `reflection_submitted:${userId}:${lessonContext.courseId}:${lessonContext.lessonId}`;
+      await sql.begin(async (tx) => {
+        await processGamificationEvent(tx, {
+          userId: String(userId),
+          orgId: String(orgId),
+          courseId: String(lessonContext.courseId),
+          lessonId: String(lessonContext.lessonId),
+          eventType: 'reflection_saved',
+          source: 'reflection',
+          eventId: deterministicEventId,
+          payload: { status: 'submitted' },
+          occurredAt: nowIso,
+        });
+        await upsertOrgEngagementMetrics(tx, String(orgId));
+      });
+    } catch (gErr) {
+      logger.warn('gamification_reflection_failed', {
+        requestId: req.requestId ?? null,
+        userId,
+        orgId,
+        lessonId: lessonContext.lessonId,
+        courseId: lessonContext.courseId,
+        message: gErr instanceof Error ? gErr.message : String(gErr),
+      });
+    }
+  }
   res.status(202).json({ data: shapeReflectionRecord(data ?? payload) });
 };
 
@@ -20381,22 +20828,17 @@ const handleAdminCourseReflectionsGet = async (req, res) => {
     return;
   }
 
-  const lessonResult = await supabase
-    .from('lessons')
-    .select('id,title,module_id')
-    .eq('course_id', courseId);
-  if (lessonResult.error) {
-    throw lessonResult.error;
+  const moduleGraphResult = await supabase
+    .from('modules')
+    .select('id,title,lessons:lessons!lessons_module_id_fkey(id,module_id,title)')
+    .eq('course_id', courseId)
+    .order('order_index', { ascending: true });
+  if (moduleGraphResult.error) {
+    throw moduleGraphResult.error;
   }
-  const lessons = Array.isArray(lessonResult.data) ? lessonResult.data : [];
-  const moduleIds = Array.from(new Set(lessons.map((lesson) => coerceString(lesson.module_id)).filter(Boolean)));
-  let moduleLookup = new Map();
-  if (moduleIds.length > 0) {
-    const moduleResult = await supabase.from('modules').select('id,title').in('id', moduleIds);
-    if (!moduleResult.error && Array.isArray(moduleResult.data)) {
-      moduleLookup = new Map(moduleResult.data.map((module) => [String(module.id).toLowerCase(), module]));
-    }
-  }
+  const modules = Array.isArray(moduleGraphResult.data) ? moduleGraphResult.data : [];
+  const moduleLookup = new Map(modules.map((module) => [String(module.id).toLowerCase(), module]));
+  const lessons = modules.flatMap((module) => (Array.isArray(module.lessons) ? module.lessons : []));
   const lessonContextById = new Map(
     lessons.map((lesson) => [
       String(lesson.id).toLowerCase(),
@@ -20606,6 +21048,224 @@ app.get('/api/client/activity', authenticate, async (req, res) => {
   }
 });
 
+// ─── GET /api/client/growth/profile ─────────────────────────────────────────
+// Returns the learner's Growth Journey profile (subtle gamification).
+const handleClientGrowthProfile = async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const userId = context.userId;
+
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    res.status(403).json({
+      ok: false,
+      code: 'org_selection_required',
+      message: 'Select an organization to view your Growth Journey.',
+      meta: { requestId: req.requestId ?? null },
+    });
+    return;
+  }
+  const orgId = orgScope?.orgId ?? null;
+  if (!orgId || !isUuid(orgId)) {
+    res.status(403).json({
+      ok: false,
+      code: 'org_selection_required',
+      message: 'Select an organization to view your Growth Journey.',
+      meta: { requestId: req.requestId ?? null },
+    });
+    return;
+  }
+
+  if (isDemoOrTestMode) {
+    const existing = e2eStore.gamificationProfiles.get(userId) || null;
+    const base = existing || {
+      user_id: userId,
+      org_id: orgId || DEFAULT_SANDBOX_ORG_ID,
+      level: 1,
+      growth_xp: 0,
+      lesson_completion_count: 0,
+      course_completion_count: 0,
+      scenario_completion_count: 0,
+      reflection_submission_count: 0,
+      learning_streak_count: 0,
+      reflection_streak_count: 0,
+      learning_grace_days_remaining: 2,
+      reflection_grace_days_remaining: 2,
+      last_learning_date: null,
+      last_reflection_date: null,
+      last_active_date: null,
+      scenario_score_samples: 0,
+      avg_empathy: 0,
+      avg_inclusion: 0,
+      avg_effectiveness: 0,
+      milestones: [],
+    };
+    const levelState = computeLevelProgress(base.growth_xp);
+    return res.json({
+      data: {
+        profile: base,
+        level: levelState.level,
+        progressToNextLevel: levelState.progressToNext,
+        streaks: {
+          learning: base.learning_streak_count,
+          reflection: base.reflection_streak_count,
+          learningGraceDaysRemaining: base.learning_grace_days_remaining,
+          reflectionGraceDaysRemaining: base.reflection_grace_days_remaining,
+        },
+        achievements: e2eStore.userAchievements
+          .filter((a) => a.user_id === userId)
+          .sort((a, b) => new Date(b.achieved_at).getTime() - new Date(a.achieved_at).getTime())
+          .slice(0, 12),
+        insights: deriveGrowthInsights(base),
+      },
+    });
+  }
+
+  if (!ensureSupabase(res)) return;
+  try {
+    await sql.begin(async (tx) => {
+      await tx`
+        insert into public.user_gamification_profile (user_id, org_id, last_active_date)
+        values (${userId}::uuid, ${orgId}::uuid, timezone('utc', now())::date)
+        on conflict (user_id) do nothing
+      `;
+    });
+
+    const [profile] = await sql`
+      select *
+      from public.user_gamification_profile
+      where user_id = ${userId}::uuid
+      limit 1
+    `;
+    const achievements = await sql`
+      select achievement_type, achieved_at, metadata
+      from public.user_achievements
+      where user_id = ${userId}::uuid
+      order by achieved_at desc
+      limit 24
+    `;
+
+    const levelState = computeLevelProgress(profile?.growth_xp ?? 0);
+    return res.json({
+      data: {
+        profile,
+        level: levelState.level,
+        progressToNextLevel: levelState.progressToNext,
+        streaks: {
+          learning: profile?.learning_streak_count ?? 0,
+          reflection: profile?.reflection_streak_count ?? 0,
+          learningGraceDaysRemaining: profile?.learning_grace_days_remaining ?? 2,
+          reflectionGraceDaysRemaining: profile?.reflection_grace_days_remaining ?? 2,
+        },
+        achievements: achievements || [],
+        insights: deriveGrowthInsights(profile),
+      },
+    });
+  } catch (error) {
+    const message = String(error?.message ?? '').toLowerCase();
+    const missing =
+      error?.code === '42P01' ||
+      message.includes('user_gamification_profile') ||
+      message.includes('user_achievements') ||
+      message.includes('org_engagement_metrics');
+    if (missing) {
+      const empty = {
+        user_id: userId,
+        org_id: orgId,
+        level: 1,
+        growth_xp: 0,
+        lesson_completion_count: 0,
+        course_completion_count: 0,
+        scenario_completion_count: 0,
+        reflection_submission_count: 0,
+        learning_streak_count: 0,
+        reflection_streak_count: 0,
+        learning_grace_days_remaining: 2,
+        reflection_grace_days_remaining: 2,
+        last_learning_date: null,
+        last_reflection_date: null,
+        last_active_date: null,
+        scenario_score_samples: 0,
+        avg_empathy: 0,
+        avg_inclusion: 0,
+        avg_effectiveness: 0,
+        milestones: [],
+      };
+      const levelState = computeLevelProgress(0);
+      return res.json({
+        data: {
+          profile: empty,
+          level: levelState.level,
+          progressToNextLevel: levelState.progressToNext,
+          streaks: {
+            learning: 0,
+            reflection: 0,
+            learningGraceDaysRemaining: 2,
+            reflectionGraceDaysRemaining: 2,
+          },
+          achievements: [],
+          insights: deriveGrowthInsights(empty),
+        },
+        meta: { degraded: true, reason: 'growth_journey_unavailable' },
+      });
+    }
+    logger.warn('client_growth_profile_failed', { userId, message: error?.message ?? String(error) });
+    return res.status(500).json({ error: 'Unable to fetch growth profile' });
+  }
+};
+
+app.get('/api/client/growth/profile', authenticate, handleClientGrowthProfile);
+app.get('/api/client/growth', authenticate, handleClientGrowthProfile);
+
+// ─── GET /api/client/growth/org ─────────────────────────────────────────────
+// Returns org-level Growth Journey rollups (shared progress, no leaderboards).
+app.get('/api/client/growth/org', authenticate, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    res.status(403).json({
+      ok: false,
+      code: 'org_selection_required',
+      message: 'Select an organization to view team growth.',
+      meta: { requestId: req.requestId ?? null },
+    });
+    return;
+  }
+  const orgId = orgScope.orgId;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  if (isDemoOrTestMode) {
+    const metrics = e2eStore.orgEngagementMetrics.get(orgId) || null;
+    return res.json({ data: metrics || { org_id: orgId, avg_learning_streak: 0, avg_reflection_streak: 0, completion_rate: 0, engagement_score: 0 } });
+  }
+
+  if (!ensureSupabase(res)) return;
+  try {
+    const [row] = await sql`
+      select *
+      from public.org_engagement_metrics
+      where org_id = ${orgId}::uuid
+      limit 1
+    `;
+    return res.json({
+      data: row || {
+        org_id: orgId,
+        avg_learning_streak: 0,
+        avg_reflection_streak: 0,
+        completion_rate: 0,
+        engagement_score: 0,
+      },
+    });
+  } catch (error) {
+    logger.warn('client_growth_org_failed', { orgId, message: error?.message ?? String(error) });
+    return res.status(500).json({ error: 'Unable to fetch org growth metrics' });
+  }
+});
+
 // ─── GET /api/admin/activity ────────────────────────────────────────────────
 // Returns real recent platform events from audit_logs, falling back to
 // synthesised events from analytics data in demo/E2E mode.
@@ -20653,6 +21313,77 @@ app.get('/api/admin/activity', authenticate, requireAdmin, async (req, res) => {
   } catch (err) {
     logger.warn('admin_activity_fetch_failed', { message: err?.message ?? String(err) });
     return res.status(500).json({ error: 'Unable to fetch activity feed' });
+  }
+});
+
+// ─── GET /api/admin/growth/overview ─────────────────────────────────────────
+// Premium, non-competitive engagement rollups for admins.
+app.get('/api/admin/growth/overview', authenticate, requireAdmin, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const orgId = normalizeOrgIdValue(req.query.org_id ?? req.query.orgId ?? req.query.organization_id ?? null);
+
+  if (isDemoOrTestMode) {
+    const profiles = Array.from(e2eStore.gamificationProfiles.values());
+    const filtered = orgId ? profiles.filter((p) => p.org_id === orgId) : profiles;
+    const total = filtered.length;
+    const avg = (key) => (total ? filtered.reduce((sum, p) => sum + Number(p[key] || 0), 0) / total : 0);
+    return res.json({
+      data: {
+        orgId: orgId ?? null,
+        totals: { learners: total },
+        averages: {
+          learningStreak: avg('learning_streak_count'),
+          reflectionStreak: avg('reflection_streak_count'),
+        },
+        achievements: [],
+      },
+    });
+  }
+
+  if (!ensureSupabase(res)) return;
+  try {
+    const whereOrg = orgId ? sql`where org_id = ${orgId}::uuid` : sql``;
+    const [summary] = await sql`
+      select
+        count(*)::int as total_profiles,
+        coalesce(avg(learning_streak_count), 0)::float as avg_learning_streak,
+        coalesce(avg(reflection_streak_count), 0)::float as avg_reflection_streak,
+        coalesce(avg(case when course_completion_count > 0 then 1 else 0 end), 0)::float as completion_rate,
+        coalesce(avg(
+          (least(learning_streak_count, 14) / 14.0)
+          + (least(reflection_submission_count, 8) / 8.0)
+          + (least(scenario_completion_count, 8) / 8.0)
+        ), 0)::float as engagement_score
+      from public.user_gamification_profile
+      ${whereOrg}
+    `;
+
+    const achievements = await sql`
+      select achievement_type, count(*)::int as count
+      from public.user_achievements
+      ${orgId ? sql`where org_id = ${orgId}::uuid` : sql``}
+      group by achievement_type
+      order by count desc
+      limit 20
+    `;
+
+    return res.json({
+      data: {
+        orgId: orgId ?? null,
+        summary: summary || {
+          total_profiles: 0,
+          avg_learning_streak: 0,
+          avg_reflection_streak: 0,
+          completion_rate: 0,
+          engagement_score: 0,
+        },
+        achievements: achievements || [],
+      },
+    });
+  } catch (error) {
+    logger.warn('admin_growth_overview_failed', { message: error?.message ?? String(error) });
+    return res.status(500).json({ error: 'Unable to fetch growth overview' });
   }
 });
 
@@ -20878,6 +21609,33 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
       percent: normalizedPercent,
     });
 
+    // Growth Journey: count course completion once (de-duped via deterministic event id).
+    if (normalizedCompleted && resolvedOrgId) {
+      try {
+        const deterministicEventId = clientEventId || `course_completed:${canonicalUserId}:${course_id}`;
+        await sql.begin(async (tx) => {
+          await processGamificationEvent(tx, {
+            userId: String(canonicalUserId),
+            orgId: String(resolvedOrgId),
+            courseId: course_id,
+            lessonId: null,
+            eventType: 'course_completed',
+            source: 'progress',
+            eventId: String(deterministicEventId),
+            payload: { percent: normalizedPercent, status: 'completed' },
+            occurredAt: data?.updated_at ?? new Date().toISOString(),
+          });
+          await upsertOrgEngagementMetrics(tx, String(resolvedOrgId));
+        });
+      } catch (gErr) {
+        logger.warn('gamification_progress_course_failed', {
+          userId: canonicalUserId,
+          courseId: course_id,
+          message: gErr instanceof Error ? gErr.message : String(gErr),
+        });
+      }
+    }
+
     res.json({ data: toApiCourseRecord(data, time_spent_s) });
   } catch (error) {
     recordCourseProgress('supabase', Date.now() - opStart, {
@@ -21076,6 +21834,41 @@ app.post('/api/client/progress/lesson', authenticate, async (req, res) => {
       percent: normalizedPercent,
     });
 
+    // Growth Journey: only count "completion" once per lesson (de-duped via deterministic event id).
+    if (normalizedCompleted) {
+      try {
+        const gamificationOrgId =
+          normalizeOrgIdValue(context.activeOrgId) ||
+          (Array.isArray(context.organizationIds)
+            ? context.organizationIds.map((id) => normalizeOrgIdValue(id)).find(Boolean)
+            : null) ||
+          null;
+        if (gamificationOrgId) {
+          const deterministicEventId = clientEventId || `lesson_completed:${resolvedUserId}:${lesson_id}`;
+          await sql.begin(async (tx) => {
+            await processGamificationEvent(tx, {
+              userId: String(resolvedUserId),
+              orgId: String(gamificationOrgId),
+              courseId: data?.course_id ?? null,
+              lessonId: lesson_id,
+              eventType: 'lesson_completed',
+              source: 'progress',
+              eventId: String(deterministicEventId),
+              payload: { percent: normalizedPercent, status: 'completed' },
+              occurredAt: data?.updated_at ?? new Date().toISOString(),
+            });
+            await upsertOrgEngagementMetrics(tx, String(gamificationOrgId));
+          });
+        }
+      } catch (gErr) {
+        logger.warn('gamification_progress_lesson_failed', {
+          userId: resolvedUserId,
+          lessonId: lesson_id,
+          message: gErr instanceof Error ? gErr.message : String(gErr),
+        });
+      }
+    }
+
     res.json({ data: toApiLessonRecord(data, time_spent_s, resume_at_s) });
   } catch (error) {
     recordLessonProgress('supabase', Date.now() - opStart, {
@@ -21242,6 +22035,73 @@ app.post('/api/client/progress/batch', authenticate, async (req, res) => {
     const resultRow = Array.isArray(data) ? data[0] || {} : data || {};
     const accepted = Array.isArray(resultRow.accepted) ? resultRow.accepted : [];
     const duplicates = Array.isArray(resultRow.duplicates) ? resultRow.duplicates : [];
+
+    // Growth Journey: best-effort completion signals from accepted batch events.
+    try {
+      if (accepted.length > 0) {
+        const byId = new Map(normalizedEvents.map((evt) => [evt.client_event_id, evt]));
+        const completionEvents = accepted
+          .map((id) => byId.get(id))
+          .filter(Boolean)
+          .map((evt) => {
+            const percent = typeof evt.percent === 'number' ? clampPercent(evt.percent) : null;
+            const normalizedStatus = typeof evt.status === 'string' ? evt.status : null;
+            const eventTypeRaw = typeof evt.event_type === 'string' ? evt.event_type : null;
+            const isLesson = Boolean(evt.lesson_id);
+            const isCourse = Boolean(evt.course_id) && !evt.lesson_id;
+            const completed =
+              eventTypeRaw === 'lesson_completed' ||
+              eventTypeRaw === 'course_completed' ||
+              normalizedStatus === 'completed' ||
+              (typeof percent === 'number' && percent >= 100);
+            if (!completed) return null;
+            return {
+              userId: evt.user_id,
+              orgId: evt.org_id,
+              courseId: evt.course_id ?? null,
+              lessonId: evt.lesson_id ?? null,
+              eventType: isLesson ? 'lesson_completed' : isCourse ? 'course_completed' : null,
+              eventId: evt.client_event_id,
+              occurredAt: evt.occurred_at ?? null,
+              payload: {
+                percent: typeof percent === 'number' ? percent : null,
+                status: 'completed',
+                sourceEventType: eventTypeRaw,
+              },
+            };
+          })
+          .filter(Boolean)
+          .filter((evt) => evt.eventType);
+
+        if (completionEvents.length) {
+          const orgIdForRollup = completionEvents[0]?.orgId ?? null;
+          await sql.begin(async (tx) => {
+            for (const evt of completionEvents) {
+              await processGamificationEvent(tx, {
+                userId: String(evt.userId),
+                orgId: String(evt.orgId),
+                courseId: evt.courseId,
+                lessonId: evt.lessonId,
+                eventType: evt.eventType,
+                source: 'progress_batch',
+                eventId: String(evt.eventId),
+                payload: evt.payload,
+                occurredAt: evt.occurredAt,
+              });
+            }
+            if (orgIdForRollup) {
+              await upsertOrgEngagementMetrics(tx, String(orgIdForRollup));
+            }
+          });
+        }
+      }
+    } catch (gErr) {
+      logger.warn('gamification_progress_batch_failed', {
+        requestId: req.requestId ?? null,
+        message: gErr instanceof Error ? gErr.message : String(gErr),
+      });
+    }
+
     recordProgressBatch({
       accepted: accepted.length,
       duplicates: duplicates.length,
@@ -21266,10 +22126,17 @@ app.post('/api/client/progress/batch', authenticate, async (req, res) => {
 // ---------------------------------------------------------------------------
 // Batch Analytics Events Endpoint (demo/E2E only for now)
 // ---------------------------------------------------------------------------
-app.post('/api/analytics/events/batch', async (req, res) => {
+app.post('/api/analytics/events/batch', optionalAuthenticate, async (req, res) => {
   const parsed = validateOr400(analyticsBatchSchema, req, res);
   if (!parsed) return;
   const events = parsed.events;
+  const context = getRequestContext(req);
+  const contextUserId = context?.userId ?? req.user?.userId ?? req.user?.id ?? null;
+  if (!isDemoOrTestMode && !contextUserId) {
+    return sendApiError(res, 401, 'authentication_required', 'Authentication required.', {
+      meta: { requestId: req.requestId ?? null },
+    });
+  }
   const allowHeaderWithoutMembership = req.membershipStatus && req.membershipStatus !== 'ready';
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !allowHeaderWithoutMembership }) || null;
   const cookieOrgId = getActiveOrgFromRequest(req);
@@ -21336,29 +22203,94 @@ app.post('/api/analytics/events/batch', async (req, res) => {
   // Supabase placeholder: just accept (Phase 3 persistence)
   if (!ensureSupabase(res)) return;
   try {
-    const accepted = eventsWithOrg.map(
-      (e) => e.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    const toEventType = (evt) => String(evt.event_type ?? evt.type ?? '').trim();
+    const toPayload = (evt) =>
+      scrubAnalyticsPayload(
+        (evt.payload && typeof evt.payload === 'object' ? evt.payload : null) ??
+          (evt.data && typeof evt.data === 'object' ? evt.data : {}),
+      );
+
+    const rows = eventsWithOrg
+      .map((evt) => {
+        const eventType = toEventType(evt);
+        if (!eventType) return null;
+        const rawUserId = typeof evt.user_id === 'string' ? evt.user_id.trim() : null;
+        // Store only UUID user ids; never persist emails.
+        const safeUserId = rawUserId && isUuid(rawUserId) ? rawUserId : null;
+        return {
+          // id is generated by DB unless client_event_id is UUID and we choose to re-use as primary key in single ingest.
+          org_id: isUuid(evt.org_id || '') ? evt.org_id : null,
+          user_id: safeUserId,
+          course_id: typeof evt.course_id === 'string' ? evt.course_id : null,
+          lesson_id: typeof evt.lesson_id === 'string' ? evt.lesson_id : null,
+          module_id: typeof evt.module_id === 'string' ? evt.module_id : null,
+          event_type: eventType,
+          session_id: typeof evt.session_id === 'string' ? evt.session_id : null,
+          user_agent: typeof evt.user_agent === 'string' ? evt.user_agent : null,
+          payload: toPayload(evt),
+          client_event_id: typeof evt.client_event_id === 'string' ? evt.client_event_id : null,
+          created_at:
+            typeof evt.timestamp === 'number' && Number.isFinite(evt.timestamp)
+              ? new Date(evt.timestamp).toISOString()
+              : typeof evt.created_at === 'string'
+              ? evt.created_at
+              : undefined,
+        };
+      })
+      .filter(Boolean);
+
+    if (rows.length === 0) {
+      return sendApiResponse(
+        res,
+        { accepted: [], duplicates: [], failed: [], skippedMissingOrg: missingOrgEvents.length },
+        { code: 'analytics_batch_empty', message: 'No analytics events to ingest.' },
+      );
+    }
+
+    let upsertResult = await supabase
+      .from('analytics_events')
+      .upsert(rows, { onConflict: 'client_event_id', ignoreDuplicates: true })
+      .select('client_event_id');
+
+    if (upsertResult.error) {
+      const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(upsertResult.error));
+      if (missingColumn === 'client_event_id' || missingColumn === 'org_id') {
+        // Legacy schema fallback: drop the missing columns and persist remaining data.
+        const fallbackRows = rows.map((row) => {
+          const next = { ...row };
+          delete next.client_event_id;
+          delete next.org_id;
+          // Preserve org context inside payload for later aggregation.
+          next.payload = { ...(next.payload || {}), org_id: row.org_id ?? null };
+          return next;
+        });
+        upsertResult = await supabase.from('analytics_events').insert(fallbackRows, { returning: 'minimal' });
+      }
+    }
+
+    if (upsertResult.error) throw upsertResult.error;
+
+    const accepted = rows
+      .map((row) => row.client_event_id)
+      .filter((id) => typeof id === 'string' && id.length > 0);
+
+    return sendApiResponse(
+      res,
+      {
+        accepted,
+        duplicates: [],
+        failed: [],
+        skippedMissingOrg: missingOrgEvents.length,
+      },
+      { code: 'analytics_batch_ingested', message: 'Analytics batch ingested.' },
     );
-    res.json({
-      accepted,
-      duplicates: [],
-      failed: [],
-      meta: {
-        skippedMissingOrg: missingOrgEvents.length,
-      },
-    });
   } catch (error) {
-    console.error('Failed to process analytics batch:', error);
-    res.status(200).json({
-      accepted: [],
-      duplicates: [],
-      failed: eventsWithOrg.map((evt) => ({
-        id: evt.client_event_id || 'unknown',
-        reason: 'exception',
-      })),
-      meta: {
-        skippedMissingOrg: missingOrgEvents.length,
-      },
+    logger.error('analytics_batch_ingest_failed', {
+      requestId: req.requestId ?? null,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return sendApiError(res, 500, 'analytics_batch_failed', 'Unable to ingest analytics batch.', {
+      meta: { requestId: req.requestId ?? null, skippedMissingOrg: missingOrgEvents.length },
     });
   }
 });
@@ -26242,6 +27174,28 @@ app.post('/api/admin/surveys/:id/assign', requireAdminAccess, async (req, res) =
     rawUserIdCount: normalizedUserIds.length,
   });
 
+  if (!context.isPlatformAdmin && organizationIds.length > 0) {
+    const membershipOrgIds = (Array.isArray(context.memberships) ? context.memberships : [])
+      .map((row) => normalizeOrgIdValue(pickOrgId(row.orgId, row.organizationId, row.organization_id, row.org_id)))
+      .filter(Boolean)
+      .map((value) => String(value));
+    const scopedOrgIds = new Set([
+      ...membershipOrgIds,
+      ...(Array.isArray(context.organizationIds) ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean).map((value) => String(value)) : []),
+    ]);
+    const deniedOrgIds = organizationIds
+      .map((value) => normalizeOrgIdValue(value))
+      .filter(Boolean)
+      .filter((value) => !scopedOrgIds.has(String(value)));
+    if (deniedOrgIds.length > 0) {
+      res.status(403).json({
+        error: 'org_access_denied',
+        message: 'You do not have admin access to one or more requested organizations.',
+      });
+      return;
+    }
+  }
+
   const dueProvided = hasBodyKey('due_at') || hasBodyKey('dueAt');
   const noteProvided = hasBodyKey('note');
 
@@ -26998,7 +27952,7 @@ app.get('/api/admin/surveys/:id/assignments', requireAdminAccess, async (req, re
 
     let query = supabase
       .from('assignments')
-      .select(SURVEY_ASSIGNMENT_SELECT, { count: 'exact' })
+      .select(SURVEY_ASSIGNMENT_SELECT, { count: 'planned' })
       .eq('survey_id', surveyId)
       .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
       .order('updated_at', { ascending: false, nullsFirst: false })
@@ -27116,21 +28070,27 @@ app.get('/api/admin/surveys/:id/hdi/participant-report', requireAdminAccess, asy
     return;
   }
 
-  try {
-    const limit = clampNumber(parseInt(req.query.limit, 10) || 500, 1, 2000);
-    let query = supabase
-      .from('survey_responses')
-      .select('*')
-      .eq('survey_id', surveyRecord.id)
-      .order('completed_at', { ascending: false, nullsFirst: false })
-      .limit(limit);
-
-    if (organizationId) {
-      query = query.eq('organization_id', organizationId);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
+	  try {
+	    const limit = clampNumber(parseInt(req.query.limit, 10) || 500, 1, 2000);
+	    const runQuery = async (orgColumn) => {
+	      let query = supabase
+	        .from('survey_responses')
+	        .select('*')
+	        .eq('survey_id', surveyRecord.id)
+	        .order('completed_at', { ascending: false, nullsFirst: false })
+	        .limit(limit);
+	      if (organizationId) {
+	        query = query.eq(orgColumn, organizationId);
+	      }
+	      return query;
+	    };
+	    let data = null;
+	    let error = null;
+	    ({ data, error } = await runQuery('organization_id'));
+	    if (error && isMissingColumnError(error)) {
+	      ({ data, error } = await runQuery('org_id'));
+	    }
+	    if (error) throw error;
 
     const participantFilter =
       typeof req.query.participant === 'string' && req.query.participant.trim().length
@@ -27184,24 +28144,30 @@ app.get('/api/admin/surveys/:id/hdi/cohort-analytics', requireAdminAccess, async
     return;
   }
 
-  try {
-    const limit = clampNumber(parseInt(req.query.limit, 10) || 2000, 1, 5000);
-    let query = supabase
-      .from('survey_responses')
-      .select('*')
-      .eq('survey_id', surveyRecord.id)
-      .order('completed_at', { ascending: false, nullsFirst: false })
-      .limit(limit);
+	  try {
+	    const limit = clampNumber(parseInt(req.query.limit, 10) || 2000, 1, 5000);
+	    const runQuery = async (orgColumn) => {
+	      let query = supabase
+	        .from('survey_responses')
+	        .select('*')
+	        .eq('survey_id', surveyRecord.id)
+	        .order('completed_at', { ascending: false, nullsFirst: false })
+	        .limit(limit);
+	      if (organizationId) {
+	        query = query.eq(orgColumn, organizationId);
+	      }
+	      return query;
+	    };
+	    let data = null;
+	    let error = null;
+	    ({ data, error } = await runQuery('organization_id'));
+	    if (error && isMissingColumnError(error)) {
+	      ({ data, error } = await runQuery('org_id'));
+	    }
+	    if (error) throw error;
 
-    if (organizationId) {
-      query = query.eq('organization_id', organizationId);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const analytics = buildHdiCohortAnalytics(data || []);
-    res.json(
+	    const analytics = buildHdiCohortAnalytics(data || []);
+	    res.json(
       createHdiResponseEnvelope(HDI_RESPONSE_SHAPES.COHORT_ANALYTICS, analytics, {
         surveyId: surveyRecord.id,
         organizationId: organizationId ?? null,
@@ -27252,26 +28218,33 @@ app.get('/api/admin/surveys/:id/hdi/pre-post-comparison', requireAdminAccess, as
   }
 
   try {
-    logger.info('[survey] admin_results_query', {
-      requestId: req.requestId ?? null,
-      surveyId: surveyRecord.id,
-      userId: context.userId,
-      organizationId: organizationId ?? null,
-      userIdFilter,
-      limit,
-    });
-    let query = supabase
-      .from('survey_responses')
-      .select('*')
-      .eq('survey_id', surveyRecord.id)
-      .order('completed_at', { ascending: false, nullsFirst: false })
-      .limit(2000);
-    if (organizationId) {
-      query = query.eq('organization_id', organizationId);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
+	    logger.info('[survey] admin_results_query', {
+	      requestId: req.requestId ?? null,
+	      surveyId: surveyRecord.id,
+	      userId: context.userId,
+	      organizationId: organizationId ?? null,
+	      userIdFilter,
+	      limit,
+	    });
+	    const runQuery = async (orgColumn) => {
+	      let query = supabase
+	        .from('survey_responses')
+	        .select('*')
+	        .eq('survey_id', surveyRecord.id)
+	        .order('completed_at', { ascending: false, nullsFirst: false })
+	        .limit(2000);
+	      if (organizationId) {
+	        query = query.eq(orgColumn, organizationId);
+	      }
+	      return query;
+	    };
+	    let data = null;
+	    let error = null;
+	    ({ data, error } = await runQuery('organization_id'));
+	    if (error && isMissingColumnError(error)) {
+	      ({ data, error } = await runQuery('org_id'));
+	    }
+	    if (error) throw error;
 
     const records = (data || [])
       .map((row) => toHdiRecord(row))
@@ -27416,22 +28389,74 @@ app.get('/api/admin/surveys/:id/results', requireAdminAccess, async (req, res) =
     return;
   }
 
+  if (!supabase && isDemoOrTestMode) {
+    const rawRows = Array.isArray(e2eStore?.surveyResponses) ? e2eStore.surveyResponses : [];
+    const normalizedSurveyId = String(surveyRecord.id ?? id);
+    const normalizedOrgId = organizationId ? String(organizationId) : null;
+    const normalizedUserId = userIdFilter ? String(userIdFilter) : null;
+
+    const filtered = rawRows
+      .filter((row) => {
+        if (!row) return false;
+        if (String(row.survey_id ?? row.surveyId ?? '') !== normalizedSurveyId) return false;
+        if (normalizedOrgId) {
+          const rowOrgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+          if (!rowOrgId) return false;
+          if (String(rowOrgId) !== normalizedOrgId) return false;
+        }
+        if (normalizedUserId) {
+          const rowUserId = row.user_id ?? row.userId ?? null;
+          if (!rowUserId) return false;
+          if (String(rowUserId).trim().toLowerCase() !== normalizedUserId) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aTs = Date.parse(a?.completed_at || a?.completedAt || '') || 0;
+        const bTs = Date.parse(b?.completed_at || b?.completedAt || '') || 0;
+        return bTs - aTs;
+      })
+      .slice(0, limit);
+
+    res.json({
+      data: filtered,
+      meta: {
+        surveyId: surveyRecord.id,
+        count: filtered.length,
+        organizationId: organizationId ?? null,
+      },
+    });
+    return;
+  }
+
   try {
-    let query = supabase
-      .from('survey_responses')
-      .select('id,survey_id,user_id,organization_id,assignment_id,response,status,metadata,completed_at,created_at')
-      .eq('survey_id', surveyRecord.id)
-      .order('completed_at', { ascending: false, nullsFirst: false })
-      .limit(limit);
+    const primarySelect =
+      'id,survey_id,user_id,organization_id,assignment_id,response,status,metadata,completed_at,created_at';
+    const fallbackSelect =
+      'id,survey_id,user_id,org_id,assignment_id,response,status,metadata,completed_at,created_at';
 
-    if (organizationId) {
-      query = query.eq('organization_id', organizationId);
-    }
-    if (userIdFilter) {
-      query = query.eq('user_id', userIdFilter);
-    }
+    const runQuery = async ({ orgColumn, selectColumns }) => {
+      let query = supabase
+        .from('survey_responses')
+        .select(selectColumns)
+        .eq('survey_id', surveyRecord.id)
+        .order('completed_at', { ascending: false, nullsFirst: false })
+        .limit(limit);
+      if (organizationId) {
+        query = query.eq(orgColumn, organizationId);
+      }
+      if (userIdFilter) {
+        query = query.eq('user_id', userIdFilter);
+      }
+      return query;
+    };
 
-    const { data, error } = await query;
+    let data = null;
+    let error = null;
+    ({ data, error } = await runQuery({ orgColumn: 'organization_id', selectColumns: primarySelect }));
+    if (error && isMissingColumnError(error)) {
+      ({ data, error } = await runQuery({ orgColumn: 'org_id', selectColumns: fallbackSelect }));
+    }
     if (error) throw error;
 
     res.json({
@@ -28686,6 +29711,36 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
         return;
       }
       throw error;
+    }
+
+    // Best-effort Growth Journey updates (never block analytics ingestion).
+    try {
+      const gamificationUserId = context?.userId || req.user?.userId || req.user?.id || null;
+      const gamificationOrgId = resolvedOrgId || null;
+      const gamificationEventId = normalizedClientEventId || data?.id || null;
+      const occurredAt = data?.created_at || new Date().toISOString();
+      if (gamificationUserId && gamificationOrgId) {
+        await sql.begin(async (tx) => {
+          await processGamificationEvent(tx, {
+            userId: String(gamificationUserId),
+            orgId: String(gamificationOrgId),
+            courseId: course_id ?? null,
+            lessonId: lesson_id ?? null,
+            eventType: normalizedEvent,
+            source: 'analytics',
+            eventId: gamificationEventId ? String(gamificationEventId) : null,
+            payload: sanitizedPayload,
+            occurredAt,
+          });
+          await upsertOrgEngagementMetrics(tx, String(gamificationOrgId));
+        });
+      }
+    } catch (gErr) {
+      logger.warn('gamification_update_failed', {
+        requestId: req.requestId ?? null,
+        eventType: normalizedEvent,
+        message: gErr instanceof Error ? gErr.message : String(gErr),
+      });
     }
 
     respondStored({ data });

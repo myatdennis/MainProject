@@ -278,7 +278,28 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const nextLesson = currentLesson && course ? getNextLesson(currentLesson, course) : null;
   const canGoPrevious = Boolean(previousLesson);
   const canGoNext = Boolean(nextLesson);
-  const isReflectionLessonLayout = currentLesson?.type === 'reflection';
+  const useWideLessonLayout = useMemo(() => {
+    if (!currentLesson) return false;
+    const type = String((currentLesson as any).type || '').toLowerCase();
+    if (type === 'reflection' || type === 'scenario') return true;
+    const content: any = (currentLesson as any).content ?? {};
+    const guided = content?.guidedReflection ?? content?.guided_reflection ?? null;
+    const hasGuidedSteps =
+      guided &&
+      Array.isArray((guided as any).steps) &&
+      (guided as any).steps.some((step: any) => step && typeof step === 'object' && step.responseType && step.responseType !== 'none');
+    const hasPrompt = Boolean(
+      (typeof content?.prompt === 'string' && content.prompt.trim()) ||
+        (typeof content?.reflectionPrompt === 'string' && content.reflectionPrompt.trim()) ||
+        (guided && typeof (guided as any).prompt === 'string' && (guided as any).prompt.trim()),
+    );
+    return Boolean(content?.collectResponse === true || content?.allowReflection === true || hasGuidedSteps || hasPrompt);
+  }, [currentLesson]);
+  const currentLessonNumber = useMemo(() => {
+    if (!currentLesson) return null;
+    const idx = courseLessons.findIndex((lesson) => lesson.id === currentLesson.id);
+    return idx >= 0 ? idx + 1 : null;
+  }, [courseLessons, currentLesson]);
 
   const calculateOverallPercent = useCallback(
     (progressMap: Record<string, number>, completedSet: Set<string>) => {
@@ -629,6 +650,14 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       }
       return next;
     });
+  }, []);
+
+  const scrollToCourseOutline = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById('course-outline');
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }, []);
 
   useEffect(() => {
@@ -1684,102 +1713,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                 </div>
               );
             })()}
-
-            {isReflectionLessonLayout ? (
-              <div className="p-6">
-                <div className="mx-auto w-full max-w-[900px] space-y-8">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <h2 className="font-heading text-3xl font-bold leading-tight text-charcoal sm:text-4xl">
-                        {currentLesson.title}
-                      </h2>
-                      {currentLesson.description && (
-                        <p className="mt-2 text-[15px] leading-7 text-slate/75 sm:text-base">
-                          {currentLesson.description}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <IconToggle onClick={addBookmark} icon={<Bookmark className="h-4 w-4" />} label="Bookmark lesson" />
-                      <IconToggle onClick={() => setShowNotes(!showNotes)} icon={<MessageCircle className="h-4 w-4" />} label="Toggle notes" active={showNotes} />
-                      <IconToggle onClick={() => setShowTranscript(!showTranscript)} icon={<FileText className="h-4 w-4" />} label="Toggle transcript" active={showTranscript} />
-                    </div>
-                  </div>
-
-                  <LessonContent
-                    lesson={currentLesson}
-                    courseId={course.id}
-                    learnerId={learnerId}
-                    onComplete={() => void markLessonComplete()}
-                    onSubmitAndAdvance={
-                      currentLesson ? () => completeLessonAndAdvance(currentLesson) : undefined
-                    }
-                    onShowQuizModal={setShowQuizModal}
-                  />
-
-                  {showTranscript && currentLesson.content.transcript && (
-                    <TranscriptPanel transcript={currentLesson.content.transcript} currentTime={currentTime} onSeek={handleSeek} />
-                  )}
-
-                  {showNotes && (
-                    <NotesPanel
-                      notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
-                      bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
-                      noteText={noteText}
-                      onNoteTextChange={setNoteText}
-                      onAddNote={addNote}
-                    />
-                  )}
-
-                  <div className="flex flex-col gap-4 border-t border-mist/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
-                    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-mist bg-white px-3 py-2 text-xs text-slate/80 sm:text-sm">
-                      <span>Autoplay next lesson</span>
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-mist text-skyblue focus:ring-skyblue"
-                        checked={autoplayNextLesson}
-                        onChange={(event) => setAutoplayNextLesson(event.target.checked)}
-                      />
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => navigateLesson('prev')}
-                        disabled={!canGoPrevious}
-                        leadingIcon={<ArrowLeft className="h-4 w-4" />}
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        onClick={() => navigateLesson('next')}
-                        disabled={!canGoNext}
-                        trailingIcon={<ArrowRight className="h-4 w-4" />}
-                      >
-                        Next
-                      </Button>
-                      <Button
-                        variant="success"
-                        onClick={() => void markLessonComplete()}
-                        leadingIcon={<CheckCircle className="h-4 w-4" />}
-                      >
-                        Mark complete
-                      </Button>
-                    </div>
-                  </div>
-
-                  {nextLesson && (
-                    <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-skyblue">Up next</p>
-                      <p className="mt-2 text-sm font-semibold text-charcoal">{nextLesson.title}</p>
-                      <p className="mt-1 text-xs text-slate/70">
-                        {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next” anytime to keep momentum.'}
-                      </p>
-                    </Card>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+            <div
+              className={cn(
+                'grid gap-6 p-6',
+                useWideLessonLayout ? 'lg:grid-cols-1' : 'lg:grid-cols-[minmax(0,1fr)_280px]',
+              )}
+            >
                 <div className="space-y-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -1789,9 +1728,46 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
+                      <span className="hidden text-xs font-medium text-slate/60 sm:inline">
+                        {currentLessonNumber ? `Lesson ${currentLessonNumber} of ${courseLessons.length}` : null}
+                      </span>
+                      <span className="hidden h-5 w-px bg-mist sm:inline" aria-hidden="true" />
+                      <span className={cn(!useWideLessonLayout && 'lg:hidden')}>
+                        <IconToggle onClick={scrollToCourseOutline} icon={<BookOpen className="h-4 w-4" />} label="Jump to course outline" />
+                      </span>
                       <IconToggle onClick={addBookmark} icon={<Bookmark className="h-4 w-4" />} label="Bookmark lesson" />
                       <IconToggle onClick={() => setShowNotes(!showNotes)} icon={<MessageCircle className="h-4 w-4" />} label="Toggle notes" active={showNotes} />
                       <IconToggle onClick={() => setShowTranscript(!showTranscript)} icon={<FileText className="h-4 w-4" />} label="Toggle transcript" active={showTranscript} />
+                    </div>
+                  </div>
+
+                  <div
+                    className={cn(
+                      'flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-mist bg-white/80 px-4 py-3 shadow-card-sm',
+                      !useWideLessonLayout && 'lg:hidden',
+                    )}
+                  >
+                    <div className="text-xs font-medium text-slate/70">
+                      {currentLessonNumber ? `Lesson ${currentLessonNumber} of ${courseLessons.length}` : 'Lesson navigation'}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateLesson('prev')}
+                        disabled={!canGoPrevious}
+                        leadingIcon={<ArrowLeft className="h-4 w-4" />}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => navigateLesson('next')}
+                        disabled={!canGoNext}
+                        trailingIcon={<ArrowRight className="h-4 w-4" />}
+                      >
+                        Next lesson
+                      </Button>
                     </div>
                   </div>
 
@@ -1812,41 +1788,79 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                 </div>
 
                 <div className="space-y-6">
-                  {nextLesson && (
-                    <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
-                      <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Next step</p>
-                      <p className="mt-2 text-sm font-semibold text-charcoal">Up next: {nextLesson.title}</p>
-                      <p className="mt-1 text-xs text-slate/70">
-                        {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next lesson” anytime to keep momentum.'}
-                      </p>
-                      <Button size="sm" className="mt-3" onClick={() => navigateLesson('next')}>
-                        Start next lesson
-                      </Button>
-                    </Card>
-                  )}
+                  {useWideLessonLayout ? (
+                    <>
+                      <NavigationPanel
+                        onPrevious={() => navigateLesson('prev')}
+                        onNext={() => navigateLesson('next')}
+                        canGoPrevious={canGoPrevious}
+                        canGoNext={canGoNext}
+                        onMarkComplete={() => void markLessonComplete()}
+                        autoplayNextLesson={autoplayNextLesson}
+                        onAutoplayNextLessonChange={setAutoplayNextLesson}
+                      />
 
-                  {showNotes && (
-                    <NotesPanel
-                      notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
-                      bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
-                      noteText={noteText}
-                      onNoteTextChange={setNoteText}
-                      onAddNote={addNote}
-                    />
-                  )}
+                      {nextLesson && (
+                        <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
+                          <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Up next</p>
+                          <p className="mt-2 text-sm font-semibold text-charcoal">{nextLesson.title}</p>
+                          <p className="mt-1 text-xs text-slate/70">
+                            {autoplayNextLesson ? 'Autoplay is on — we’ll advance automatically when this lesson ends.' : 'Use “Next lesson” anytime to keep momentum.'}
+                          </p>
+                          <Button size="sm" className="mt-3" onClick={() => navigateLesson('next')}>
+                            Start next lesson
+                          </Button>
+                        </Card>
+                      )}
 
-                  <NavigationPanel
-                    onPrevious={() => navigateLesson('prev')}
-                    onNext={() => navigateLesson('next')}
-                    canGoPrevious={canGoPrevious}
-                    canGoNext={canGoNext}
-                    onMarkComplete={() => void markLessonComplete()}
-                    autoplayNextLesson={autoplayNextLesson}
-                    onAutoplayNextLessonChange={setAutoplayNextLesson}
-                  />
+                      {showNotes && (
+                        <NotesPanel
+                          notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
+                          bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
+                          noteText={noteText}
+                          onNoteTextChange={setNoteText}
+                          onAddNote={addNote}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {nextLesson && (
+                        <Card tone="muted" className="border border-skyblue/20 bg-skyblue/5">
+                          <p className="text-xs uppercase tracking-[0.2em] text-skyblue font-semibold">Next step</p>
+                          <p className="mt-2 text-sm font-semibold text-charcoal">Up next: {nextLesson.title}</p>
+                          <p className="mt-1 text-xs text-slate/70">
+                            {autoplayNextLesson ? 'Autoplay is on — we’ll move you forward automatically when this lesson ends.' : 'Use “Next lesson” anytime to keep momentum.'}
+                          </p>
+                          <Button size="sm" className="mt-3" onClick={() => navigateLesson('next')}>
+                            Start next lesson
+                          </Button>
+                        </Card>
+                      )}
+
+                      {showNotes && (
+                        <NotesPanel
+                          notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
+                          bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
+                          noteText={noteText}
+                          onNoteTextChange={setNoteText}
+                          onAddNote={addNote}
+                        />
+                      )}
+
+                      <NavigationPanel
+                        onPrevious={() => navigateLesson('prev')}
+                        onNext={() => navigateLesson('next')}
+                        canGoPrevious={canGoPrevious}
+                        canGoNext={canGoNext}
+                        onMarkComplete={() => void markLessonComplete()}
+                        autoplayNextLesson={autoplayNextLesson}
+                        onAutoplayNextLessonChange={setAutoplayNextLesson}
+                      />
+                    </>
+                  )}
                 </div>
               </div>
-            )}
           </Card>
         </div>
       </div>
@@ -1899,10 +1913,12 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       )}
 
       {completionFeedback && (
-        <div className="pointer-events-none fixed bottom-6 right-6 z-50 animate-pulse rounded-xl border border-emerald-200 bg-white/95 px-4 py-3 shadow-card">
+        <div className="pointer-events-none fixed bottom-6 right-6 z-50 rounded-xl border border-emerald-200 bg-white/95 px-4 py-3 shadow-card">
           <div className="flex items-center gap-2 text-sm text-emerald-800">
             <CheckCircle className="h-4 w-4" />
-            <span className="font-medium">Nice work — “{completionFeedback.lessonTitle}” completed.</span>
+            <span className="font-medium">
+              “{completionFeedback.lessonTitle}” complete. Nice work—this is how growth happens.
+            </span>
           </div>
         </div>
       )}
@@ -2151,7 +2167,7 @@ const CourseOutline: React.FC<{
     progress?.lessonProgress.find((lp) => lp.lessonId === lessonId);
 
   return (
-    <div className="space-y-4">
+    <div id="course-outline" className="space-y-4">
       {(course.chapters || []).map((chapter, index) => {
         const expanded = expandedChapters.has(chapter.id);
         return (
@@ -2386,15 +2402,20 @@ const LessonContent: React.FC<{
   const lessonType = lesson.type;
   const isReflectionLesson = lessonType === 'reflection';
   const isTextLesson = lessonType === 'text';
+  const guidedReflection = (lesson.content as any)?.guidedReflection ?? (lesson.content as any)?.guided_reflection ?? null;
   const reflectionPrompt =
     lesson.content?.prompt ||
     lesson.content?.reflectionPrompt ||
+    (guidedReflection && typeof guidedReflection.prompt === 'string' ? guidedReflection.prompt : '') ||
     (lesson.content as any)?.question ||
     '';
   const reflectionEnabled =
     isReflectionLesson ||
     lesson.content?.collectResponse === true ||
     Boolean(lesson.content?.allowReflection) ||
+    (guidedReflection &&
+      Array.isArray((guidedReflection as any).steps) &&
+      (guidedReflection as any).steps.some((step: any) => step && typeof step === 'object' && step.responseType && step.responseType !== 'none')) ||
     Boolean(reflectionPrompt);
   const reflectionRequired = isReflectionLesson || lesson.content?.requireReflection === true;
   const linkedSurveyId =

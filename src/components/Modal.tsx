@@ -15,23 +15,33 @@ interface ModalProps {
 const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidth = 'md', ariaLabel, closeOnOverlayClick = true }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleIdRef = useRef(`modal-title-${Math.random().toString(36).slice(2, 10)}`);
   const bodyIdRef = useRef(`modal-body-${Math.random().toString(36).slice(2, 10)}`);
   // Theme detection (fallback to light if not provided)
   const theme = typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? 'dark' : 'light';
   useEffect(() => {
+    let timeoutId: number | null = null;
     if (isOpen) {
       previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       document.body.style.overflow = 'hidden';
-      // Focus trap
-      setTimeout(() => {
+      // Initial focus: close button when available, otherwise the dialog panel.
+      // Keep tabIndex out of the tab order (see below) and focus imperatively for accessibility.
+      const focusTarget = () => {
+        const closeButton = closeButtonRef.current;
+        if (closeButton) {
+          closeButton.focus();
+          return;
+        }
         modalRef.current?.focus();
-      }, 100);
+      };
+      timeoutId = window.setTimeout(focusTarget, 0);
     } else {
       document.body.style.overflow = 'unset';
       previousFocusRef.current?.focus();
     }
     return () => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
       document.body.style.overflow = 'unset';
     };
   }, [isOpen]);
@@ -132,7 +142,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidt
               initial="hidden"
               animate="visible"
               exit="exit"
-              tabIndex={0}
+              tabIndex={-1}
               aria-label={ariaLabel || undefined}
               aria-labelledby={title ? titleIdRef.current : undefined}
               aria-describedby={bodyIdRef.current}
@@ -145,6 +155,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidt
                   <button
                     type="button"
                     onClick={onClose}
+                    ref={closeButtonRef}
                     className={`transition-colors focus:outline-none focus:ring-2 rounded-full modal-close`}
                     aria-label="Close modal"
                   >

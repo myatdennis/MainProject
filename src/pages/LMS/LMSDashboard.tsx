@@ -16,6 +16,9 @@ import { courseStore } from '../../store/courseStore';
 import { normalizeCourse } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress } from '../../utils/courseProgress';
 import apiRequest from '../../utils/apiClient';
+import { fetchGrowthProfile, type GrowthProfileResponse } from '../../dal/growth';
+import GrowthJourneyCard from '../../components/Growth/GrowthJourneyCard';
+import AchievementsCard from '../../components/Growth/AchievementsCard';
 
 type ProgressSummary = {
   modulesCompleted: number;
@@ -47,6 +50,8 @@ const LMSDashboard = () => {
   const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [growth, setGrowth] = useState<GrowthProfileResponse | null>(null);
+  const [growthLoading, setGrowthLoading] = useState(true);
 
   const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
   const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
@@ -99,6 +104,22 @@ const LMSDashboard = () => {
       }
     })();
     return () => { active = false; };
+  }, []);
+
+  // Load Growth Journey (subtle gamification profile)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const next = await fetchGrowthProfile();
+        if (active) setGrowth(next);
+      } finally {
+        if (active) setGrowthLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -306,6 +327,19 @@ const LMSDashboard = () => {
 
         {/* Sidebar */}
         <div className="space-y-6">
+          <GrowthJourneyCard
+            loading={growthLoading}
+            level={growth?.level ?? 1}
+            progressToNextLevel={growth?.progressToNextLevel ?? 0}
+            learningStreak={growth?.streaks?.learning ?? 0}
+            reflectionStreak={growth?.streaks?.reflection ?? 0}
+            learningGraceDaysRemaining={growth?.streaks?.learningGraceDaysRemaining ?? 2}
+            reflectionGraceDaysRemaining={growth?.streaks?.reflectionGraceDaysRemaining ?? 2}
+            insights={growth?.insights ?? null}
+          />
+
+          <AchievementsCard achievements={growth?.achievements ?? []} loading={growthLoading} />
+
           {/* Quick Actions */}
           <div className="card-lg card-hover">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>

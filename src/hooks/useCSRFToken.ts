@@ -35,13 +35,18 @@ export function useCSRFToken() {
         }
 
         try {
-          const response = await apiRequest<{ csrfToken?: string; token?: string }>('/api/auth/csrf', {
+          const response = await apiRequest<any>('/api/auth/csrf', {
             method: 'GET',
             allowAnonymous: true,
             timeoutMs: 4000,
           });
 
-          const csrfToken = response?.csrfToken ?? response?.token ?? null;
+          const csrfToken =
+            response?.csrfToken ??
+            response?.token ??
+            response?.data?.csrfToken ??
+            response?.data?.token ??
+            null;
           if (csrfToken) {
             setToken(csrfToken);
           }

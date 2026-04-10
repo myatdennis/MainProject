@@ -98,35 +98,23 @@ export function csrfProtection(req, res, next) {
   const token = req.headers[CSRF_HEADER_NAME] || req.body?._csrf;
   
   if (!token) {
-    return res.status(403).json({
-      error: 'CSRF token missing',
-      message: 'CSRF token is required for this request',
-    });
+    return res.status(403).json({ ok: false, data: null, code: 'csrf_missing', message: 'CSRF token is required for this request', meta: null });
   }
   
   // Verify token
   const storedToken = tokenStore.get(sessionId);
   
   if (!storedToken) {
-    return res.status(403).json({
-      error: 'Invalid session',
-      message: 'No CSRF token found for this session',
-    });
+    return res.status(403).json({ ok: false, data: null, code: 'csrf_invalid_session', message: 'No CSRF token found for this session', meta: null });
   }
   
   if (storedToken.expires < Date.now()) {
     tokenStore.delete(sessionId);
-    return res.status(403).json({
-      error: 'CSRF token expired',
-      message: 'Please refresh and try again',
-    });
+    return res.status(403).json({ ok: false, data: null, code: 'csrf_expired', message: 'Please refresh and try again', meta: null });
   }
   
   if (storedToken.token !== token) {
-    return res.status(403).json({
-      error: 'Invalid CSRF token',
-      message: 'CSRF token validation failed',
-    });
+    return res.status(403).json({ ok: false, data: null, code: 'csrf_invalid', message: 'CSRF token validation failed', meta: null });
   }
   
   next();
@@ -165,9 +153,7 @@ export function getCSRFToken(req, res) {
     const token = createSessionToken(sessionId);
     tokenData = { token, expires: Date.now() + (24 * 60 * 60 * 1000) };
   }
-  res.json({
-    csrfToken: tokenData.token,
-  });
+  res.json({ ok: true, data: { csrfToken: tokenData.token }, code: 'csrf_token_issued', message: null, meta: null });
 }
 
 // ============================================================================
@@ -189,16 +175,10 @@ export function doubleSubmitCSRF(req, res, next) {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   const headerToken = req.headers[CSRF_HEADER_NAME];
   if (!cookieToken || !headerToken) {
-    return res.status(403).json({
-      error: 'CSRF token missing',
-      message: 'CSRF protection requires both cookie and header token',
-    });
+    return res.status(403).json({ ok: false, data: null, code: 'csrf_missing', message: 'CSRF protection requires both cookie and header token', meta: null });
   }
   if (cookieToken !== headerToken) {
-    return res.status(403).json({
-      error: 'Invalid CSRF token',
-      message: 'CSRF token mismatch',
-    });
+    return res.status(403).json({ ok: false, data: null, code: 'csrf_mismatch', message: 'CSRF token mismatch', meta: null });
   }
   next();
 }
@@ -207,7 +187,6 @@ export function doubleSubmitCSRF(req, res, next) {
  * Set CSRF cookie for double-submit pattern
  */
 export function setDoubleSubmitCSRF(req, res, next) {
-  console.log('[csrf] setDoubleSubmitCSRF', { path: req.path, method: req.method });
   if (!req.cookies?.[CSRF_COOKIE_NAME]) {
     const token = generateCSRFToken();
     res.cookie('csrf_token', token, {

@@ -47,6 +47,38 @@ const parseBoolean = (value, fallback = false) => {
 };
 
 const devLoginDiagnosticsEnabled = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+const MIN_PASSWORD_LENGTH = Number(process.env.MIN_PASSWORD_LENGTH || 12);
+
+const validatePasswordStrength = (password, email) => {
+  const issues = [];
+  const pwd = typeof password === 'string' ? password : '';
+  const normalizedEmail = typeof email === 'string' ? normalizeEmail(email) : '';
+
+  if (!pwd || pwd.length < MIN_PASSWORD_LENGTH) {
+    issues.push(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+  }
+  if (normalizedEmail && pwd.toLowerCase().includes(normalizedEmail.split('@')[0])) {
+    issues.push('Password must not contain your email or username.');
+  }
+
+  const hasLower = /[a-z]/.test(pwd);
+  const hasUpper = /[A-Z]/.test(pwd);
+  const hasNumber = /\d/.test(pwd);
+  const hasSymbol = /[^A-Za-z0-9]/.test(pwd);
+  const variety = [hasLower, hasUpper, hasNumber, hasSymbol].filter(Boolean).length;
+  if (variety < 3) {
+    issues.push('Use a mix of letters, numbers, and symbols.');
+  }
+
+  if (/^(.)\1+$/.test(pwd)) {
+    issues.push('Password is too repetitive.');
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+  };
+};
 
 const getBearerToken = (req) => {
   if (!req?.headers) {
@@ -409,8 +441,11 @@ const refreshSessionFromToken = async (refreshToken) => {
 const router = express.Router();
 
 router.use((req, _res, next) => {
-  const { method, originalUrl, headers } = req;
-  console.log(`[AUTH ROUTER] ${method} ${originalUrl} origin=${headers.origin || 'n/a'}`);
+  // Avoid noisy/sensitive auth request logging in production.
+  if (!isProduction && devLoginDiagnosticsEnabled) {
+    const { method, originalUrl, headers } = req;
+    console.log(`[AUTH ROUTER] ${method} ${originalUrl} origin=${headers.origin || 'n/a'}`);
+  }
   next();
 });
 
@@ -507,7 +542,7 @@ const loginHandler = async (req, res) => {
     if (authError || !data?.user || !data.session) {
       console.warn('[AUTH LOGIN] invalid credentials', {
         requestId,
-        email: normalizedEmail,
+        emailSuffix: typeof normalizedEmail === 'string' ? normalizedEmail.slice(-6) : null,
         ip: clientIp,
         error: authError?.message || authError || null,
       });
@@ -559,8 +594,9 @@ const loginHandler = async (req, res) => {
   }
 };
 
-router.post('/login', loginHandler);
-router.post('/api/auth/login', loginHandler);
+// Rate-limit login to reduce credential stuffing/account enumeration.
+router.post('/login', authLimiter, loginHandler);
+router.post('/api/auth/login', authLimiter, loginHandler);
 
 // ============================================================================
 // Register
@@ -584,6 +620,17 @@ router.post('/register', authLimiter, async (req, res) => {
     }
 
     const normalizedEmail = normalizeEmail(email);
+
+    const strength = validatePasswordStrength(password, normalizedEmail);
+    if (!strength.ok) {
+      return res.status(400).json({
+        ok: false,
+        code: 'WEAK_PASSWORD',
+        error: 'weak_password',
+        message: 'Please choose a stronger password.',
+        issues: strength.issues,
+      });
+    }
 
     // Check user_profiles for existing account — this project stores user data in user_profiles
     const { data: existingUsers } = await supabase
@@ -730,7 +777,8 @@ router.post('/register', authLimiter, async (req, res) => {
 // Token Refresh
 // ============================================================================
 
-router.post('/refresh', async (req, res) => {
+// Refresh can be abused for token brute forcing / session churn.
+router.post('/refresh', authLimiter, async (req, res) => {
   try {
     const bodyRefreshToken =
       typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
@@ -789,7 +837,7 @@ router.post('/refresh', async (req, res) => {
 // Logout (public endpoint – clears cookies even without a valid session)
 // ============================================================================
 
-router.post('/logout', async (req, res) => {
+router.post('/logout', authLimiter, async (req, res) => {
   try {
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : null;
 
@@ -928,7 +976,7 @@ router.get('/verify', async (req, res) => {
     valid: true,
     user: req.user,
     memberships: req.user?.memberships || [],
-    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+    activeOrgId: req.activeOrgId || null,
   });
 });
 

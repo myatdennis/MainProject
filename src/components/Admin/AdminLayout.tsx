@@ -630,9 +630,9 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             </Card>
           </div>
 
-          <Button variant="ghost" className="w-full justify-center" leadingIcon={<LogOut className="h-4 w-4" />} onClick={handleLogout}>
-            Logout
-          </Button>
+          {/* <Button variant="ghost" className="w-full justify-center" leadingIcon={<LogOut className="h-4 w-4" />} onClick={handleLogout}>
+             Logout
+           </Button> */}
         </div>
       </aside>
 
@@ -700,6 +700,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 onClick={() => startNavTransition(() => { void navigate('/admin/surveys/builder'); })}
               >
                 New survey
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                leadingIcon={<LogOut className="h-4 w-4" />}
+                onClick={() => void handleLogout()}
+                className="hidden lg:inline-flex"
+              >
+                Logout
               </Button>
               <div className="relative" ref={menuRef}>
                 <button

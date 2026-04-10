@@ -40,13 +40,9 @@ let cachedFetch: FetchLike | null = null;
 
 async function resolveFetch(): Promise<FetchLike> {
   if (cachedFetch) return cachedFetch;
-  if (typeof globalThis.fetch === 'function') {
-    cachedFetch = globalThis.fetch.bind(globalThis) as FetchLike;
-    return cachedFetch;
-  }
-  const mod = await import('node-fetch');
-  const impl = (mod as any).default ?? mod;
-  cachedFetch = impl as FetchLike;
+  // Prefer node-fetch over Node's built-in fetch (undici) for test stability.
+  // Some sandboxed environments block undici's socket connections (EPERM) even for localhost.
+  cachedFetch = (fetch as unknown) as FetchLike;
   return cachedFetch;
 }
 
@@ -587,7 +583,12 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
     const iss = `${normalizedUrl}/auth/v1`;
 
     const effectiveRole = (claims.role || 'admin').toLowerCase();
-    const effectivePlatformRole = claims.platformRole || (effectiveRole === 'admin' ? 'platform_admin' : null);
+    const effectivePlatformRole =
+      claims.platformRole ??
+      claims.platform_role ??
+      (claims.app_metadata && typeof claims.app_metadata === 'object' ? claims.app_metadata.platform_role : null) ??
+      (claims.appMetadata && typeof claims.appMetadata === 'object' ? claims.appMetadata.platform_role : null) ??
+      null;
 
     let testUser: TestUser;
     if (effectiveRole === 'member') {
@@ -598,6 +599,11 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
       testUser = TEST_USERS.orgAdmin;
     }
 
+    const normalizedPlatformRole =
+      typeof effectivePlatformRole === 'string' && effectivePlatformRole.trim()
+        ? effectivePlatformRole.trim().toLowerCase()
+        : null;
+
     const payload: Record<string, any> = {
       ...claims,
       sub: claims.userId || testUser.id,
@@ -605,7 +611,7 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
       role: claims.role || testUser.role,
       app_metadata: {
         ...(claims.app_metadata || {}),
-        platform_role: effectivePlatformRole,
+        ...(normalizedPlatformRole ? { platform_role: normalizedPlatformRole } : {}),
       },
       iss,
       aud: 'authenticated',

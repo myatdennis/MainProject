@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-08T20:30:44.150Z",
+        "published_at": "2026-04-09T21:14:37.470Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -158,51 +158,32 @@
   "surveyAssignments": [],
   "lessonReflections": [
     [
-      "demo-sandbox-org:e2e-course-1775680263114:lesson-reflection-1775680263100:00000000-0000-0000-0000-000000000002",
+      "demo-sandbox-org:e2e-course-1775769278903:2869360f-ef5c-4200-961b-bd52cc206101:eabd0230-2a38-4af4-b623-480388c4970c",
       {
-        "id": "reflection-mnqi6qe2-foqy3u",
+        "id": "reflection-mnrz6h4t-4c6yba",
         "organization_id": "demo-sandbox-org",
-        "course_id": "e2e-course-1775680263114",
-        "module_id": "ee62524c-72eb-4a9e-85ba-6bff1096782b",
-        "lesson_id": "lesson-reflection-1775680263100",
-        "user_id": "00000000-0000-0000-0000-000000000002",
-        "response_text": "I need to slow down and listen more carefully.",
+        "course_id": "e2e-course-1775769278903",
+        "module_id": "7eafa824-ca8a-411b-bc18-55a614757c4c",
+        "lesson_id": "2869360f-ef5c-4200-961b-bd52cc206101",
+        "user_id": "eabd0230-2a38-4af4-b623-480388c4970c",
+        "response_text": "I will apply this in my next team retrospective.",
         "response_data": {
-          "prompt_response": "I need to slow down and listen more carefully.",
+          "version": 1,
+          "answers": {
+            "promptResponse": "I will apply this in my next team retrospective."
+          },
+          "step_order": null,
+          "prompt_response": "I will apply this in my next team retrospective.",
           "deeper_reflection_1": "",
           "deeper_reflection_2": "",
           "deeper_reflection_3": "",
           "action_commitment": "",
-          "current_step_id": "initial",
+          "current_step_id": "intro",
           "submitted_at": null
         },
         "status": "draft",
-        "created_at": "2026-04-08T20:31:11.641Z",
-        "updated_at": "2026-04-08T20:31:11.641Z"
-      }
-    ],
-    [
-      "demo-sandbox-org:e2e-course-1775680273167:lesson-reflection-1775680273166:00000000-0000-0000-0000-000000000002",
-      {
-        "id": "reflection-mnqi6tr8-g8i37p",
-        "organization_id": "demo-sandbox-org",
-        "course_id": "e2e-course-1775680273167",
-        "module_id": "f4e081d0-665a-4d48-a67f-25fbc5961022",
-        "lesson_id": "lesson-reflection-1775680273166",
-        "user_id": "00000000-0000-0000-0000-000000000002",
-        "response_text": "I will pause before reacting.",
-        "response_data": {
-          "prompt_response": "I will pause before reacting.",
-          "deeper_reflection_1": "",
-          "deeper_reflection_2": "",
-          "deeper_reflection_3": "",
-          "action_commitment": "",
-          "current_step_id": "review",
-          "submitted_at": "2026-04-08T20:31:16.000Z"
-        },
-        "status": "submitted",
-        "created_at": "2026-04-08T20:31:16.004Z",
-        "updated_at": "2026-04-08T20:31:16.004Z"
+        "created_at": "2026-04-09T21:14:39.293Z",
+        "updated_at": "2026-04-09T21:14:39.293Z"
       }
     ]
   ],

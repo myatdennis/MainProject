@@ -1,5 +1,6 @@
 import apiRequest from '../utils/apiClient';
 import type { ReflectionResponseData } from '../utils/reflectionFlow';
+import { buildOrgHeaders } from '../utils/orgHeaders';
 
 export type LearnerReflection = {
   id: string;
@@ -27,6 +28,7 @@ export const reflectionService = {
     const params = new URLSearchParams({ courseId });
     const response = await apiRequest<{ data?: LearnerReflection | null }>(
       `/api/learner/lessons/${encodeURIComponent(lessonId)}/reflection?${params.toString()}`,
+      { headers: buildOrgHeaders() },
     );
     return response?.data ?? null;
   },
@@ -43,6 +45,7 @@ export const reflectionService = {
       {
       method: 'POST',
       body: payload,
+      headers: buildOrgHeaders(),
     });
     return response?.data ?? null;
   },

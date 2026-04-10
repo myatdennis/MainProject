@@ -162,6 +162,26 @@ const hasOrgAdminRole = (role) => {
   return ORG_ADMIN_ROLES.has(String(role).toLowerCase());
 };
 
+const normalizeTokenMemberships = (user = {}) => {
+  const raw = user?.app_metadata?.memberships;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const orgId = entry.orgId ?? entry.organizationId ?? entry.organization_id ?? entry.org_id ?? null;
+      if (!orgId) return null;
+      const role = entry.role ?? entry.userRole ?? null;
+      const statusRaw = entry.status ?? entry.membershipStatus ?? null;
+      const normalizedStatus = typeof statusRaw === 'string' ? statusRaw.toLowerCase() : statusRaw === true ? 'active' : null;
+      return {
+        orgId: String(orgId),
+        role: role ? String(role).toLowerCase() : null,
+        status: normalizedStatus || 'active',
+      };
+    })
+    .filter(Boolean);
+};
+
 const derivePlatformRole = (user = {}) => {
   const metadataRole =
     user.app_metadata?.platform_role ||
@@ -407,39 +427,79 @@ const resolveDemoBypassRole = (req) => {
 };
 
 const buildJwtAuthContextPayload = (claims = {}) => {
-  const organizationId = typeof claims.organizationId === 'string' && claims.organizationId.trim()
-    ? claims.organizationId.trim()
-    : null;
+  const orgIdsRaw =
+    claims.organizationIds ??
+    claims.organization_ids ??
+    claims.organization_id ??
+    claims.organizationId ??
+    claims.orgId ??
+    claims.org_id ??
+    null;
+  const orgIds = Array.isArray(orgIdsRaw)
+    ? orgIdsRaw.map((value) => String(value || '').trim()).filter(Boolean)
+    : typeof orgIdsRaw === 'string' && orgIdsRaw.trim()
+      ? [orgIdsRaw.trim()]
+      : [];
+  const organizationId =
+    typeof claims.organizationId === 'string' && claims.organizationId.trim()
+      ? claims.organizationId.trim()
+      : orgIds.length === 1
+        ? String(orgIds[0]).trim()
+        : null;
   const role = typeof claims.role === 'string' && claims.role.trim() ? claims.role.trim().toLowerCase() : 'learner';
+  const platformRoleRaw =
+    claims.platformRole ??
+    claims.platform_role ??
+    (claims.app_metadata && typeof claims.app_metadata === 'object' ? claims.app_metadata.platform_role : null) ??
+    (claims.appMetadata && typeof claims.appMetadata === 'object' ? claims.appMetadata.platform_role : null) ??
+    null;
   const platformRole =
-    typeof claims.platformRole === 'string' && claims.platformRole.trim()
-      ? claims.platformRole.trim().toLowerCase()
-      : role === 'admin'
-      ? 'platform_admin'
+    typeof platformRoleRaw === 'string' && platformRoleRaw.trim()
+      ? platformRoleRaw.trim().toLowerCase()
       : null;
   const user = {
     id: claims.userId,
     email: claims.email || '',
-    app_metadata: platformRole ? { platform_role: platformRole } : {},
+    app_metadata: {
+      ...(platformRole ? { platform_role: platformRole } : {}),
+      ...(claims.app_metadata && typeof claims.app_metadata === 'object' ? claims.app_metadata : {}),
+      ...(claims.appMetadata && typeof claims.appMetadata === 'object' ? claims.appMetadata : {}),
+      ...(Array.isArray(claims.memberships) ? { memberships: claims.memberships } : {}),
+    },
     user_metadata: {},
   };
-  const memberships = organizationId
-    ? [
-        {
-          orgId: organizationId,
-          role: role === 'admin' ? 'owner' : role,
-          status: 'active',
-          organizationName: null,
-          organizationStatus: 'active',
-        },
-      ]
-    : [];
+  const explicitMemberships = normalizeJwtMembershipList(
+    claims.memberships ?? user.app_metadata?.memberships ?? [],
+  );
+  const orgIdMemberships =
+    explicitMemberships.length > 0
+      ? explicitMemberships
+      : orgIds.length > 0
+        ? orgIds.map((orgId) => ({
+            orgId: String(orgId).trim(),
+            role: role === 'admin' ? 'owner' : role,
+            status: 'active',
+            organizationName: null,
+            organizationStatus: 'active',
+          }))
+        : organizationId
+          ? [
+              {
+                orgId: organizationId,
+                role: role === 'admin' ? 'owner' : role,
+                status: 'active',
+                organizationName: null,
+                organizationStatus: 'active',
+              },
+            ]
+          : [];
+  const memberships = orgIdMemberships.filter((m) => m.orgId);
   const payload = buildUserPayload(user, memberships, { membershipStatus: 'ready' });
   return {
     user: payload,
     memberships,
     membershipMap: buildMembershipMap(memberships),
-    activeOrgId: organizationId,
+    activeOrgId: memberships.length === 1 ? memberships[0].orgId : organizationId,
   };
 };
 
@@ -569,8 +629,18 @@ const determineActiveOrgId = (req, memberships = []) => {
     if (match) return requested;
   }
 
-  const firstActive = memberships.find((m) => m.status === 'active');
-  return firstActive?.orgId || null;
+  const activeMemberships = memberships.filter((m) => m.status === 'active');
+  if (activeMemberships.length === 1) {
+    return activeMemberships[0].orgId || null;
+  }
+  // In non-production, keep a convenience fallback so local admin/dev flows
+  // don't require explicit org selection for every request.
+  if (process.env.NODE_ENV !== 'production') {
+    return activeMemberships[0]?.orgId || null;
+  }
+  // Production: no implicit "first org" selection when the user belongs to
+  // multiple orgs — require explicit selection via cookie/query/body.
+  return null;
 };
 
 async function loadSupabaseUser(token) {
@@ -608,7 +678,21 @@ async function loadMemberships(userId) {
 
 const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}) => {
   const membershipDataTrusted = membershipStatus === 'ready';
-  const trustedMemberships = membershipDataTrusted ? memberships : [];
+  let trustedMemberships = membershipDataTrusted ? memberships : [];
+  // In dev/test environments, allow tests and local flows to supply memberships via the JWT
+  // (stored in Supabase app_metadata) when the DB membership view is unavailable or empty.
+  if (!isProduction && trustedMemberships.length === 0) {
+    const tokenMemberships = normalizeTokenMemberships(user);
+    if (tokenMemberships.length > 0) {
+      trustedMemberships = tokenMemberships;
+      if (AUTH_VERBOSE_LOGGING) {
+        authLog('info', 'memberships_sourced_from_token_metadata', {
+          userId: user?.id ?? null,
+          membershipCount: tokenMemberships.length,
+        });
+      }
+    }
+  }
   const organizationIds = trustedMemberships.filter((m) => m.status === 'active').map((m) => m.orgId);
   const platformRole = derivePlatformRole(user);
   let inferredRole = resolveUserRole(user, trustedMemberships);
@@ -660,7 +744,7 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
     role: inferredRole,
     platformRole,
     isPlatformAdmin: (platformRole === 'platform_admin') || isPlatformAdmin(user),
-    organizationId: organizationIds[0] || null,
+    organizationId: organizationIds.length === 1 ? organizationIds[0] : null,
     organizationIds,
     memberships: trustedMemberships,
     permissions: serializedPermissions,
@@ -706,11 +790,44 @@ const isUuid = (value) =>
   typeof value === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 
+const normalizeJwtMembershipList = (raw = []) => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const orgId = entry.orgId ?? entry.organizationId ?? entry.organization_id ?? entry.org_id ?? null;
+      if (!orgId) return null;
+      const role = entry.role ?? entry.userRole ?? entry.user_role ?? null;
+      const statusRaw = entry.status ?? entry.membershipStatus ?? entry.membership_status ?? null;
+      const normalizedStatus =
+        typeof statusRaw === 'string'
+          ? statusRaw.toLowerCase()
+          : statusRaw === true
+            ? 'active'
+            : null;
+      return {
+        orgId: String(orgId),
+        role: role ? String(role).toLowerCase() : 'member',
+        status: normalizedStatus || 'active',
+        organizationName: null,
+        organizationStatus: 'active',
+      };
+    })
+    .filter(Boolean);
+};
+
 const normalizeSupabaseClaimsToJwtClaims = (claims = {}) => {
   const appMetadata = claims.app_metadata || claims.appMetadata || {};
   const platformRole = appMetadata.platform_role || claims.platform_role || claims.platformRole || null;
   const role = claims.role || appMetadata.role || (platformRole === 'platform_admin' ? 'admin' : null) || 'learner';
   const organizationId = claims.organizationId || appMetadata.organizationId || null;
+  const organizationIdsRaw = claims.organization_ids ?? claims.organizationIds ?? appMetadata.organization_ids ?? appMetadata.organizationIds ?? null;
+  const organizationIds = Array.isArray(organizationIdsRaw)
+    ? organizationIdsRaw.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const memberships = normalizeJwtMembershipList(
+    appMetadata.memberships ?? claims.memberships ?? claims.membership ?? null,
+  );
   let userId = claims.sub || claims.userId || null;
 
   if (userId && !isUuid(String(userId).trim())) {
@@ -732,7 +849,9 @@ const normalizeSupabaseClaimsToJwtClaims = (claims = {}) => {
     email: claims.email || claims.user_email || null,
     role,
     platformRole,
-    organizationId,
+    organizationId: organizationId ?? (organizationIds.length === 1 ? organizationIds[0] : null),
+    organizationIds,
+    memberships,
   };
 };
 
@@ -1349,7 +1468,8 @@ export function securityHeaders(req, res, next) {
 }
 
 export function logAuthRequest(req, res, next) {
-  if (req.user) {
+  // Avoid logging PII (emails) and auth surface traffic in production.
+  if (req.user && process.env.NODE_ENV !== 'production') {
     console.log(`[AUTH] ${req.method} ${req.path} - User: ${req.user.email} (${req.user.role})`);
   }
   next();
@@ -1430,18 +1550,32 @@ export function resolveOrganizationContext(req, res, next) {
   }
 
   const requestedOrgId = getRequestedOrgId(req);
+  const orgIds = Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [];
+  const singleOrgId = orgIds.length === 1 ? orgIds[0] : null;
   const inferredOrgId =
     requestedOrgId ||
     req.activeOrgId ||
     req.user.activeOrgId ||
-    req.user.organizationId ||
+    // Only allow implicit orgId when the user is single-org.
+    singleOrgId ||
     null;
 
   req.activeOrgId = inferredOrgId;
 
   // Enforce org scoping for non-platform admins: all admin endpoints should be bound to an org.
   if (!req.user?.isPlatformAdmin && !inferredOrgId) {
-    return res.status(403).json({ error: 'org_scope_required', message: 'Organization context required for admin ops.' });
+    const reason = orgIds.length > 1 ? 'org_selection_required' : 'org_scope_required';
+    return res.status(403).json({
+      error: reason,
+      code: reason,
+      message:
+        orgIds.length > 1
+          ? 'Select an organization to continue.'
+          : 'Organization context required for admin operations.',
+      meta: {
+        membershipCount: orgIds.length,
+      },
+    });
   }
 
   next();

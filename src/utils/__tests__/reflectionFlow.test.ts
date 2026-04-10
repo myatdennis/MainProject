@@ -10,8 +10,9 @@ describe('reflectionFlow utilities', () => {
     } as any);
 
     expect(config.prompt).toBe('What stood out?');
-    expect(config.deepenPrompts).toEqual(['One', 'Two', 'Three']);
-    expect(config.actionPrompt).toBe('What next?');
+    const deepenSteps = config.steps.filter((step) => step.id.startsWith('deeperReflection'));
+    expect(deepenSteps.map((step) => step.prompt)).toEqual(['One', 'Two', 'Three', 'Four']);
+    expect(config.steps.find((step) => step.id === 'actionCommitment')?.prompt).toBe('What next?');
   });
 
   it('normalizes structured response data safely', () => {
@@ -22,6 +23,13 @@ describe('reflectionFlow utilities', () => {
     });
 
     expect(data).toEqual({
+      version: 1,
+      answers: {
+        promptResponse: 'Prompt',
+        deeperReflection1: 'Depth 1',
+        actionCommitment: 'Act',
+      },
+      stepOrder: null,
       promptResponse: 'Prompt',
       deeperReflection1: 'Depth 1',
       deeperReflection2: '',

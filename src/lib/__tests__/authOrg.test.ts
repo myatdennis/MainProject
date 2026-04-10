@@ -43,7 +43,7 @@ describe('resolvePreferredOrgId', () => {
     expect(result.source).toBe('lastActive');
   });
 
-  it('falls back to most recently accepted membership when no hints provided', () => {
+  it('does not auto-pick an org when multiple memberships exist and no hints provided', () => {
     const memberships = [
       buildMembership({ orgId: 'legacy', acceptedAt: '2020-01-01T00:00:00Z' }),
       buildMembership({ orgId: 'newest', acceptedAt: '2026-02-02T00:00:00Z' }),
@@ -55,11 +55,11 @@ describe('resolvePreferredOrgId', () => {
       lastActiveOrgId: null,
     });
 
-    expect(result.activeOrgId).toBe('newest');
-    expect(result.source).toBe('membership');
+    expect(result.activeOrgId).toBe(null);
+    expect(result.source).toBe('none');
   });
 
-  it('falls back to accessible org list when no active memberships exist', () => {
+  it('does not auto-pick an org when multiple fallback orgs exist and no active memberships exist', () => {
     const memberships: MembershipLike[] = [
       buildMembership({ orgId: 'inactive-1', status: 'invited' }),
       buildMembership({ orgId: null }),
@@ -72,16 +72,13 @@ describe('resolvePreferredOrgId', () => {
       fallbackOrgIds: ['org-abc', 'org-def'],
     });
 
-    expect(result.activeOrgId).toBe('org-abc');
-    expect(result.source).toBe('membership');
+    expect(result.activeOrgId).toBe(null);
+    expect(result.source).toBe('none');
     expect(result.hasActiveMembership).toBe(false);
   });
 
   it('treats ready/member statuses as active memberships', () => {
-    const memberships: MembershipLike[] = [
-      buildMembership({ orgId: 'org-ready', status: 'ready' }),
-      buildMembership({ orgId: 'org-member', status: 'member' }),
-    ];
+    const memberships: MembershipLike[] = [buildMembership({ orgId: 'org-ready', status: 'ready' })];
 
     const result = resolvePreferredOrgId({
       memberships,

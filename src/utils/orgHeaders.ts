@@ -13,7 +13,15 @@ export const resolveActiveOrgId = (): string | null => {
     }
     const session = getUserSession();
     const candidate = session?.activeOrgId || session?.organizationId || null;
-    return candidate && isUuid(candidate) ? candidate : null;
+    if (candidate && isUuid(candidate)) {
+      return candidate;
+    }
+    const orgIds = Array.isArray((session as any)?.organizationIds) ? ((session as any).organizationIds as unknown[]) : null;
+    if (orgIds && orgIds.length === 1) {
+      const only = typeof orgIds[0] === 'string' ? orgIds[0] : null;
+      return only && isUuid(only) ? only : null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -29,4 +37,3 @@ export const buildOrgHeaders = (explicitOrgId?: string | null): Record<string, s
   }
   return undefined;
 };
-

@@ -54,6 +54,7 @@ const AdminNotificationBell = () => {
   const [autoRefreshing, setAutoRefreshing] = useState(false);
 
   const unreadCount = useMemo(() => notifications.filter((notification) => !notification.read).length, [notifications]);
+  const totalCount = useMemo(() => notifications.length, [notifications]);
 
   const loadNotifications = useCallback(async () => {
     if (!user?.id) {
@@ -174,13 +175,11 @@ const AdminNotificationBell = () => {
                 <ShieldCheck className="h-4 w-4 text-slate/70" />
                 <p className="text-sm font-semibold text-charcoal">Notifications</p>
               </div>
-              <p className="text-xs text-slate/60">
-                {disabled
-                  ? 'Notifications disabled for this environment.'
-                  : unreadCount > 0
-                    ? `${unreadCount} unread • stay aligned`
-                    : 'All caught up'}
-              </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate/500">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{totalCount} messages</span>
+                <span className="rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-sky-700">{unreadCount} unread</span>
+                <span>{disabled ? 'Disabled in this environment' : unreadCount > 0 ? 'Stay on top of learner activity' : 'All caught up'}</span>
+              </div>
             </div>
             <div className="flex items-center gap-1.5">
               {autoRefreshing && <span className="text-[10px] uppercase tracking-wide text-slate/50">Refreshing</span>}
@@ -249,9 +248,16 @@ const AdminNotificationBell = () => {
                             )}
                           </div>
                           {notification.body && <p className="text-xs text-slate/70">{notification.body}</p>}
-                          <span className={`inline-flex rounded-full bg-white/70 px-2 py-0.5 text-[11px] ${tone.accent}`}>
-                            {(notification.type || 'update').replace(/_/g, ' ')}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex rounded-full bg-white/70 px-2 py-0.5 text-[11px] ${tone.accent}`}>
+                              {(notification.type || 'update').replace(/_/g, ' ')}
+                            </span>
+                            {!notification.read && (
+                              <span className="inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                                New
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </li>

@@ -642,7 +642,7 @@ describe('CoursePlayer progress integration', () => {
     await screen.findByRole('button', { name: /begin reflection/i });
     await user.click(screen.getByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
-    const input = await screen.findByPlaceholderText('Write your initial thoughts here…');
+    const input = await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...');
     await user.type(input, 'Saved reflection text');
     await waitFor(() => {
       expect(mockSaveLearnerReflection).toHaveBeenCalledWith({
@@ -872,7 +872,10 @@ describe('CoursePlayer progress integration', () => {
 
     await user.click(await screen.findByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
-    await user.type(await screen.findByPlaceholderText('Write your initial thoughts here…'), 'I need to slow down.');
+    await user.type(
+      await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...'),
+      'I need to slow down.',
+    );
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -1300,9 +1303,9 @@ describe('CoursePlayer progress integration', () => {
     await user.click(screen.getByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
 
-    const textarea = await screen.findByPlaceholderText('Write your initial thoughts here…');
+    const textarea = await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...');
     expect(textarea).toHaveClass('w-full');
-    expect(textarea).toHaveClass('min-h-[280px]');
+    expect(textarea).toHaveClass('min-h-[300px]');
 
     await user.type(textarea, 'Wide response text');
     await user.click(await screen.findByRole('button', { name: /save draft/i }));

@@ -11,6 +11,7 @@ import {
   fetchAssignedSurveysForLearner,
   type LearnerSurveyAssignment,
 } from '../../dal/surveys';
+import { DalError, extractDalErrorDetail } from '../../dal/http';
 import type { CourseAssignmentStatus } from '../../types/assignment';
 import { subscribeSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
@@ -106,7 +107,24 @@ const ClientSurveys = () => {
     } catch (err) {
       console.error('[learner-surveys] surveyListLoadFailed', err);
       setAssignments([]);
-      setError('Unable to load surveys right now. Please retry soon.');
+      if (err instanceof DalError) {
+        const body = (err.body && typeof err.body === 'object' ? (err.body as Record<string, any>) : null) ?? {};
+        const backendError = typeof body.error === 'string' ? body.error : null;
+        if (err.status === 400 && backendError === 'explicit_org_selection_required') {
+          setError('Select an organization to load surveys, then retry.');
+        } else if (err.status === 403 && backendError === 'org_membership_required') {
+          setError('Your account is not associated with an organization that can access surveys.');
+        } else if (err.status === 503 && backendError === 'upstream_unavailable') {
+          setError('Surveys are temporarily unavailable. Please retry in a moment.');
+        } else if (err.code === 'AbortError') {
+          setError('The surveys request timed out. Please retry.');
+        } else {
+          const detail = extractDalErrorDetail(err);
+          setError(detail.message || 'Unable to load surveys right now. Please retry soon.');
+        }
+      } else {
+        setError('Unable to load surveys right now. Please retry soon.');
+      }
     } finally {
       setLoading(false);
     }

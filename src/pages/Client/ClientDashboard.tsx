@@ -38,6 +38,8 @@ import apiRequest, { ApiError } from '../../utils/apiClient';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import documentService, { type DocumentMeta } from '../../dal/documents';
 import useDocumentDownload from '../../hooks/useDocumentDownload';
+import TeamGrowthCard from '../../components/Growth/TeamGrowthCard';
+import { fetchOrgGrowthMetrics, type OrgGrowthMetrics } from '../../dal/growth';
 import { getUserSession } from '../../lib/secureStorage';
 
 type BootStepName = 'session' | 'membership' | 'courses' | 'analytics';
@@ -189,6 +191,9 @@ const ClientDashboard = () => {
   const [resources, setResources] = useState<DocumentMeta[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const [resourcesError, setResourcesError] = useState<string | null>(null);
+  const [orgGrowth, setOrgGrowth] = useState<OrgGrowthMetrics | null>(null);
+  const [orgGrowthLoading, setOrgGrowthLoading] = useState(false);
+  const [orgGrowthMessage, setOrgGrowthMessage] = useState<string | null>(null);
   const showDebugOverlay = useMemo(() => new URLSearchParams(location.search).get('debug') === '1', [location.search]);
   const updateBootStep = useCallback(
     (step: BootStepName, status: BootStepStatus, error: string | null = null) => {
@@ -789,6 +794,45 @@ const ClientDashboard = () => {
     };
   }, [user?.organizationId]);
 
+  useEffect(() => {
+    if (!user?.organizationId) {
+      setOrgGrowth(null);
+      setOrgGrowthMessage(null);
+      return;
+    }
+    let cancelled = false;
+    setOrgGrowthLoading(true);
+    setOrgGrowthMessage(null);
+    fetchOrgGrowthMetrics()
+      .then((res) => {
+        if (cancelled) return;
+        setOrgGrowth(res ?? null);
+        if (!res) {
+          setOrgGrowthMessage('Team growth is available to organization admins once an organization is selected.');
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setOrgGrowth(null);
+        const status = typeof (error as any)?.status === 'number' ? (error as any).status : null;
+        const body = (error as any)?.body && typeof (error as any).body === 'object' ? (error as any).body : null;
+        const code = body && typeof (body as any).code === 'string' ? (body as any).code : null;
+        if (status === 403 && code === 'org_selection_required') {
+          setOrgGrowthMessage('Select an organization to view team growth.');
+        } else if (status === 403) {
+          setOrgGrowthMessage('Team growth is available to organization admins.');
+        } else {
+          setOrgGrowthMessage('Unable to load team growth right now.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOrgGrowthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.organizationId]);
+
   if (essentialError) {
     return (
       <>
@@ -904,6 +948,8 @@ const ClientDashboard = () => {
           </Button>
         </Card>
       </div>
+
+      <TeamGrowthCard metrics={orgGrowth} loading={orgGrowthLoading} message={orgGrowthMessage} />
 
       {welcomeExperience && (
         <Card className="mt-6 space-y-3 border border-emerald-200 bg-emerald-50/70">

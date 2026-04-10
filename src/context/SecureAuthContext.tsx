@@ -881,7 +881,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           'learner',
         firstName: payload.user.firstName ?? payload.user.first_name ?? payload.user.user_metadata?.first_name,
         lastName: payload.user.lastName ?? payload.user.last_name ?? payload.user.user_metadata?.last_name,
-        organizationId: payload.user.organizationId ?? payload.user.organization_id ?? orgIds[0] ?? null,
+        // Never implicitly fall back to the first organization id when multiple
+        // memberships exist. Force explicit selection (activeOrgId) instead.
+        organizationId: payload.user.organizationId ?? payload.user.organization_id ?? (orgIds.length === 1 ? orgIds[0] : null),
         organizationIds: orgIds,
         memberships: resolvedMemberships,
         activeOrgId:

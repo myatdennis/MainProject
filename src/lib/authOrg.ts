@@ -69,12 +69,22 @@ export const resolvePreferredOrgId = ({
   } else if (matches(normalizedLast)) {
     activeOrgId = normalizedLast as string;
     source = 'lastActive';
-  } else if (activeMemberships[0]?.orgId) {
-    activeOrgId = activeMemberships[0].orgId;
-    source = 'membership';
-  } else if (fallbackOrgList[0]) {
-    activeOrgId = fallbackOrgList[0];
-    source = 'membership';
+  } else {
+    // If the user belongs to multiple orgs and we don't have an explicit hint,
+    // do NOT auto-pick an org. Force an explicit selection to avoid cross-tenant
+    // ambiguity and accidental data exposure.
+    const uniqueMembershipOrgs = new Set(activeMemberships.map((m) => m.orgId).filter(Boolean));
+    const hasMultiple = uniqueMembershipOrgs.size > 1 || fallbackOrgSet.size > 1;
+
+    if (!hasMultiple) {
+      if (activeMemberships[0]?.orgId) {
+        activeOrgId = activeMemberships[0].orgId;
+        source = 'membership';
+      } else if (fallbackOrgList[0]) {
+        activeOrgId = fallbackOrgList[0];
+        source = 'membership';
+      }
+    }
   }
 
   return {

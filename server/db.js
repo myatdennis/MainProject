@@ -12,6 +12,9 @@ import pg from 'pg'
 
 const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? 'false').toLowerCase() === 'true'
 const isProductionEnv = (process.env.NODE_ENV || '').toLowerCase() === 'production'
+const isTestEnv = (process.env.NODE_ENV || '').toLowerCase() === 'test'
+const shouldLogDbDiagnostics =
+  (!isProductionEnv && !isTestEnv) || String(process.env.DEBUG_DB || '').toLowerCase() === 'true'
 // Allow self-signed DB certificates in non-production environments or when
 // explicitly requested via env. Also honor DEV_FALLBACK and E2E_TEST_MODE so
 // local/E2E runs don't fail due to TLS chain issues during health probes.
@@ -115,20 +118,24 @@ if (isProductionEnv && requestedAllowSelfSigned) {
 }
 
 if (autoAllowSelfSignedForPooler) {
-  console.info('[server/db] TLS relaxation enabled for Supabase pooler connection.', {
-    sourceEnv: connectionSource?.key ?? null,
-    sourceType: connectionSource?.type ?? null,
-    relaxPoolerTls: RELAX_POOLER_TLS,
-  })
+  if (shouldLogDbDiagnostics) {
+    console.info('[server/db] TLS relaxation enabled for Supabase pooler connection.', {
+      sourceEnv: connectionSource?.key ?? null,
+      sourceType: connectionSource?.type ?? null,
+      relaxPoolerTls: RELAX_POOLER_TLS,
+    })
+  }
 }
 
 if (connectionSource.candidates) {
-  console.info('[server/db] connection_source_selected', {
-    selectedEnv: connectionSource.key,
-    sourceType: connectionSource.type,
-    hasValue: Boolean(connectionSource.value),
-    candidates: connectionSource.candidates
-  })
+  if (shouldLogDbDiagnostics) {
+    console.info('[server/db] connection_source_selected', {
+      selectedEnv: connectionSource.key,
+      sourceType: connectionSource.type,
+      hasValue: Boolean(connectionSource.value),
+      candidates: connectionSource.candidates,
+    })
+  }
 }
 
 if (!connectionSource.value) {
@@ -219,20 +226,22 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
     console.error('[server/db] Failed to parse DATABASE_URL', error)
   }
 
-  console.info('[server/db] connection_metadata', {
-    sourceEnv: metadata.source?.key ?? null,
-    sourceType: metadata.source?.type ?? null,
-    ipv4RewriteEligible: metadata.ipv4RewriteEligible,
-    forcedIpv4: metadata.forcedIpv4,
-    originalHost: metadata.originalHost,
-    originalPort: metadata.originalPort,
-    resolvedHost: metadata.resolvedHost,
-    finalHostUsed: metadata.finalHostUsed,
-    lookupError: metadata.lookupError ? metadata.lookupError.message : null,
-    projectRef: metadata.projectRef,
-    selfSignedAllowed: metadata.selfSignedAllowed,
-    tlsMode: metadata.selfSignedAllowed ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
-  })
+  if (shouldLogDbDiagnostics) {
+    console.info('[server/db] connection_metadata', {
+      sourceEnv: metadata.source?.key ?? null,
+      sourceType: metadata.source?.type ?? null,
+      ipv4RewriteEligible: metadata.ipv4RewriteEligible,
+      forcedIpv4: metadata.forcedIpv4,
+      originalHost: metadata.originalHost,
+      originalPort: metadata.originalPort,
+      resolvedHost: metadata.resolvedHost,
+      finalHostUsed: metadata.finalHostUsed,
+      lookupError: metadata.lookupError ? metadata.lookupError.message : null,
+      projectRef: metadata.projectRef,
+      selfSignedAllowed: metadata.selfSignedAllowed,
+      tlsMode: metadata.selfSignedAllowed ? 'relaxed_pooler_or_nonprod' : 'strict_verify',
+    })
+  }
 
   return metadata
 }
@@ -353,28 +362,32 @@ const ensureSqlClient = () => {
         const port = url.port ? Number(url.port) : undefined
         const database = url.pathname.replace(/^\//, '') || undefined
         const user = url.username || undefined
-        console.info('db_client_ready', {
-          host,
-          port,
-          database,
-          user,
-          connectionSource: connectionMetadata.source?.key ?? null,
-          usingPooler: connectionMetadata.source?.type === 'pooler',
-          forcedIpv4: connectionMetadata.forcedIpv4 || false,
-          originalHost: connectionMetadata.originalHost,
-          finalHostUsed: connectionMetadata.finalHostUsed,
-          allowSelfSigned: ALLOW_DB_SELF_SIGNED,
-          tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
-        })
+        if (shouldLogDbDiagnostics) {
+          console.info('db_client_ready', {
+            host,
+            port,
+            database,
+            user,
+            connectionSource: connectionMetadata.source?.key ?? null,
+            usingPooler: connectionMetadata.source?.type === 'pooler',
+            forcedIpv4: connectionMetadata.forcedIpv4 || false,
+            originalHost: connectionMetadata.originalHost,
+            finalHostUsed: connectionMetadata.finalHostUsed,
+            allowSelfSigned: ALLOW_DB_SELF_SIGNED,
+            tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify',
+          })
+        }
       }
     } catch (error) {
       console.warn('[server/db] Unable to log database connection metadata', error)
     }
   } else {
-    console.warn('[server/db] Connection metadata reported an error', {
-      message: connectionMetadata.error?.message || String(connectionMetadata.error),
-      originalHost: connectionMetadata.originalHost
-    })
+    if (shouldLogDbDiagnostics) {
+      console.warn('[server/db] Connection metadata reported an error', {
+        message: connectionMetadata.error?.message || String(connectionMetadata.error),
+        originalHost: connectionMetadata.originalHost,
+      })
+    }
   }
 
   return sqlClient
@@ -394,15 +407,27 @@ const sql = new Proxy(function sqlProxy () {}, {
 export let dbStartupHealthy = false
 
 try {
-  await testConnection()
-  dbStartupHealthy = true
-  console.info('[server/db] initial_connection_ready')
+  if (connectionMetadata.connectionString) {
+    await testConnection()
+    dbStartupHealthy = true
+    if (shouldLogDbDiagnostics) {
+      console.info('[server/db] initial_connection_ready')
+    }
+  } else {
+    // Do not attempt connection tests when the DB isn't configured.
+    dbStartupHealthy = false
+    if (shouldLogDbDiagnostics) {
+      console.warn('[server/db] initial_connection_skipped_missing_connection_string')
+    }
+  }
 } catch (error) {
   dbStartupHealthy = false
-  console.error('[server/db] initial_connection_failed', {
-    message: error?.message || String(error),
-    code: error?.code || null
-  })
+  if (shouldLogDbDiagnostics) {
+    console.error('[server/db] initial_connection_failed', {
+      message: error?.message || String(error),
+      code: error?.code || null
+    })
+  }
 }
 
 export default sql

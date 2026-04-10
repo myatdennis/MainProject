@@ -97,9 +97,25 @@ const ensureAdminAccess = async (req, res) => {
   console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, supabaseJwtUser: req?.supabaseJwtUser });
 
   if (safeFallbackEnabled) {
+    // In E2E mode, bypass external allowlist lookups, but DO NOT elevate to platform-admin.
+    // Preserve the org scope embedded in the token so cross-org operations still enforce correctly.
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
-    req.supabaseJwtUser.isPlatformAdmin = true;
     req.user = req.user || req.supabaseJwtUser;
+
+    const role = String(req.user?.role || '').trim().toLowerCase();
+    const platformRole = String(req.user?.platformRole || '').trim().toLowerCase();
+    const isAdmin = role === 'admin' || platformRole === 'platform_admin' || req.user?.isPlatformAdmin === true;
+
+    if (!isAdmin) {
+      res.status(403).json({
+        code: 'ADMIN_REQUIRED',
+        error: 'Forbidden',
+        message: 'Administrator privileges required.',
+        reason: 'e2e_admin_required',
+      });
+      return false;
+    }
+
     console.log('[requireAdminAccess] granted e2e_fallback', { userId: req.user?.id });
     return grantAdminAccess(req, 'e2e_fallback');
   }

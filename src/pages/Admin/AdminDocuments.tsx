@@ -148,6 +148,21 @@ const AdminDocuments: React.FC = () => {
     }
   };
 
+  const handleOpen = async (doc: DocumentMeta) => {
+    if (!doc.id) return;
+    try {
+      const refreshed = await documentService.recordDownload(doc.id);
+      if (refreshed?.url) {
+        window.open(refreshed.url, '_blank', 'noopener,noreferrer');
+      } else if (doc.url) {
+        window.open(doc.url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err: any) {
+      console.error('[AdminDocuments] open_failed', { id: doc.id, message: err?.message });
+      showToast(err?.message || 'Unable to open document', 'error');
+    }
+  };
+
   return (
     <div className="container">
       <div className="flex items-center justify-between mb-6">
@@ -351,7 +366,17 @@ const AdminDocuments: React.FC = () => {
                   <div className="text-xs muted-text">{d.visibility}{d.organizationId ? ` • org:${d.organizationId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
                 </div>
                 <div className="flex items-center gap-4">
-                  {d.url && <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-sm text-primary font-medium underline">Open</a>}
+                  {d.url ? (
+                    <button
+                      type="button"
+                      onClick={() => handleOpen(d)}
+                      className="text-sm text-primary font-medium underline"
+                    >
+                      Open
+                    </button>
+                  ) : (
+                    <span className="text-sm text-slate-500">No file</span>
+                  )}
                   <div className="text-sm muted-text">{d.downloadCount || 0} downloads</div>
                   <button type="button" onClick={() => handleDelete(d.id)} className="icon-action"><Trash className="w-4 h-4" /></button>
                 </div>

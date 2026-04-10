@@ -58,8 +58,9 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
   const navigation = [
     { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },
     { name: 'My Courses', href: '/lms/courses', icon: BookOpen },
-    { name: 'Downloads', href: '/lms/downloads', icon: Download },
-    { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
+    { name: 'Team Huddle', href: '/lms/team-huddle', icon: Users },
+    { name: 'Resources', href: '/lms/downloads', icon: Download },
+    { name: 'Surveys', href: '/lms/surveys', icon: MessageSquare },
     { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
   ];
 
@@ -201,22 +202,6 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                 />
               </div>
             </div>
-
-            {/* Bottom section with logout */}
-            <div className="px-4 py-4 border-t border-gray-200">
-              <button
-                onClick={handleLogout}
-                className="flex items-center w-full px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors"
-              >
-                <LogOut className="mr-3 h-5 w-5 text-gray-400" />
-                Sign Out
-                {pendingChanges > 0 && (
-                  <span className="ml-auto text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
-                    Saving...
-                  </span>
-                )}
-              </button>
-            </div>
           </div>
         </div>
 
@@ -297,6 +282,14 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                       </div>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
                 </div>
               </div>
             </div>

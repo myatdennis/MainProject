@@ -271,12 +271,19 @@ function normalizeReflectionContent(out: Record<string, any>) {
     : Array.isArray(out.deepen_prompts)
     ? out.deepen_prompts.filter((entry: unknown) => typeof entry === 'string' && entry.trim().length > 0)
     : [];
+  const guidedReflection = (out as any).guidedReflection ?? (out as any).guided_reflection ?? null;
+  const hasGuidedReflectionSteps =
+    guidedReflection &&
+    typeof guidedReflection === 'object' &&
+    Array.isArray((guidedReflection as any).steps) &&
+    (guidedReflection as any).steps.some((step: any) => step && typeof step === 'object' && step.responseType && step.responseType !== 'none');
   const shouldCollectResponse =
     out.collectResponse === true ||
     out.allowReflection === true ||
     out.requireReflection === true ||
     out.type === 'reflection' ||
-    Boolean(prompt);
+    Boolean(prompt) ||
+    Boolean(hasGuidedReflectionSteps);
 
   if (prompt) {
     out.prompt = prompt;

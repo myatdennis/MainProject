@@ -185,9 +185,9 @@ const mapClaimsToUser = (claims) => {
     email: claims.email || claims.user_email || null,
     role: derivedRole ? String(derivedRole).toLowerCase() : null,
     platformRole: platformRole ? String(platformRole).toLowerCase() : null,
-    isPlatformAdmin:
-      String(derivedRole || '').toLowerCase() === 'admin' ||
-      String(platformRole || '').toLowerCase() === 'platform_admin',
+    // IMPORTANT: app-level "admin" users are not automatically platform admins.
+    // Platform-admin privileges must come from an explicit platform role signal.
+    isPlatformAdmin: String(platformRole || derivedRole || '').toLowerCase() === 'platform_admin',
     organizationIds,
     memberships,
     permissions,
