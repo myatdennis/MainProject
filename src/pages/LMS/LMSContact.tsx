@@ -105,7 +105,7 @@ const LMSContact = () => {
             Message Sent Successfully!
           </h1>
           <p className="text-xl text-gray-600 mb-8">
-            {contactType === 'coaching' 
+            {contactType === 'coaching'
               ? "Your coaching session request has been received. You'll receive a calendar invitation within 24 hours."
               : "Your message has been sent to Mya Dennis. You can expect a response within 24 hours."
             }
@@ -333,8 +333,8 @@ const LMSContact = () => {
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="font-semibold text-gray-900">{session.type}</h4>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      session.status === 'confirmed' 
-                        ? 'bg-green-100 text-green-800' 
+                      session.status === 'confirmed'
+                        ? 'bg-green-100 text-green-800'
                         : 'bg-blue-100 text-blue-800'
                     }`}>
                       {session.status}
@@ -351,7 +351,7 @@ const LMSContact = () => {
                     </div>
                   </div>
                   {session.status === 'confirmed' && (
-                    <Link to="/lms/meeting" className="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600 transition-colors duration-200 flex items-center justify-center space-x-2">
+                    <Link to="/lms/meeting" className="mt-3 w-full inline-flex items-center justify-center space-x-2 rounded-lg bg-blue-500 py-2 text-sm font-semibold text-white hover:bg-blue-600 transition-colors duration-200">
                       <Video className="h-4 w-4" />
                       <span>Join Meeting</span>
                     </Link>

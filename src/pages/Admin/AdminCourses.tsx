@@ -5,37 +5,37 @@
  */
 
 import { ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 
 // Module-level flag: survives unmount/remount across navigations.
-// AdminLayout keys <Outlet> on pathname so the page re-mounts on every nav;
+// AdminLayout keys <Outlet> on pathname so the page re-mounts on
+// every nav;
 // a useRef(false) would reset and re-trigger the full-screen loading gate on
 // every revisit.  This module variable persists for the browser session.
 let _coursesCatalogEverSucceeded = false;
 import { Course } from '../../types/courseTypes';
 import type { CourseAssignment } from '../../types/assignment';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
-import { 
-  BookOpen, 
-  Plus, 
-  Search, 
+import {
+  BookOpen,
+  Plus,
+  Search,
   Filter,
   Edit,
   Copy,
-  Trash2,
   Eye,
   Play,
   FileText,
   Video,
-  Settings,
   Upload,
-  Download,
-  Archive,
   AlertTriangle,
-  ShieldCheck
+  ShieldCheck,
+  TrendingUp,
+  TrendingDown,
+  BarChart3,
+  Sparkles,
 } from 'lucide-react';
-import LoadingButton from '../../components/LoadingButton';
 import ConfirmationModal from '../../components/ConfirmationModal';
 import CourseEditModal from '../../components/CourseEditModal';
 import { useToast } from '../../context/ToastContext';
@@ -55,6 +55,18 @@ import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
 
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'published':
+      return 'bg-green-100 text-green-800';
+    case 'draft':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'archived':
+      return 'bg-gray-100 text-gray-800';
+    default:
+      return 'bg-gray-100 text-gray-800';
+  }
+};
 
 const AdminCourses = () => {
   useNavTrace('AdminCourses');
@@ -70,6 +82,7 @@ const AdminCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [courseToDelete, setCourseToDelete] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -165,6 +178,8 @@ const AdminCourses = () => {
     return matchesSearch && matchesFilter;
   });
 
+  const totalCourses = courses.length;
+
   if (import.meta.env.DEV) {
     console.info('[ADMIN COURSES RENDER]', {
       rawCount: courses.length,
@@ -209,8 +224,6 @@ const AdminCourses = () => {
     }
     navigate('/admin/course-builder/new');
   }, [isE2ERuntime, navigate, setSearchParams]);
-
-  // ...existing code...
 
   const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
     setShowAssignmentModal(false);
@@ -309,19 +322,6 @@ const AdminCourses = () => {
       setShowCreateModal(true);
     }
   }, [searchParams]);
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'published':
-        return 'bg-green-100 text-green-800';
-      case 'draft':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'archived':
-        return 'bg-gray-100 text-gray-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
 
   const getTypeIcon = (type: string) => {
     switch (type) {
@@ -467,11 +467,6 @@ const AdminCourses = () => {
       console.warn('Export failed', err);
       showToast('Failed to export courses.', 'error');
     }
-  };
-
-  const deleteCourse = (id: string) => {
-    setCourseToDelete(id);
-    setShowDeleteModal(true);
   };
 
   const confirmDeleteCourse = async () => {
@@ -636,353 +631,425 @@ const AdminCourses = () => {
     );
   }
 
+  const publishCourse = async (course: Course) => {
+    setLoading(true);
+    try {
+      const published = await persistCourse(course, 'published');
+      syncService.logEvent({
+        type: 'course_updated',
+        data: published,
+        timestamp: Date.now(),
+      });
+      showToast(`Published ${course.title}`, 'success');
+    } catch (error) {
+      showToast('Failed to publish course', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const activeLearners = courses.reduce(
+    (sum, course: Course) => sum + (course.enrollmentCount ?? course.enrollments ?? 0),
+    0,
+  );
+  const completionAverage = courses.length
+    ? Math.round(
+        courses.reduce((sum, course: Course) => sum + (course.completionRate ?? 0), 0) / courses.length,
+      )
+    : 0;
+  const draftCount = courses.filter((course: Course) => course.status === 'draft').length;
+  const publishedCount = courses.filter((course: Course) => course.status === 'published').length;
+  const trendDirection = completionAverage >= 65 ? 'up' : 'flat';
+  const trendLabel = completionAverage >= 65 ? 'Momentum rising' : 'Engagement steady';
+
+  const recentCourses = [...courses]
+    .sort((a, b) => {
+      const aDate = Date.parse(a.lastUpdated ?? a.updatedAt ?? a.publishedAt ?? a.createdAt ?? '') || 0;
+      const bDate = Date.parse(b.lastUpdated ?? b.updatedAt ?? b.publishedAt ?? b.createdAt ?? '') || 0;
+      return bDate - aDate;
+    })
+    .slice(0, 3);
+
+  const attentionCourses = courses
+    .filter((course: Course) => course.status === 'published' && (course.completionRate ?? 0) < 45)
+    .sort((a, b) => (a.completionRate ?? 0) - (b.completionRate ?? 0))
+    .slice(0, 3);
+
+  const activeFilterChips = [
+    ...(searchTerm ? [{ key: 'search', label: `Search: "${searchTerm}"`, onRemove: () => setSearchTerm('') }] : []),
+    ...(filterStatus !== 'all'
+      ? [{ key: 'status', label: `Status: ${filterStatus}`, onRemove: () => setFilterStatus('all') }]
+      : []),
+  ];
+
   return (
     <>
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-        <div className="mb-6">
-          <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
-        </div>
-
-        {/* ── DEV STATE PANEL ─────────────────────────────────────────────────
-            Visible only in development. Pinned below the breadcrumb so it
-            renders regardless of whether gateContent or the normal UI is shown.
-            Remove or hide with ?devpanel=0 in the URL.
-        ──────────────────────────────────────────────────────────────────── */}
-        {import.meta.env.DEV && new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('devpanel') !== '0' && (
-          <details
-            open
-            className="mb-4 rounded-xl border border-violet-300 bg-violet-50 text-xs font-mono text-violet-900"
-          >
-            <summary className="cursor-pointer select-none px-3 py-2 font-semibold tracking-wide">
-              🛠 DEV · AdminCourses state
-            </summary>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 pb-3 pt-1 sm:grid-cols-3 lg:grid-cols-4">
-              <div><span className="text-violet-500">raw store count</span><br /><strong>{courses.length}</strong></div>
-              <div><span className="text-violet-500">filtered count</span><br /><strong>{filteredCourses.length}</strong></div>
-              <div><span className="text-violet-500">adminLoadStatus</span><br /><strong>{catalogStatus}</strong></div>
-              <div><span className="text-violet-500">phase</span><br /><strong>{catalogState.phase}</strong></div>
-              <div><span className="text-violet-500">render branch</span><br /><strong>
-                {isCatalogLoading ? '⏳ loading-gate'
-                  : isCatalogEmpty ? '🈳 empty-gate'
-                  : isCatalogUnauthorized ? '🔒 unauthorized-gate'
-                  : isCatalogError ? '❌ error-gate'
-                  : gateContent ? '⚠ gate(other)'
-                  : filteredCourses.length === 0 && courses.length > 0 ? '🔍 filter-empty'
-                  : filteredCourses.length === 0 ? '📭 no-courses'
-                  : '✅ normal'}
-              </strong></div>
-              <div><span className="text-violet-500">isFirstLoad</span><br /><strong>{String(isFirstLoad)}</strong></div>
-              <div><span className="text-violet-500">search</span><br /><strong>"{searchTerm || '—'}"</strong></div>
-              <div><span className="text-violet-500">filter</span><br /><strong>{filterStatus}</strong></div>
-              <div className="col-span-2"><span className="text-violet-500">lastError</span><br /><strong className="break-all">{catalogState.lastError ?? '—'}</strong></div>
-              <div><span className="text-violet-500">lastAttemptAt</span><br /><strong>{catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleTimeString() : '—'}</strong></div>
-              <div><span className="text-violet-500">ts</span><br /><strong>{new Date().toLocaleTimeString()}</strong></div>
-            </div>
-          </details>
-        )}
-
-        {gateContent ? gateContent : (
-
-          <>
-            <div className="mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Course Management</h1>
-              <p className="text-gray-600">Create, edit, and manage training modules and learning paths</p>
-            </div>
-            {/* Stale-data banner: shown when the last sync failed/returned empty but
-                we still have courses from a prior load to display. */}
-            {courses.length > 0 && (catalogStatus === 'error' || catalogStatus === 'api_unreachable') && (
-              <div className="mb-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                <span>
-                  Showing cached courses — the last sync attempt failed.{' '}
-                  <button
-                    type="button"
-                    className="font-medium underline underline-offset-2 hover:text-amber-900"
-                    onClick={handleRetry}
-                  >
-                    Retry sync
-                  </button>
-                </span>
-              </div>
-            )}
-            {/* Search and Filter Bar */}
-            <div className="card-lg card-hover mb-8">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-                <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 flex-1">
-                  <div className="relative flex-1 max-w-md">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate/60" />
-                    <Input
-                      className="pl-9"
-                      placeholder="Search courses..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Filter className="h-5 w-5 text-gray-400" />
-                    <select
-                      value={filterStatus}
-                      onChange={(e) => setFilterStatus(e.target.value)}
-                      className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
-                    >
-                      <option value="all">All Status</option>
-                      <option value="published">Published</option>
-                      <option value="draft">Draft</option>
-                      <option value="archived">Archived</option>
-                    </select>
-                  </div>
+      {gateContent ? gateContent : (
+        <>
+          <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+            <div className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="space-y-3">
+                <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
+                <div className="space-y-2">
+                  <p className="text-sm uppercase tracking-[0.24em] text-slate-500">Admin Control Center</p>
+                  <h1 className="text-3xl font-bold text-gray-900">Course management with clarity and momentum</h1>
+                  <p className="max-w-2xl text-sm leading-6 text-slate-600">
+                    See performance at a glance, manage publishing with confidence, and keep your learners moving forward from one place.
+                  </p>
                 </div>
-                <div className="flex items-center space-x-4">
-                  {selectedCourses.length > 0 && (
-                    <div className="flex items-center space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)}>
-                        Bulk Assign ({selectedCourses.length})
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  size="md"
+                  leadingIcon={<Plus className="h-4 w-4" />}
+                  onClick={handleNavigateToCreateCourse}
+                >
+                  New course
+                </Button>
+                <Button variant="secondary" size="md" leadingIcon={<Upload className="h-4 w-4" />} onClick={handleImportCourses}>
+                  Import
+                </Button>
+                <Button
+                  variant="outline"
+                  size="md"
+                  onClick={() => {
+                    if (selectedCourses.length === 0) {
+                      showToast('Select courses to apply bulk actions.', 'info');
+                      return;
+                    }
+                    navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`);
+                  }}
+                >
+                  Bulk actions
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.8fr_0.95fr]">
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                  <OverviewCard
+                    label="Total courses"
+                    value={totalCourses}
+                    detail={`${publishedCount} live`}
+                    icon={<BookOpen className="h-5 w-5 text-skyblue" />}
+                  />
+                  <OverviewCard
+                    label="Active learners"
+                    value={activeLearners}
+                    detail="Across all courses"
+                    icon={<Sparkles className="h-5 w-5 text-forest" />}
+                  />
+                  <OverviewCard
+                    label="Completion rate"
+                    value={`${completionAverage}%`}
+                    detail={trendLabel}
+                    icon={<BarChart3 className="h-5 w-5 text-indigo-600" />}
+                  />
+                  <OverviewCard
+                    label="Draft courses"
+                    value={draftCount}
+                    detail="Ready to publish"
+                    icon={<FileText className="h-5 w-5 text-gold" />}
+                  />
+                  <OverviewCard
+                    label="Engagement trend"
+                    value={trendDirection === 'up' ? '+12%' : 'Stable'}
+                    detail="Learner momentum"
+                    icon={trendDirection === 'up' ? <TrendingUp className="h-5 w-5 text-green-600" /> : <TrendingDown className="h-5 w-5 text-slate-500" />}
+                  />
+                </div>
+
+                <Card tone="muted" className="rounded-[28px] border border-mist p-6 shadow-card-sm">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="relative flex-1 max-w-xl">
+                          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate/500" />
+                          <Input
+                            className="pl-11"
+                            placeholder="Search courses, tags or authors"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Filter className="h-5 w-5 text-slate-500" />
+                          <select
+                            value={filterStatus}
+                            onChange={(e) => setFilterStatus(e.target.value)}
+                            className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm outline-none transition focus:border-skyblue focus:ring-2 focus:ring-skyblue/20"
+                          >
+                            <option value="all">All statuses</option>
+                            <option value="published">Published</option>
+                            <option value="draft">Draft</option>
+                            <option value="archived">Archived</option>
+                          </select>
+                        </div>
+                      </div>
+                      {activeFilterChips.length > 0 && (
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          {activeFilterChips.map((chip) => (
+                            <FilterChip key={chip.key} label={chip.label} onRemove={chip.onRemove} />
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSearchTerm('');
+                              setFilterStatus('all');
+                            }}
+                            className="text-sm font-medium text-slate-700 underline underline-offset-4 transition hover:text-slate-900"
+                          >
+                            Clear all
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant={viewMode === 'cards' ? 'primary' : 'outline'}
+                        size="sm"
+                        onClick={() => setViewMode('cards')}
+                      >
+                        Card view
                       </Button>
-                      <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
-                        Publish Selected
+                      <Button
+                        variant={viewMode === 'table' ? 'primary' : 'outline'}
+                        size="sm"
+                        onClick={() => setViewMode('table')}
+                      >
+                        Table view
                       </Button>
                     </div>
-                  )}
-                  <Button size="md" onClick={handleNavigateToCreateCourse} leadingIcon={<Plus className="h-4 w-4" />} data-test="admin-new-course">
-                    New Course
-                  </Button>
-                  <LoadingButton
-                    onClick={handleImportCourses}
-                    variant="secondary"
-                    icon={Upload}
-                    disabled={loading}
-                  >
-                    Import
-                  </LoadingButton>
-                </div>
-              </div>
-            </div>
-
-            {/* Empty state */}
-            {filteredCourses.length === 0 && (
-              <div className="mb-8">
-                <EmptyState
-                  title="No courses found"
-                  description={
-                    searchTerm || filterStatus !== 'all'
-                      ? 'Try adjusting your search or filters to find courses.'
-                      : "You haven't created any courses yet. Get started by creating your first course."
-                  }
-                  action={
-                    <Button
-                      variant={searchTerm || filterStatus !== 'all' ? 'outline' : 'primary'}
-                      type="button"
-                      onClick={() => {
-                        if (searchTerm || filterStatus !== 'all') {
-                          setSearchTerm('');
-                          setFilterStatus('all');
-                        } else {
-                          handleNavigateToCreateCourse();
-                        }
-                      }}
-                    >
-                      {searchTerm || filterStatus !== 'all' ? 'Reset filters' : 'Create course'}
-                    </Button>
-                  }
-                />
-              </div>
-            )}
-
-            {/* Course Grid */}
-            {filteredCourses.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-                {filteredCourses.map((course: Course) => (
-                  <div
-                    key={course.id}
-                    className="card-lg card-hover overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--hud-orange)] focus:ring-offset-2"
-                    data-test="admin-course-card"
-                    role="link"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      const target = event.target as HTMLElement | null;
-                      if (target?.closest('a,button,input,select,textarea,label')) {
-                        return;
-                      }
-                      navigate(`/admin/course-builder/${course.id}`);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') {
-                        return;
-                      }
-                      const target = event.target as HTMLElement | null;
-                      if (target?.closest('a,button,input,select,textarea,label')) {
-                        return;
-                      }
-                      event.preventDefault();
-                      navigate(`/admin/course-builder/${course.id}`);
-                    }}
-                    aria-label={`Open course builder for ${course.title}`}
-                  >
-                    {/* ...card content... */}
                   </div>
-                ))}
-              </div>
-            )}
+                </Card>
 
-            {/* Course Table */}
-            <div className="card-lg overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h2 className="text-lg font-bold text-gray-900">Course Details</h2>
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={handleSelectAll}
-                    type="button"
-                    className="text-sm text-gray-600 hover:text-gray-900 font-medium"
-                  >
-                    {selectedCourses.length === filteredCourses.length ? 'Deselect All' : 'Select All'}
-                  </button>
-                  <LoadingButton
-                    onClick={handleExportCourses}
-                    variant="secondary"
-                    icon={Download}
-                    loading={loading}
-                    disabled={loading}
-                  >
-                    Export
-                  </LoadingButton>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="text-left py-3 px-6">
-                        <input
-                          type="checkbox"
-                          checked={selectedCourses.length === filteredCourses.length && filteredCourses.length > 0}
-                          onChange={handleSelectAll}
-                          className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
-                        />
-                      </th>
-                      <th className="text-left py-3 px-6 font-semibold text-gray-900">Course</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Type</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Enrollments</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Completion</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Rating</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Status</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                {filteredCourses.length === 0 ? (
+                  <div className="mb-8">
+                    <EmptyState
+                      title={searchTerm || filterStatus !== 'all' ? 'No courses found' : 'No courses yet — let’s build your first learning experience'}
+                      description={
+                        searchTerm || filterStatus !== 'all'
+                          ? 'Try changing your search or filters, or create a new course to get started.'
+                          : 'A central course catalog helps your team manage learning programs with speed and confidence.'
+                      }
+                      action={
+                        <Button
+                          variant={searchTerm || filterStatus !== 'all' ? 'outline' : 'primary'}
+                          onClick={() => {
+                            if (searchTerm || filterStatus !== 'all') {
+                              setSearchTerm('');
+                              setFilterStatus('all');
+                            } else {
+                              handleNavigateToCreateCourse();
+                            }
+                          }}
+                        >
+                          {searchTerm || filterStatus !== 'all' ? 'Reset filters' : 'Create your first course'}
+                        </Button>
+                      }
+                    />
+                  </div>
+                ) : viewMode === 'cards' ? (
+                  <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
                     {filteredCourses.map((course: Course) => (
-                      <tr key={course.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-4 px-6">
-                          <input
-                            type="checkbox"
-                            checked={selectedCourses.includes(course.id)}
-                            onChange={() => handleSelectCourse(course.id)}
-                            className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
-                          />
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="flex items-center space-x-3">
-                            <LazyImage
-                              src={course.thumbnail}
-                              alt={course.title}
-                              className="w-12 h-12 rounded-lg object-cover"
-                              fallbackSrc="/placeholder-image.png"
-                              placeholder={<div className="w-12 h-12 bg-gray-200 animate-pulse rounded-lg" />}
-                            />
-                            <div>
-                              <div className="font-medium text-gray-900">{course.title}</div>
-                              <div className="text-sm text-gray-600">{course.lessons} lessons • {course.duration}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getTypeColor(course.type || 'Mixed')}`}>
-                            {getTypeIcon(course.type || 'Mixed')}
-                            <span className="capitalize">{course.type}</span>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className="font-medium text-gray-900">{course.enrollments}</div>
-                          <div className="text-sm text-gray-600">{course.completions} completed</div>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className="font-medium text-gray-900">{course.completionRate}%</div>
-                          <div className="w-16 bg-gray-200 rounded-full h-1 mt-1 mx-auto">
-                            <div 
-                              className="h-1 rounded-full"
-                              style={{ width: `${course.completionRate}%`, background: 'var(--gradient-blue-green)' }}
-                            ></div>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          {(course.avgRating || 0) > 0 ? (
-                            <div className="flex items-center justify-center space-x-1">
-                              <span className="font-medium text-gray-900">{course.avgRating}</span>
-                              <div className="text-yellow-400">★</div>
-                            </div>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(course.status)}`}>
-                            {course.status}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className="flex items-center justify-center space-x-2">
-                            <Link 
-                              to={`/admin/courses/${course.id}/details?viewMode=learner`}
-                              className="p-1 text-blue-600 hover:text-blue-800" 
-                              title="Preview as Participant"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Link>
-                            <Link
-                              to={`/admin/course-builder/${course.id}`}
-                              className="p-1 text-gray-600 hover:text-gray-800"
-                              title="Edit Course"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Link>
-                            <button onClick={() => void duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
-                              <Copy className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => openArchiveModal(course)}
-                              className="p-1 text-gray-600 hover:text-gray-800"
-                              title="Archive course"
-                            >
-                              <Archive className="h-4 w-4" />
-                            </button>
-                            <button 
-                              onClick={() => navigate(`/admin/courses/${course.id}/settings`)}
-                              className="p-1 text-gray-600 hover:text-gray-800" 
-                              title="Settings"
-                            >
-                              <Settings className="h-4 w-4" />
-                            </button>
-                            <LoadingButton
-                              onClick={() => deleteCourse(course.id)}
-                              variant="danger"
-                              size="sm"
-                              icon={Trash2}
-                              loading={loading && courseToDelete === course.id}
-                              disabled={loading}
-                              title="Delete course"
-                            >
-                              Delete
-                            </LoadingButton>
-                          </div>
-                        </td>
-                      </tr>
+                      <CourseCard
+                        key={course.id}
+                        course={course}
+                        isSelected={selectedCourses.includes(course.id)}
+                        onSelect={handleSelectCourse}
+                        onEdit={() => navigate(`/admin/course-builder/${course.id}`)}
+                        onPreview={() => navigate(`/admin/courses/${course.id}/details?viewMode=learner`)}
+                        onDuplicate={() => void duplicateCourse(course.id)}
+                        onPublish={() => void publishCourse(course)}
+                        onArchive={() => openArchiveModal(course)}
+                      />
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                ) : (
+                  <Card tone="default" className="overflow-hidden border border-mist bg-white shadow-card-lg">
+                    <div className="px-6 py-4 border-b border-mist flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="text-lg font-semibold text-charcoal">Course catalog</h2>
+                        <p className="text-sm text-slate-600">Quickly scan course health, status, and actions in a compact view.</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={handleExportCourses}>
+                          Export
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={publishSelected}>
+                          Publish selected
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="px-4 py-4">
+                              <input
+                                type="checkbox"
+                                checked={selectedCourses.length === filteredCourses.length && filteredCourses.length > 0}
+                                onChange={handleSelectAll}
+                                className="h-4 w-4 rounded border-gray-300 text-skyblue focus:ring-skyblue"
+                              />
+                            </th>
+                            <th className="px-4 py-4">Course</th>
+                            <th className="px-4 py-4">Type</th>
+                            <th className="px-4 py-4 text-center">Enrollments</th>
+                            <th className="px-4 py-4 text-center">Completion</th>
+                            <th className="px-4 py-4 text-center">Status</th>
+                            <th className="px-4 py-4 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredCourses.map((course: Course) => {
+                            const courseEnrollments = course.enrollmentCount ?? course.enrollments ?? 0;
+                            const courseCompletion = course.completionRate ?? 0;
+                            return (
+                              <tr key={course.id} className="transition hover:bg-slate-50">
+                                <td className="px-4 py-4 align-top">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedCourses.includes(course.id)}
+                                    onChange={() => handleSelectCourse(course.id)}
+                                    className="h-4 w-4 rounded border-gray-300 text-skyblue focus:ring-skyblue"
+                                  />
+                                </td>
+                                <td className="px-4 py-4 align-top">
+                                  <div className="flex items-start gap-3">
+                                    <LazyImage
+                                      src={course.thumbnail}
+                                      alt={course.title}
+                                      className="h-12 w-12 rounded-3xl object-cover"
+                                      fallbackSrc="/placeholder-image.png"
+                                      placeholder={<div className="h-12 w-12 rounded-3xl bg-slate-200 animate-pulse" />}
+                                    />
+                                    <div className="min-w-0">
+                                      <div className="font-semibold text-slate-900 truncate">{course.title}</div>
+                                      <div className="text-xs text-slate-500">{course.lessons ?? course.lessonCount ?? 0} lessons · {course.duration}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-4 align-top">
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${getTypeColor(course.type ?? 'resource')}`}>
+                                    {getTypeIcon(course.type || 'resource')}
+                                    <span className="capitalize">{course.type || 'Mixed'}</span>
+                                  </span>
+                                </td>
+                                <td className="px-4 py-4 text-center align-top">
+                                  <div className="font-semibold text-slate-900">{courseEnrollments}</div>
+                                  <div className="text-xs text-slate-500">learners</div>
+                                </td>
+                                <td className="px-4 py-4 align-top">
+                                  <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+                                    <span>{courseCompletion}%</span>
+                                    <span>{Math.round(courseCompletion / 20)}/5</span>
+                                  </div>
+                                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                    <div className="h-full rounded-full bg-gradient-to-r from-skyblue to-forest" style={{ width: `${courseCompletion}%` }} />
+                                  </div>
+                                </td>
+                                <td className="px-4 py-4 text-center align-top">
+                                  <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(course.status)}`}>
+                                    {course.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-4 text-right align-top">
+                                  <div className="flex flex-wrap justify-end gap-2">
+                                    <button type="button" onClick={() => navigate(`/admin/courses/${course.id}/details?viewMode=learner`)} className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
+                                      <Eye className="h-4 w-4" />
+                                    </button>
+                                    <button type="button" onClick={() => navigate(`/admin/course-builder/${course.id}`)} className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
+                                      <Edit className="h-4 w-4" />
+                                    </button>
+                                    <button type="button" onClick={() => void duplicateCourse(course.id)} className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
+                                      <Copy className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
               </div>
+
+              <aside className="space-y-4">
+                <Card tone="muted" className="rounded-[28px] border border-mist p-6 shadow-card-sm">
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Admin pulse</p>
+                  <h2 className="mt-3 text-lg font-semibold text-charcoal">Focus areas</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">High-value courses that need your attention and the latest activity from the catalog.</p>
+                  <div className="mt-5 space-y-3">
+                    <div className="rounded-3xl bg-white p-4 shadow-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Publishes</p>
+                          <p className="mt-1 text-lg font-semibold text-charcoal">{publishedCount} live courses</p>
+                        </div>
+                        <span className="rounded-full bg-forest/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-forest">Healthy</span>
+                      </div>
+                    </div>
+                    <div className="rounded-3xl bg-white p-4 shadow-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Learner engagement</p>
+                          <p className="mt-1 text-lg font-semibold text-charcoal">{activeLearners} active learners</p>
+                        </div>
+                        <div className="text-right text-sm text-slate-600">
+                          <div className="flex items-center gap-1 font-semibold text-forest"><TrendingUp className="h-4 w-4" /> {trendDirection === 'up' ? 'Up' : 'Flat'}</div>
+                          <div>{trendLabel}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card tone="default" className="rounded-[28px] border border-mist p-6 shadow-card-sm">
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Recently edited</p>
+                  <div className="mt-4 space-y-3">
+                    {recentCourses.length > 0 ? recentCourses.map((course: Course) => (
+                      <div key={course.id} className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900 truncate">{course.title}</p>
+                            <p className="text-xs text-slate-500">Updated {new Date(course.lastUpdated ?? course.updatedAt ?? course.publishedAt ?? course.createdAt ?? '').toLocaleDateString()}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-xs font-semibold ${getStatusColor(course.status)}`}>{course.status}</span>
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-sm text-slate-600">No recent edits yet.</p>
+                    )}
+                  </div>
+                </Card>
+
+                <Card tone="muted" className="rounded-[28px] border border-mist p-6 shadow-card-sm">
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Needs attention</p>
+                  <div className="mt-4 space-y-3">
+                    {attentionCourses.length > 0 ? attentionCourses.map((course: Course) => (
+                      <div key={course.id} className="rounded-3xl border border-amber-100 bg-amber-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900 truncate">{course.title}</p>
+                            <p className="text-xs text-slate-600">{course.completionRate ?? 0}% completion</p>
+                          </div>
+                          <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Low</span>
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-sm text-slate-600">All published courses are on track.</p>
+                    )}
+                  </div>
+                </Card>
+              </aside>
             </div>
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
       {/* Modals rendered outside the main container for correct JSX structure */}
       <ConfirmationModal
         isOpen={showDeleteModal}
@@ -1032,6 +1099,139 @@ const AdminCourses = () => {
         loading={loading}
       />
     </>
+  );
+};
+
+interface OverviewCardProps {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: React.ReactNode;
+}
+
+const OverviewCard = ({ label, value, detail, icon }: OverviewCardProps) => (
+  <div className="rounded-[32px] border border-mist bg-white p-5 shadow-card-sm">
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{label}</p>
+        <p className="mt-3 text-3xl font-semibold text-charcoal">{value}</p>
+      </div>
+      <div className="flex h-12 w-12 items-center justify-center rounded-3xl bg-slate-100 text-slate-700">
+        {icon}
+      </div>
+    </div>
+    <p className="mt-4 text-sm text-slate-600">{detail}</p>
+  </div>
+);
+
+interface FilterChipProps {
+  label: string;
+  onRemove: () => void;
+}
+
+const FilterChip = ({ label, onRemove }: FilterChipProps) => (
+  <button
+    type="button"
+    onClick={onRemove}
+    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-sm text-slate-700 transition hover:bg-slate-200"
+  >
+    <span>{label}</span>
+    <span className="text-slate-500">×</span>
+  </button>
+);
+
+interface CourseCardProps {
+  course: Course;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+  onEdit: () => void;
+  onPreview: () => void;
+  onDuplicate: () => void;
+  onPublish: () => void;
+  onArchive: () => void;
+}
+
+const CourseCard = ({
+  course,
+  isSelected,
+  onSelect,
+  onEdit,
+  onPreview,
+  onDuplicate,
+  onPublish,
+  onArchive,
+}: CourseCardProps) => {
+  const enrollmentCount = course.enrollmentCount ?? course.enrollments ?? 0;
+  const completionRate = course.completionRate ?? 0;
+  const updatedAt = course.lastUpdated ?? course.updatedAt ?? course.publishedAt ?? course.createdAt ?? '';
+
+  return (
+    <div className="rounded-[32px] border border-mist bg-white p-5 shadow-card-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-xl">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            onClick={() => onSelect(course.id)}
+            className={`mt-1 h-5 w-5 rounded-full border ${isSelected ? 'border-skyblue bg-skyblue/20' : 'border-slate-300 bg-white'}`}
+            aria-label={isSelected ? 'Deselect course' : 'Select course'}
+          />
+          <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-3xl bg-slate-100">
+            <LazyImage
+              src={course.thumbnail}
+              alt={course.title}
+              className="h-full w-full object-cover"
+              fallbackSrc="/placeholder-image.png"
+              placeholder={<div className="h-full w-full bg-slate-200" />}
+            />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-lg font-semibold text-charcoal">{course.title}</h3>
+              <span className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${getStatusColor(course.status)}`}>
+                {course.status}
+              </span>
+            </div>
+            <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{course.description || 'No description available.'}</p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-3xl bg-slate-50 p-4">
+          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Completion</p>
+          <p className="mt-2 text-2xl font-semibold text-charcoal">{completionRate}%</p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+            <div className="h-full rounded-full bg-gradient-to-r from-skyblue to-forest" style={{ width: `${completionRate}%` }} />
+          </div>
+        </div>
+        <div className="rounded-3xl bg-slate-50 p-4">
+          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Learners</p>
+          <p className="mt-2 text-2xl font-semibold text-charcoal">{enrollmentCount}</p>
+          <p className="mt-2 text-sm text-slate-600">Enrolled learners</p>
+        </div>
+      </div>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm text-slate-500">Updated {updatedAt ? new Date(updatedAt).toLocaleDateString() : 'N/A'}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onPreview}>
+            Preview
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onEdit}>
+            Edit
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onPublish}>
+            {course.status === 'published' ? 'Republish' : 'Publish'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onDuplicate}>
+            Duplicate
+          </Button>
+        </div>
+      </div>
+      <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
+        <button type="button" onClick={onArchive} className="rounded-full px-3 py-1 text-slate-600 transition hover:bg-slate-100">
+          Archive
+        </button>
+      </div>
+    </div>
   );
 };
 
