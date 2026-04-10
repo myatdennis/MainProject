@@ -63,7 +63,7 @@ export const LazyImage: React.FC<LazyImageProps & {
 
   const [darkMode, setDarkMode] = useState(false);
   return (
-    <div ref={imgRef} className={`relative overflow-hidden rounded-2xl ${darkMode ? 'bg-gradient-to-br from-indigo-900 via-charcoal to-sunrise/10' : 'bg-gradient-to-br from-indigo-50 via-ivory to-sunrise/10'} ${className}`} aria-label={alt} role="img">
+    <div ref={imgRef} className={`relative overflow-hidden rounded-2xl min-h-[280px] ${darkMode ? 'bg-gradient-to-br from-indigo-900 via-charcoal to-sunrise/10' : 'bg-gradient-to-br from-indigo-50 via-ivory to-sunrise/10'} ${className}`} aria-label={alt} role="img">
       {!isLoaded && placeholder && (
         <div className={`absolute inset-0 flex items-center justify-center animate-pulse rounded-2xl ${darkMode ? 'bg-mutedgrey/40' : 'bg-mutedgrey'}`}>
           {placeholder}

@@ -31,13 +31,13 @@ const ContactPage = () => {
     {
       icon: <Mail className="h-6 w-6 text-orange-500" />,
       title: "Email",
-      details: "hello@thehuddleco.com",
+      details: "mya@the-huddle.co",
       subtitle: "We respond within 24 hours"
     },
     {
       icon: <Phone className="h-6 w-6 text-blue-500" />,
       title: "Phone",
-      details: "(555) 123-4567",
+      details: "952-356-2604",
       subtitle: "Monday - Friday, 9am - 5pm EST"
     },
     {

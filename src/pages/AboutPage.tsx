@@ -1,4 +1,3 @@
-import React from 'react';
 import { Heart, Users, Compass, Shield, TrendingUp, CheckCircle } from 'lucide-react';
 
 const AboutPage = () => {
@@ -31,12 +30,11 @@ const AboutPage = () => {
   ];
 
   const achievements = [
-    "Master's in Organizational Psychology",
-    "Certified DEI Professional (CDIP)",
-    "15+ years in leadership development",
-    "Featured speaker at 50+ conferences",
-    "Published researcher in inclusive leadership",
-    "Certified trauma-informed facilitator"
+    'DEI Officer & ADA Coordinator, Minnesota Attorney General’s Office',
+    'Nearly 10 years of experience in DEI, law, and organizational leadership',
+    'Founder of The Huddle Co., a leadership and culture development platform',
+    'Experienced facilitator of workshops, trainings, and courageous conversations',
+    'Background in athletics and team development, shaping a “team-first” leadership philosophy'
   ];
 
   return (
@@ -50,17 +48,21 @@ const AboutPage = () => {
                 Meet Mya Dennis
               </h1>
               <p className="text-xl text-gray-600 mb-8">
-                Founder & Lead Facilitator at The Huddle Co.
+                Founder & Lead Facilitator, The Huddle Co.
+              </p>
+              <p className="text-lg text-gray-700 leading-relaxed mb-6">
+                Mya Dennis is a Diversity, Equity, Inclusion, and Accessibility (DEIA) leader, legal professional, and community builder dedicated to helping organizations create environments where people feel seen, valued, and connected.
+              </p>
+              <p className="text-lg text-gray-700 leading-relaxed mb-6">
+                With nearly a decade of experience working at the intersection of law, equity, and organizational culture, Mya currently serves as a DEI Officer and ADA Coordinator for the Minnesota Attorney General’s Office. In her role, she leads strategic initiatives, develops inclusive policies, and facilitates conversations that strengthen workplace culture and belonging.
               </p>
               <p className="text-lg text-gray-700 leading-relaxed mb-8">
-                With over 15 years of experience in organizational psychology and leadership development, 
-                Mya has dedicated her career to helping organizations create cultures where everyone can thrive. 
-                Her approach combines evidence-based practices with deep empathy and real-world experience.
+                Mya founded The Huddle Co. to bring a more human-centered approach to leadership development—one rooted in empathy, trust, and real connection. Inspired by her background in sports and team dynamics, her work focuses on helping individuals and organizations better understand one another, communicate more effectively, and operate as cohesive, high-performing teams.
               </p>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {achievements.map((achievement, index) => (
-                  <div key={index} className="flex items-center space-x-2">
-                    <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
+                  <div key={index} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm">
+                    <CheckCircle className="mt-1 h-5 w-5 text-green-500 flex-shrink-0" />
                     <span className="text-gray-700">{achievement}</span>
                   </div>
                 ))}
@@ -149,23 +151,16 @@ const AboutPage = () => {
           </h2>
           <div className="prose prose-lg mx-auto text-gray-700">
             <p className="text-lg leading-relaxed mb-6">
-              The Huddle Co. was born from a simple but powerful realization: when people feel truly included, 
-              organizations don't just perform better—they become places where human potential can flourish.
+              Mya founded The Huddle Co. to bring a more human-centered approach to leadership development—one rooted in empathy, trust, and real connection.
             </p>
             <p className="text-lg leading-relaxed mb-6">
-              Having worked across universities, sports organizations, nonprofits, and corporations, Mya witnessed 
-              the same patterns repeatedly: talented individuals struggling in environments that didn't see their full value, 
-              teams fragmenting due to lack of psychological safety, and leaders desperate for tools to create meaningful change.
+              Inspired by her background in sports and team dynamics, Mya's work focuses on helping individuals and organizations better understand one another, communicate more effectively, and operate as cohesive, high-performing teams.
             </p>
             <p className="text-lg leading-relaxed mb-6">
-              Our approach is different. We don't just talk about inclusion—we create it through practical, 
-              evidence-based strategies that leaders can implement immediately. We hold space for the uncomfortable 
-              conversations that lead to breakthrough moments. And we measure success not just by participation 
-              rates or survey scores, but by the authentic transformation we see in individuals and teams.
+              Her facilitation style blends practical strategy with real-world experience, creating spaces where people can engage in meaningful dialogue, reflect on their perspectives, and grow together.
             </p>
             <p className="text-lg leading-relaxed">
-              Every workshop, every conversation, every strategic plan we develop is designed with one goal: 
-              to help you create an environment where every person can show up as their authentic self and contribute their best work.
+              Every workshop, conversation, and coaching engagement is designed to help teams build trust, strengthen culture, and make inclusion an everyday practice—not just an initiative.
             </p>
           </div>
         </div>

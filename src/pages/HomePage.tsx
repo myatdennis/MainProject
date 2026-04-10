@@ -88,7 +88,7 @@ const HomePage = () => {
                   variant="secondary"
                   size="lg"
                   leadingIcon={<Download className="h-4 w-4" />}
-                  className="bg-white"
+                  className="bg-white text-charcoal border border-slate-200 shadow-sm hover:bg-slate-50"
                 >
                   <Link to="/resources">Download the leadership guide</Link>
                 </Button>

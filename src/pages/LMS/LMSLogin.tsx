@@ -241,27 +241,28 @@ const LMSLogin: React.FC = () => {
   return (
     <div className="min-h-screen bg-softwhite py-12 lg:py-16">
       <div className="container-page section mx-auto grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-        <Card className="overflow-hidden bg-slate-950 text-white shadow-card-sm">
+        <Card className="overflow-hidden bg-slate-900 text-slate-100 shadow-card-sm">
           <div className="relative overflow-hidden px-8 py-10 sm:px-10 sm:py-12">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-950/95 via-slate-900/90 to-slate-950/95" />
             <div className="pointer-events-none absolute inset-0 opacity-10">
               <img src="/logo.svg" alt="" className="h-full w-full object-contain" />
             </div>
             <div className="relative z-10">
-              <Badge tone="info" className="inline-flex bg-white/10 text-white border border-white/15 px-3 py-1 text-[11px] uppercase tracking-[0.32em] text-white/80">
+              <Badge tone="info" className="inline-flex bg-white/10 text-slate-100 border border-white/15 px-3 py-1 text-[11px] uppercase tracking-[0.32em] text-white/80">
                 Premium leadership learning
               </Badge>
-              <h1 className="mt-8 font-heading text-4xl font-bold tracking-tight text-white sm:text-5xl">
+              <h1 className="mt-8 font-heading text-4xl font-bold tracking-tight text-slate-50 sm:text-5xl">
                 Welcome back to your learning hub
               </h1>
-              <p className="mt-6 max-w-2xl text-sm leading-7 text-slate-200/85 sm:text-base">
+              <p className="mt-6 max-w-2xl text-sm leading-7 text-slate-200 sm:text-base">
                 Continue your leadership journey with guided lessons, reflections, and team connection in The Huddle Co. learner experience.
               </p>
 
               <div className="mt-10 space-y-4">
                 {panelHighlights.map((item) => (
-                  <div key={item.label} className="rounded-[28px] border border-white/10 bg-white/5 p-5 backdrop-blur-sm shadow-[0_18px_90px_rgba(15,23,42,0.16)] transition hover:border-white/20">
-                    <p className="text-sm font-semibold text-white">{item.label}</p>
-                    <p className="mt-1 text-sm leading-6 text-slate-200/80">{item.description}</p>
+                  <div key={item.label} className="rounded-[28px] border border-white/10 bg-slate-800/80 p-5 backdrop-blur-sm shadow-[0_18px_90px_rgba(15,23,42,0.16)] transition hover:border-white/20">
+                    <p className="text-sm font-semibold text-slate-100">{item.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-300">{item.description}</p>
                   </div>
                 ))}
               </div>
@@ -272,15 +273,38 @@ const LMSLogin: React.FC = () => {
         <Card tone="default" className="rounded-[28px] border border-mist bg-white p-8 shadow-card-sm">
           <div className="mb-8">
             <div className="inline-flex items-center gap-3 rounded-[28px] bg-slate-100 px-4 py-3 shadow-sm shadow-slate-200/60">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-400 to-red-500 text-white shadow-lg shadow-orange-500/10">
-                <img src="/logo.svg" alt="The Huddle Co." className="h-6 w-6" />
+              <div className="flex h-11 w-11 overflow-hidden rounded-2xl bg-gradient-to-br from-orange-400 to-red-500 shadow-lg shadow-orange-500/10">
+                <img src="/logo.svg" alt="The Huddle Co." className="h-full w-full object-contain" />
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">The Huddle Co.</p>
                 <p className="text-2xl font-semibold tracking-tight text-charcoal">Sign in</p>
               </div>
             </div>
-            <p className="text-sm leading-6 text-slate-600">Secure login for your leadership and cohort experience.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setAuthMode('client')}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'client' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+              >
+                Learner login
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('admin');
+                  setActiveTab('login');
+                }}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'admin' ? 'border-orange-500 bg-orange-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+              >
+                Admin login
+              </button>
+            </div>
+            <p className="mt-4 text-sm leading-6 text-slate-600">
+              {authMode === 'admin'
+                ? 'Use your admin credentials to access the protected admin portal.'
+                : 'Sign in to your learner workspace with your cohort credentials.'}
+            </p>
           </div>
 
           <div className="rounded-[28px] border border-mist bg-slate-50 p-5 text-sm text-slate-700">
