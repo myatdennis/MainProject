@@ -23,20 +23,16 @@ import {
   Filter,
   Edit,
   Copy,
-  Trash2,
   Eye,
   Play,
   FileText,
   Video,
-  Settings,
   Upload,
   Download,
-  Archive,
   AlertTriangle,
   ShieldCheck
 } from 'lucide-react';
 import LoadingButton from '../../components/LoadingButton';
-import ConfirmationModal from '../../components/ConfirmationModal';
 import CourseEditModal from '../../components/CourseEditModal';
 import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../dal/sync';
@@ -70,15 +66,11 @@ const AdminCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [courseToDelete, setCourseToDelete] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [courseForAssignment, setCourseForAssignment] = useState<Course | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
-  const [courseToArchive, setCourseToArchive] = useState<Course | null>(null);
-  const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   // useSyncExternalStore gives tear-free reads from the module-scope courseStore singleton.
@@ -93,13 +85,9 @@ const AdminCourses = () => {
     setSearchTerm('');
     setFilterStatus('all');
     setSelectedCourses([]);
-    setShowDeleteModal(false);
-    setCourseToDelete(null);
     setShowCreateModal(false);
     setShowAssignmentModal(false);
     setCourseForAssignment(null);
-    setShowArchiveModal(false);
-    setCourseToArchive(null);
   }, [routeKey]);
 
   // Get courses from the store via tear-free external subscription
@@ -210,8 +198,6 @@ const AdminCourses = () => {
     navigate('/admin/course-builder/new');
   }, [isE2ERuntime, navigate, setSearchParams]);
 
-  // ...existing code...
-
   const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
     setShowAssignmentModal(false);
     setCourseForAssignment(null);
@@ -243,153 +229,26 @@ const AdminCourses = () => {
     }
   }, [catalogState.phase, retrying]);
 
-  const openArchiveModal = (course: Course) => {
-    setCourseToArchive(course);
-    setShowArchiveModal(true);
-  };
-
-  const confirmArchiveCourse = async () => {
-    if (!courseToArchive) return;
+  const publishCourse = async (course: Course) => {
     setLoading(true);
     try {
-      const archived = await persistCourse(
-        {
-          ...courseToArchive,
-          status: 'archived',
-        },
-        'archived'
-      );
+      const updated = {
+        ...course,
+        status: 'published' as const,
+        publishedDate: course.publishedDate || new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+      };
+      const persisted = await persistCourse(updated, 'published');
       syncService.logEvent({
         type: 'course_updated',
-        data: archived,
+        data: persisted,
         timestamp: Date.now(),
       });
-      showToast('Course archived successfully.', 'success');
+      showToast(`Published ${course.title}`, 'success');
     } catch (error) {
-      console.error('[AdminCourses] Failed to archive course:', error);
-      showToast('Failed to archive course', 'error');
+      showToast('Failed to publish course', 'error');
     } finally {
       setLoading(false);
-      setShowArchiveModal(false);
-      setCourseToArchive(null);
-    }
-  };
-
-  const handleCreateCourseSave = (course: Course) => {
-    const normalizedSlug = slugify(course.slug || course.title || course.id);
-    const created = courseStore.createCourse({
-      ...course,
-      slug: normalizedSlug,
-      status: course.status || 'draft',
-      lastUpdated: new Date().toISOString(),
-    });
-
-    syncService.logEvent({
-      type: 'course_created',
-      data: created,
-      timestamp: Date.now(),
-    });
-
-    showToast('Course created successfully.', 'success');
-    closeCreateModal();
-    navigate(`/admin/courses/${created.id}/details`);
-  };
-
-  const closeCreateModal = () => {
-    setShowCreateModal(false);
-    setSearchParams(prev => {
-      const params = new URLSearchParams(prev);
-      params.delete('create');
-      return params;
-    });
-  };
-
-  useEffect(() => {
-    if (searchParams.get('create') === '1') {
-      setShowCreateModal(true);
-    }
-  }, [searchParams]);
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'published':
-        return 'bg-green-100 text-green-800';
-      case 'draft':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'archived':
-        return 'bg-gray-100 text-gray-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'video':
-        return <Video className="h-4 w-4" />;
-      case 'interactive':
-        return <Play className="h-4 w-4" />;
-      case 'worksheet':
-        return <FileText className="h-4 w-4" />;
-      case 'case-study':
-        return <BookOpen className="h-4 w-4" />;
-      default:
-        return <BookOpen className="h-4 w-4" />;
-    }
-  };
-
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'video':
-        return 'text-blue-600 bg-blue-50';
-      case 'interactive':
-        return 'text-green-600 bg-green-50';
-      case 'worksheet':
-        return 'text-orange-600 bg-orange-50';
-      case 'case-study':
-        return 'text-purple-600 bg-purple-50';
-      default:
-        return 'text-gray-600 bg-gray-50';
-    }
-  };
-
-  const duplicateCourse = async (courseId: string) => {
-    const original = courseStore.getCourse(courseId);
-    if (!original) return;
-
-    // Create a shallow clone with a new id and title
-    const newId = `course-${Date.now()}`;
-    const cloned = {
-      ...original,
-      id: newId,
-      title: `${original.title} (Copy)`,
-      createdDate: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-      enrollments: 0,
-      completions: 0,
-      completionRate: 0,
-    };
-
-    // Save to store and navigate to builder
-    try {
-      const persistedClone = await persistCourse(cloned);
-      syncService.logEvent({
-        type: 'course_created',
-        data: persistedClone,
-        timestamp: Date.now()
-      });
-      navigate(`/admin/course-builder/${persistedClone.id}`);
-      showToast('Course duplicated successfully.', 'success');
-    } catch (err: any) {
-      if (err instanceof CourseValidationError) {
-        showToast(`Duplicate failed: ${err.issues.join(' • ')}`, 'error');
-      } else {
-        console.warn('Failed to duplicate course', err);
-        const errorMessage = err?.message || err?.body?.error || 'Could not duplicate course. Please try again.';
-        const errorDetails = err?.body?.details;
-        const fullMessage = errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage;
-        showToast(fullMessage, 'error');
-      }
     }
   };
 
@@ -446,6 +305,52 @@ const AdminCourses = () => {
     }
   };
 
+  const handleExportCourses = () => {
+    exportCourses(selectedCourses.length > 0 ? 'selected' : 'all');
+  };
+
+  const handleImportCourses = () => {
+    navigate('/admin/courses/import');
+  };
+
+  const duplicateCourse = async (courseId: string) => {
+    const original = courseStore.getCourse(courseId);
+    if (!original) return;
+
+    const newId = `course-${Date.now()}`;
+    const cloned = {
+      ...original,
+      id: newId,
+      title: `${original.title} (Copy)`,
+      createdDate: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      enrollments: 0,
+      completions: 0,
+      completionRate: 0,
+    };
+
+    try {
+      const persistedClone = await persistCourse(cloned);
+      syncService.logEvent({
+        type: 'course_created',
+        data: persistedClone,
+        timestamp: Date.now(),
+      });
+      navigate(`/admin/course-builder/${persistedClone.id}`);
+      showToast('Course duplicated successfully.', 'success');
+    } catch (err: any) {
+      if (err instanceof CourseValidationError) {
+        showToast(`Duplicate failed: ${err.issues.join(' • ')}`, 'error');
+      } else {
+        console.warn('Failed to duplicate course', err);
+        const errorMessage = err?.message || err?.body?.error || 'Could not duplicate course. Please try again.';
+        const errorDetails = err?.body?.details;
+        const fullMessage = errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage;
+        showToast(fullMessage, 'error');
+      }
+    }
+  };
+
   const exportCourses = (scope: 'selected' | 'filtered' | 'all' = 'selected') => {
     let toExport = filteredCourses;
     if (scope === 'selected' && selectedCourses.length > 0) {
@@ -469,49 +374,83 @@ const AdminCourses = () => {
     }
   };
 
-  const deleteCourse = (id: string) => {
-    setCourseToDelete(id);
-    setShowDeleteModal(true);
-  };
-
-  const confirmDeleteCourse = async () => {
-    if (!courseToDelete) return;
-    
-    setLoading(true);
-    try {
-      courseStore.deleteCourse(courseToDelete);
-      syncService.logEvent({
-        type: 'course_deleted',
-        data: { id: courseToDelete },
-        timestamp: Date.now()
-      });
-      setSelectedCourses((prev: string[]) => prev.filter((x: string) => x !== courseToDelete));
-      showToast('Course deleted successfully!', 'success');
-      setShowDeleteModal(false);
-      setCourseToDelete(null);
-    } catch (error) {
-      showToast('Failed to delete course', 'error');
-    } finally {
-      setLoading(false);
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'published':
+        return 'bg-green-100 text-green-800';
+      case 'draft':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'archived':
+        return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
-  const handleImportCourses = () => {
-    navigate('/admin/courses/import');
-  };
-
-  const handleExportCourses = async () => {
-    setLoading(true);
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      exportCourses(selectedCourses.length > 0 ? 'selected' : 'all');
-      showToast('Courses exported successfully!', 'success');
-    } catch (error) {
-      showToast('Failed to export courses', 'error');
-    } finally {
-      setLoading(false);
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case 'video':
+        return <Video className="h-4 w-4" />;
+      case 'interactive':
+        return <Play className="h-4 w-4" />;
+      case 'worksheet':
+        return <FileText className="h-4 w-4" />;
+      case 'case-study':
+        return <BookOpen className="h-4 w-4" />;
+      default:
+        return <BookOpen className="h-4 w-4" />;
     }
   };
+
+  const getTypeColor = (type: string) => {
+    switch (type) {
+      case 'video':
+        return 'text-blue-600 bg-blue-50';
+      case 'interactive':
+        return 'text-green-600 bg-green-50';
+      case 'worksheet':
+        return 'text-orange-600 bg-orange-50';
+      case 'case-study':
+        return 'text-purple-600 bg-purple-50';
+      default:
+        return 'text-gray-600 bg-gray-50';
+    }
+  };
+
+  const handleCreateCourseSave = (course: Course) => {
+    const normalizedSlug = slugify(course.slug || course.title || course.id);
+    const created = courseStore.createCourse({
+      ...course,
+      slug: normalizedSlug,
+      status: course.status || 'draft',
+      lastUpdated: new Date().toISOString(),
+    });
+
+    syncService.logEvent({
+      type: 'course_created',
+      data: created,
+      timestamp: Date.now(),
+    });
+
+    showToast('Course created successfully.', 'success');
+    closeCreateModal();
+    navigate(`/admin/courses/${created.id}/details`);
+  };
+
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.delete('create');
+      return params;
+    });
+  };
+
+  useEffect(() => {
+    if (searchParams.get('create') === '1') {
+      setShowCreateModal(true);
+    }
+  }, [searchParams]);
 
   const catalogStatus = catalogState.adminLoadStatus;
 
@@ -636,6 +575,8 @@ const AdminCourses = () => {
     );
   }
 
+  const isRefreshing = catalogState.phase === 'loading' && !isFirstLoad;
+
   return (
     <>
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
@@ -643,113 +584,104 @@ const AdminCourses = () => {
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
         </div>
 
-        {/* ── DEV STATE PANEL ─────────────────────────────────────────────────
-            Visible only in development. Pinned below the breadcrumb so it
-            renders regardless of whether gateContent or the normal UI is shown.
-            Remove or hide with ?devpanel=0 in the URL.
-        ──────────────────────────────────────────────────────────────────── */}
-        {import.meta.env.DEV && new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('devpanel') !== '0' && (
-          <details
-            open
-            className="mb-4 rounded-xl border border-violet-300 bg-violet-50 text-xs font-mono text-violet-900"
-          >
-            <summary className="cursor-pointer select-none px-3 py-2 font-semibold tracking-wide">
-              🛠 DEV · AdminCourses state
-            </summary>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 pb-3 pt-1 sm:grid-cols-3 lg:grid-cols-4">
-              <div><span className="text-violet-500">raw store count</span><br /><strong>{courses.length}</strong></div>
-              <div><span className="text-violet-500">filtered count</span><br /><strong>{filteredCourses.length}</strong></div>
-              <div><span className="text-violet-500">adminLoadStatus</span><br /><strong>{catalogStatus}</strong></div>
-              <div><span className="text-violet-500">phase</span><br /><strong>{catalogState.phase}</strong></div>
-              <div><span className="text-violet-500">render branch</span><br /><strong>
-                {isCatalogLoading ? '⏳ loading-gate'
-                  : isCatalogEmpty ? '🈳 empty-gate'
-                  : isCatalogUnauthorized ? '🔒 unauthorized-gate'
-                  : isCatalogError ? '❌ error-gate'
-                  : gateContent ? '⚠ gate(other)'
-                  : filteredCourses.length === 0 && courses.length > 0 ? '🔍 filter-empty'
-                  : filteredCourses.length === 0 ? '📭 no-courses'
-                  : '✅ normal'}
-              </strong></div>
-              <div><span className="text-violet-500">isFirstLoad</span><br /><strong>{String(isFirstLoad)}</strong></div>
-              <div><span className="text-violet-500">search</span><br /><strong>"{searchTerm || '—'}"</strong></div>
-              <div><span className="text-violet-500">filter</span><br /><strong>{filterStatus}</strong></div>
-              <div className="col-span-2"><span className="text-violet-500">lastError</span><br /><strong className="break-all">{catalogState.lastError ?? '—'}</strong></div>
-              <div><span className="text-violet-500">lastAttemptAt</span><br /><strong>{catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleTimeString() : '—'}</strong></div>
-              <div><span className="text-violet-500">ts</span><br /><strong>{new Date().toLocaleTimeString()}</strong></div>
-            </div>
-          </details>
-        )}
-
         {gateContent ? gateContent : (
 
           <>
             <div className="mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Course Management</h1>
-              <p className="text-gray-600">Create, edit, and manage training modules and learning paths</p>
-            </div>
-            {/* Stale-data banner: shown when the last sync failed/returned empty but
-                we still have courses from a prior load to display. */}
-            {courses.length > 0 && (catalogStatus === 'error' || catalogStatus === 'api_unreachable') && (
-              <div className="mb-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                <span>
-                  Showing cached courses — the last sync attempt failed.{' '}
-                  <button
-                    type="button"
-                    className="font-medium underline underline-offset-2 hover:text-amber-900"
-                    onClick={handleRetry}
-                  >
-                    Retry sync
-                  </button>
-                </span>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-2">
+                  <h1 className="text-3xl font-bold text-gray-900">Course catalog</h1>
+                  <p className="text-sm text-slate-500 max-w-2xl">
+                    Quickly review course status, progress, and the actions you need to take.
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    {filteredCourses.length} course{filteredCourses.length === 1 ? '' : 's'} available
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedCourses.length > 0 && (
+                    <div className="rounded-full bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">
+                      {selectedCourses.length} selected
+                    </div>
+                  )}
+                  {isRefreshing && (
+                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                      Refreshing course catalog…
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-            {/* Search and Filter Bar */}
-            <div className="card-lg card-hover mb-8">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-                <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 flex-1">
-                  <div className="relative flex-1 max-w-md">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate/60" />
+            </div>
+
+            <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm mb-8">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-4 flex-1">
+                  <div className="relative flex-1 min-w-0">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <Input
-                      className="pl-9"
+                      className="pl-10"
                       placeholder="Search courses..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Filter className="h-5 w-5 text-gray-400" />
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-5 w-5 text-slate-400" />
                     <select
                       value={filterStatus}
                       onChange={(e) => setFilterStatus(e.target.value)}
-                      className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
+                      className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-skyblue focus:ring-2 focus:ring-skyblue/20"
                     >
-                      <option value="all">All Status</option>
+                      <option value="all">All statuses</option>
                       <option value="published">Published</option>
                       <option value="draft">Draft</option>
                       <option value="archived">Archived</option>
                     </select>
                   </div>
-                </div>
-                <div className="flex items-center space-x-4">
-                  {selectedCourses.length > 0 && (
-                    <div className="flex items-center space-x-2">
-                      <Button variant="outline" size="sm" onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)}>
-                        Bulk Assign ({selectedCourses.length})
-                      </Button>
-                      <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
-                        Publish Selected
-                      </Button>
-                    </div>
+                  {(searchTerm || filterStatus !== 'all') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-slate-600"
+                      onClick={() => {
+                        setSearchTerm('');
+                        setFilterStatus('all');
+                      }}
+                    >
+                      Clear filters
+                    </Button>
                   )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 justify-end">
+                  {selectedCourses.length > 0 && (
+                    <Button variant="outline" size="sm" onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)}>
+                      Bulk assign ({selectedCourses.length})
+                    </Button>
+                  )}
+                  {selectedCourses.length > 0 && (
+                    <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
+                      Publish selected
+                    </Button>
+                  )}
+                  <LoadingButton
+                    onClick={handleExportCourses}
+                    variant="secondary"
+                    size="sm"
+                    icon={Download}
+                    loading={loading}
+                    disabled={loading}
+                  >
+                    Export
+                  </LoadingButton>
                   <Button size="md" onClick={handleNavigateToCreateCourse} leadingIcon={<Plus className="h-4 w-4" />} data-test="admin-new-course">
-                    New Course
+                    New course
                   </Button>
                   <LoadingButton
                     onClick={handleImportCourses}
                     variant="secondary"
                     icon={Upload}
+                    loading={loading}
                     disabled={loading}
                   >
                     Import
@@ -788,190 +720,132 @@ const AdminCourses = () => {
               </div>
             )}
 
-            {/* Course Grid */}
-            {filteredCourses.length > 0 && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-                {filteredCourses.map((course: Course) => (
-                  <div
-                    key={course.id}
-                    className="card-lg card-hover overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--hud-orange)] focus:ring-offset-2"
-                    data-test="admin-course-card"
-                    role="link"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      const target = event.target as HTMLElement | null;
-                      if (target?.closest('a,button,input,select,textarea,label')) {
-                        return;
-                      }
-                      navigate(`/admin/course-builder/${course.id}`);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') {
-                        return;
-                      }
-                      const target = event.target as HTMLElement | null;
-                      if (target?.closest('a,button,input,select,textarea,label')) {
-                        return;
-                      }
-                      event.preventDefault();
-                      navigate(`/admin/course-builder/${course.id}`);
-                    }}
-                    aria-label={`Open course builder for ${course.title}`}
-                  >
-                    {/* ...card content... */}
-                  </div>
-                ))}
-              </div>
-            )}
-
             {/* Course Table */}
-            <div className="card-lg overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h2 className="text-lg font-bold text-gray-900">Course Details</h2>
-                <div className="flex items-center space-x-2">
+            <div className="rounded-[32px] border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Courses</h2>
+                  <p className="text-sm text-slate-500">A calm overview of active learning experiences and the next actions you can take.</p>
+                </div>
+                <div className="flex items-center gap-2">
                   <button
                     onClick={handleSelectAll}
                     type="button"
-                    className="text-sm text-gray-600 hover:text-gray-900 font-medium"
+                    className="text-sm text-slate-600 hover:text-slate-900 font-medium"
                   >
-                    {selectedCourses.length === filteredCourses.length ? 'Deselect All' : 'Select All'}
+                    {selectedCourses.length === filteredCourses.length ? 'Deselect all' : 'Select all'}
                   </button>
-                  <LoadingButton
-                    onClick={handleExportCourses}
-                    variant="secondary"
-                    icon={Download}
-                    loading={loading}
-                    disabled={loading}
-                  >
-                    Export
-                  </LoadingButton>
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
                     <tr>
-                      <th className="text-left py-3 px-6">
+                      <th className="text-left py-4 px-6">
                         <input
                           type="checkbox"
                           checked={selectedCourses.length === filteredCourses.length && filteredCourses.length > 0}
                           onChange={handleSelectAll}
-                          className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
+                          className="h-4 w-4 border-slate-300 rounded focus:ring-skyblue"
                         />
                       </th>
-                      <th className="text-left py-3 px-6 font-semibold text-gray-900">Course</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Type</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Enrollments</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Completion</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Rating</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Status</th>
-                      <th className="text-center py-3 px-6 font-semibold text-gray-900">Actions</th>
+                      <th className="text-left py-4 px-6 font-semibold text-slate-900">Course</th>
+                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Enrollments</th>
+                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Progress</th>
+                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Status</th>
+                      <th className="text-center py-4 px-6 font-semibold text-slate-900">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-200 bg-white">
                     {filteredCourses.map((course: Course) => (
-                      <tr key={course.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-4 px-6">
+                      <tr key={course.id} className="transition hover:bg-slate-50">
+                        <td className="py-5 px-6 align-top">
                           <input
                             type="checkbox"
                             checked={selectedCourses.includes(course.id)}
                             onChange={() => handleSelectCourse(course.id)}
-                            className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
+                            className="h-4 w-4 border-slate-300 rounded focus:ring-skyblue"
                           />
                         </td>
-                        <td className="py-4 px-6">
-                          <div className="flex items-center space-x-3">
+                        <td className="py-5 px-6 align-top">
+                          <div className="flex items-start gap-4">
                             <LazyImage
                               src={course.thumbnail}
                               alt={course.title}
-                              className="w-12 h-12 rounded-lg object-cover"
+                              className="w-14 h-14 rounded-2xl object-cover"
                               fallbackSrc="/placeholder-image.png"
-                              placeholder={<div className="w-12 h-12 bg-gray-200 animate-pulse rounded-lg" />}
+                              placeholder={<div className="w-14 h-14 rounded-2xl bg-slate-200 animate-pulse" />}
                             />
-                            <div>
-                              <div className="font-medium text-gray-900">{course.title}</div>
-                              <div className="text-sm text-gray-600">{course.lessons} lessons • {course.duration}</div>
+                            <div className="min-w-0">
+                              <div className="font-semibold text-gray-900 truncate">{course.title}</div>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                                <span>{course.lessons ?? 0} lessons</span>
+                                <span>•</span>
+                                <span>{course.duration ?? 'TBD'}</span>
+                                <span>•</span>
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${getTypeColor(course.type || 'mixed')}`}>
+                                  {getTypeIcon(course.type || 'mixed')}
+                                  <span className="capitalize">{course.type || 'Mixed'}</span>
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getTypeColor(course.type || 'Mixed')}`}>
-                            {getTypeIcon(course.type || 'Mixed')}
-                            <span className="capitalize">{course.type}</span>
-                          </div>
+                        <td className="py-5 px-6 text-center align-top">
+                          <div className="text-base font-semibold text-slate-900">{course.enrollments ?? 0}</div>
+                          <div className="text-sm text-slate-500">learners</div>
                         </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className="font-medium text-gray-900">{course.enrollments}</div>
-                          <div className="text-sm text-gray-600">{course.completions} completed</div>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className="font-medium text-gray-900">{course.completionRate}%</div>
-                          <div className="w-16 bg-gray-200 rounded-full h-1 mt-1 mx-auto">
-                            <div 
-                              className="h-1 rounded-full"
-                              style={{ width: `${course.completionRate}%`, background: 'var(--gradient-blue-green)' }}
-                            ></div>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 text-center">
-                          {(course.avgRating || 0) > 0 ? (
-                            <div className="flex items-center justify-center space-x-1">
-                              <span className="font-medium text-gray-900">{course.avgRating}</span>
-                              <div className="text-yellow-400">★</div>
+                        <td className="py-5 px-6 text-center align-top">
+                          <div className="mx-auto max-w-[160px] text-left">
+                            <div className="mb-2 text-sm font-semibold text-slate-900">{course.completionRate ?? 0}%</div>
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-skyblue to-forest transition-all"
+                                style={{ width: `${course.completionRate ?? 0}%` }}
+                              />
                             </div>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
+                          </div>
                         </td>
-                        <td className="py-4 px-6 text-center">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(course.status)}`}>
+                        <td className="py-5 px-6 text-center align-top">
+                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(course.status)}`}>
                             {course.status}
                           </span>
                         </td>
-                        <td className="py-4 px-6 text-center">
-                          <div className="flex items-center justify-center space-x-2">
-                            <Link 
+                        <td className="py-5 px-6 text-center align-top">
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <Link
                               to={`/admin/courses/${course.id}/details?viewMode=learner`}
-                              className="p-1 text-blue-600 hover:text-blue-800" 
-                              title="Preview as Participant"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                              title="Preview as participant"
                             >
                               <Eye className="h-4 w-4" />
                             </Link>
                             <Link
                               to={`/admin/course-builder/${course.id}`}
-                              className="p-1 text-gray-600 hover:text-gray-800"
-                              title="Edit Course"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                              title="Edit course"
                             >
                               <Edit className="h-4 w-4" />
                             </Link>
-                            <button onClick={() => void duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
+                            <button
+                              type="button"
+                              onClick={() => void duplicateCourse(course.id)}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 transition hover:bg-slate-100"
+                              title="Duplicate course"
+                            >
                               <Copy className="h-4 w-4" />
                             </button>
-                            <button
-                              onClick={() => openArchiveModal(course)}
-                              className="p-1 text-gray-600 hover:text-gray-800"
-                              title="Archive course"
-                            >
-                              <Archive className="h-4 w-4" />
-                            </button>
-                            <button 
-                              onClick={() => navigate(`/admin/courses/${course.id}/settings`)}
-                              className="p-1 text-gray-600 hover:text-gray-800" 
-                              title="Settings"
-                            >
-                              <Settings className="h-4 w-4" />
-                            </button>
-                            <LoadingButton
-                              onClick={() => deleteCourse(course.id)}
-                              variant="danger"
-                              size="sm"
-                              icon={Trash2}
-                              loading={loading && courseToDelete === course.id}
-                              disabled={loading}
-                              title="Delete course"
-                            >
-                              Delete
-                            </LoadingButton>
+                            {course.status !== 'published' && (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={() => void publishCourse(course)}
+                                disabled={loading}
+                                className="min-w-[96px]"
+                              >
+                                Publish
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -984,19 +858,6 @@ const AdminCourses = () => {
         )}
       </div>
       {/* Modals rendered outside the main container for correct JSX structure */}
-      <ConfirmationModal
-        isOpen={showDeleteModal}
-        onClose={() => {
-          setShowDeleteModal(false);
-          setCourseToDelete(null);
-        }}
-        onConfirm={confirmDeleteCourse}
-        title="Delete Course"
-        message="Are you sure you want to delete this course? This action cannot be undone and will remove all associated data including enrollments and progress."
-        confirmText="Delete Course"
-        cancelText="Cancel"
-        type="danger"
-      />
       <CourseEditModal
         isOpen={showCreateModal}
         onClose={closeCreateModal}
@@ -1017,19 +878,6 @@ const AdminCourses = () => {
           organizationId: courseForAssignment.organizationId ?? null,
         } : undefined}
         onAssignComplete={handleAssignmentComplete}
-      />
-      <ConfirmationModal
-        isOpen={showArchiveModal}
-        onClose={() => {
-          setShowArchiveModal(false);
-          setCourseToArchive(null);
-        }}
-        onConfirm={confirmArchiveCourse}
-        title="Archive course"
-        message="Archiving hides this course from learners but keeps analytics intact. You can restore it at any time by switching the status back to Draft or Published."
-        confirmText="Archive course"
-        type="warning"
-        loading={loading}
       />
     </>
   );

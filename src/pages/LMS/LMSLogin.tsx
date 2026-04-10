@@ -273,8 +273,8 @@ const LMSLogin: React.FC = () => {
         <Card tone="default" className="rounded-[28px] border border-mist bg-white p-8 shadow-card-sm">
           <div className="mb-8">
             <div className="inline-flex items-center gap-3 rounded-[28px] bg-slate-100 px-4 py-3 shadow-sm shadow-slate-200/60">
-              <div className="flex h-11 w-11 overflow-hidden rounded-2xl bg-gradient-to-br from-orange-400 to-red-500 shadow-lg shadow-orange-500/10">
-                <img src="/logo.svg" alt="The Huddle Co." className="h-full w-full object-contain" />
+              <div className="flex h-11 w-11 overflow-hidden rounded-2xl bg-white shadow-lg">
+                <img src="/logo.svg" alt="The Huddle Co." className="h-full w-full object-cover" />
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">The Huddle Co.</p>
@@ -285,17 +285,18 @@ const LMSLogin: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setAuthMode('client')}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'client' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'client'
+                  ? 'border-orange-500 bg-orange-500 text-white shadow-sm shadow-orange-200/40'
+                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
               >
                 Learner login
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setAuthMode('admin');
-                  setActiveTab('login');
-                }}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'admin' ? 'border-orange-500 bg-orange-500 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+                onClick={() => setAuthMode('admin')}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'admin'
+                  ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
               >
                 Admin login
               </button>
