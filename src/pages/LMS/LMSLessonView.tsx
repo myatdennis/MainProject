@@ -97,38 +97,44 @@ const LMSLessonView = () => {
   return (
     <div className="bg-softwhite">
       <div className="mx-auto max-w-6xl px-6 py-8 lg:px-10">
-        <Button
-          variant="ghost"
-          size="sm"
-          leadingIcon={<ArrowLeft className="h-4 w-4" />}
-          onClick={handleBackToCourse}
-        >
-          Back to course
-        </Button>
+        <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-sunrise/10 via-skyblue/10 to-forest/10 p-6 shadow-card-sm">
+          <div className="pointer-events-none absolute -right-16 top-4 h-52 w-52 rounded-full bg-sunrise/20 blur-3xl" />
+          <div className="pointer-events-none absolute left-4 top-10 h-32 w-32 rounded-full bg-skyblue/20 blur-3xl" />
 
-        <Card tone="muted" className="mt-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <Badge tone="info" className="bg-sunrise/10 text-sunrise">In progress</Badge>
-            <h1 className="font-heading text-2xl font-bold text-charcoal">{normalizedCourse.title}</h1>
-            <div className="flex flex-wrap gap-4 text-xs text-slate/70">
-              <span className="flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                {durationLabel}
-              </span>
-              <span className="flex items-center gap-2">
-                <BookOpen className="h-4 w-4" />
-                {lessonCount} lessons
-              </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<ArrowLeft className="h-4 w-4 text-sunrise" />}
+            className="text-sunrise hover:bg-sunrise/10"
+            onClick={handleBackToCourse}
+          >
+            Back to course
+          </Button>
+
+          <Card tone="muted" className="mt-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between bg-white/90 shadow-card-sm">
+            <div className="space-y-2">
+              <Badge tone="info" className="bg-sunrise/15 text-sunrise">In progress</Badge>
+              <h1 className="font-heading text-2xl font-bold text-charcoal">{normalizedCourse.title}</h1>
+              <div className="flex flex-wrap gap-4 text-xs text-slate/70">
+                <span className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-sunrise" />
+                  {durationLabel}
+                </span>
+                <span className="flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-sunrise" />
+                  {lessonCount} lessons
+                </span>
+              </div>
             </div>
-          </div>
-          <div className="w-full max-w-xs space-y-3 rounded-2xl border border-mist bg-white p-4 shadow-card-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate/70">Overall progress</p>
-            <ProgressBar value={progressPercent} srLabel="Course completion progress" />
-            <p className="text-xs text-slate/70">
-              {progressPercent >= 100 ? 'Completed' : `${progressPercent}% complete`}
-            </p>
-          </div>
-        </Card>
+            <div className="w-full max-w-xs space-y-3 rounded-2xl border border-sunrise/20 bg-sunrise/5 p-4 shadow-card-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate/70">Overall progress</p>
+              <ProgressBar value={progressPercent} srLabel="Course completion progress" />
+              <p className="text-xs text-slate/70">
+                {progressPercent >= 100 ? 'Completed' : `${progressPercent}% complete`}
+              </p>
+            </div>
+          </Card>
+        </div>
 
         <div className="mt-8 overflow-hidden rounded-3xl border border-mist bg-white shadow-card-lg">
           <CoursePlayer namespace="lms" />

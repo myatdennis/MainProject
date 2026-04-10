@@ -9,7 +9,10 @@
 body {
 	@apply text-charcoal font-body;
 	/* Use the unified soft page background and text color from tokens */
-	background: var(--surface-page);
+	background: radial-gradient(circle at top left, rgba(222, 123, 18, 0.12), transparent 18%),
+		 radial-gradient(circle at top right, rgba(58, 125, 255, 0.12), transparent 20%),
+		 radial-gradient(circle at bottom left, rgba(34, 139, 34, 0.08), transparent 16%),
+		 var(--surface-page);
 	color: var(--color-charcoal);
 	font-size: 16px;
 	line-height: 1.6;
@@ -314,7 +317,13 @@ h3, .h3 {
 .max-w-48rem { max-width: 48rem; }
 .img-rounded { border-radius: 1rem; box-shadow: var(--elevation-3); width: 100%; }
 .muted-button { background: var(--muted-button-bg); color: var(--muted-button-text); padding: 0.5rem 0.75rem; border-radius: 999px; border: none; cursor: pointer; display: inline-flex; align-items:center; gap: 0.5rem; }
-.footer { border-top: 1px solid var(--border-mist); background: linear-gradient(90deg, color-mix(in srgb, var(--hud-orange) 6%, transparent), color-mix(in srgb, var(--hud-blue) 4%, transparent)); }
+.footer {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--hud-orange) 14%, transparent) 0%,
+    color-mix(in srgb, var(--hud-blue) 14%, transparent) 42%,
+    color-mix(in srgb, var(--hud-green) 12%, transparent) 100%
+  );
+}
 
 /* Table helpers */
 .table-collapse { border-collapse: collapse; }
@@ -424,13 +433,19 @@ h3, .h3 {
 	font-weight: 600;
 	transition: background var(--motion-duration-base) ease, color var(--motion-duration-base) ease;
 }
-.btn-outline:hover { background: color-mix(in srgb, var(--hud-blue) 10%, transparent); }
+.btn-outline:hover { background: color-mix(in srgb, var(--hud-orange) 12%, transparent); }
 .btn[disabled], .btn-disabled, button[disabled] { opacity: 0.5; cursor: not-allowed; filter: grayscale(0.15); }
 
 /* --- Navigation links --- */
 .nav-link { border-radius: 10px; padding: 0.5rem 0.75rem; font-weight: 600; color: color-mix(in srgb, var(--hud-ink) 70%, #000); }
-.nav-link:hover { color: var(--hud-ink); background: color-mix(in srgb, var(--hud-blue) 6%, transparent); }
-.nav-link.is-active { color: var(--hud-blue); background: color-mix(in srgb, var(--hud-blue) 10%, transparent); }
+.nav-link:hover {
+  color: var(--hud-navy);
+  background: color-mix(in srgb, var(--hud-orange) 12%, transparent);
+}
+.nav-link.is-active {
+  color: var(--hud-orange);
+  background: color-mix(in srgb, var(--hud-orange) 18%, transparent);
+}
 
 /* --- Readability helpers --- */
 .measure { max-width: 70ch; }
