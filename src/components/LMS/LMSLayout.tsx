@@ -128,12 +128,11 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
       >
         <div className="flex items-center justify-between border-b border-mist/70 px-6 py-6">
           <Link to="/" className="flex items-center gap-3 no-underline">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl text-white" style={{ background: 'var(--gradient-brand)' }}>
-              <Users className="h-5 w-5" />
-            </span>
+            <img src="/logo.svg" alt="The Huddle Co." className="h-12 w-12 rounded-2xl shadow-lg" />
             <div>
-              <p className="font-heading text-base font-bold text-charcoal">The Huddle Co.</p>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate/70">Learner Portal</p>
+              <p className="font-heading text-xl font-bold text-charcoal">The Huddle Co.</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate/70">Learner Portal</p>
+              <p className="mt-1 text-[11px] text-slate/500">Inclusive leadership learning designed for your cohort.</p>
             </div>
           </Link>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}>

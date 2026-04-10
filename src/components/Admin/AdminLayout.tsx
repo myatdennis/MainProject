@@ -4,7 +4,6 @@ import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import {
-  Shield,
   Menu,
   X,
   LogOut,
@@ -486,12 +485,11 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       >
         <div className="flex items-center justify-between border-b border-mist/70 px-6 py-6">
           <Link to="/" className="flex items-center gap-3 no-underline">
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-sunrise via-skyblue to-forest text-white">
-              <Shield className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="font-heading text-lg font-bold text-charcoal">Admin Portal</p>
-              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate/70">The Huddle Co.</p>
+            <img src="/logo.svg" alt="The Huddle Co." className="h-12 w-12 rounded-2xl shadow-lg" />
+            <div className="min-w-0">
+              <p className="font-heading text-xl font-bold text-charcoal">The Huddle Co.</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate/70">Admin Workspace</p>
+              <p className="mt-1 text-[11px] text-slate/500">Manage learning, analytics, and organization settings.</p>
             </div>
           </Link>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}>

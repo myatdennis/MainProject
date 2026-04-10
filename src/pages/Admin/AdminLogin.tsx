@@ -598,28 +598,21 @@ const AdminLogin: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-softwhite flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
-          <div className="flex items-center justify-center space-x-2 mb-6">
-            <div className="bg-sunrise p-3 rounded-xl shadow-card">
-              <Shield className="h-8 w-8 text-white" />
-            </div>
+          <Link to="/" className="inline-flex items-center justify-center gap-3 mb-6 rounded-3xl bg-white/80 px-5 py-4 shadow-lg shadow-slate-200/50 ring-1 ring-slate-200 transition hover:shadow-slate-300/50">
+            <img src="/logo.svg" alt="The Huddle Co." className="h-12 w-12 rounded-3xl shadow-inner shadow-slate-200/40" />
             <div className="text-left">
-              <span className="font-heading text-h2 text-charcoal">Admin Portal</span>
-              <p className="text-small text-gray">The Huddle Co.</p>
+              <p className="font-heading text-2xl font-bold text-gray-900">The Huddle Co.</p>
+              <p className="text-sm uppercase tracking-[0.35em] text-slate-500">Admin Portal</p>
             </div>
-          </div>
-          <h2 className="text-h1 font-heading text-charcoal mb-2">Secure Access</h2>
-          <p className="text-body text-gray">
-            Program operations, enrollment leads, and facilitators sign in here to manage org-wide learning.
-          </p>
-          <p className="mt-3 text-small text-gray">
-            Learners should continue to the{' '}
-            <Link to="/login" className="text-skyblue underline-offset-2 hover:underline">
-              learning portal
-            </Link>
-            .
+          </Link>
+          <h2 className="text-4xl font-bold text-gray-900 mb-3">
+            Admin portal sign in
+          </h2>
+          <p className="mx-auto max-w-xl text-base leading-7 text-gray-600">
+            Sign in to manage courses, assignments, analytics, and organization workflows for your cohort.
           </p>
         </div>
 

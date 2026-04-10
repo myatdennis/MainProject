@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
-import { Users, Lock, Mail, Eye, EyeOff, AlertCircle, Info, ShieldCheck } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, AlertCircle, Info, ShieldCheck } from 'lucide-react';
 import { loginSchema, emailSchema, registerSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
@@ -232,19 +232,20 @@ const LMSLogin: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
-          <Link to="/" className="flex items-center justify-center space-x-2 mb-6">
-            <div className="bg-gradient-to-r from-orange-400 to-red-500 p-3 rounded-lg">
-              <Users className="h-8 w-8 text-white" />
+          <Link to="/" className="inline-flex items-center justify-center gap-3 mx-auto mb-6 rounded-3xl bg-white/90 px-5 py-4 shadow-lg shadow-slate-200/60 ring-1 ring-slate-200 transition hover:shadow-slate-300/60">
+            <img src="/logo.svg" alt="The Huddle Co." className="h-12 w-12 rounded-3xl shadow-inner shadow-slate-200/40" />
+            <div className="text-left">
+              <p className="font-heading text-2xl font-bold text-gray-900">The Huddle Co.</p>
+              <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Learner Portal</p>
             </div>
-            <span className="font-bold text-2xl text-gray-900">The Huddle Co.</span>
           </Link>
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">
-            {authMode === 'admin' ? 'Admin portal sign in' : 'Welcome back to your learning path'}
+          <h2 className="text-4xl font-bold text-gray-900 mb-3">
+            {authMode === 'admin' ? 'Admin portal sign in' : 'Welcome back to your learning hub'}
           </h2>
-          <p className="text-gray-600">
+          <p className="mx-auto max-w-xl text-base leading-7 text-gray-600">
             {authMode === 'admin'
-              ? 'Sign in to manage courses, assignments, analytics, and organization settings.'
-              : 'Use your organization email for assignments, reflections, and certificates curated for your cohort.'}
+              ? 'Secure admin access to manage cohorts, reports, and organization settings.'
+              : 'Sign in to continue your inclusive leadership journey with guided lessons, reflections, and feedback.'}
           </p>
         </div>
 

@@ -96,11 +96,12 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
           
           {/* Logo and Close Button */}
           <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
-            <Link to="/lms/dashboard" className="flex items-center space-x-2">
-              <div className="p-2 rounded-lg" style={{ background: 'var(--gradient-orange-red)' }}>
-                <Users className="h-6 w-6 text-white" />
+            <Link to="/lms/dashboard" className="flex items-center gap-3">
+              <img src="/logo.svg" alt="The Huddle Co." className="h-12 w-12 rounded-3xl shadow-lg" />
+              <div>
+                <p className="font-heading text-lg font-bold text-gray-900">The Huddle Co.</p>
+                <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Learning Experience</p>
               </div>
-              <span className="font-bold text-lg text-gray-900">The Huddle Co.</span>
             </Link>
             <button
               className="lg:hidden"
@@ -227,7 +228,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                     <ol className="flex items-center space-x-2 text-sm text-gray-500">
                       <li>
                         <Link to="/lms/dashboard" className="hover:text-gray-700">
-                          Learning Platform
+                          The Huddle Co. Learning
                         </Link>
                       </li>
                       {location.pathname !== '/lms/dashboard' && (
