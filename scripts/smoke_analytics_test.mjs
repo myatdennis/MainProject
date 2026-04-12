@@ -48,7 +48,6 @@ const readCookieValue = (cookieHeader, name) => {
 const csrfState = { token: null, cookie: null };
 
 const primeCsrf = async () => {
-  if (USE_E2E_BYPASS) return; // bypass priming when using e2e bypass headers
   // Prefer to seed CSRF from a simple GET which sets the double-submit cookie via middleware
   const response = await fetch(`${BASE}/api/health`, { method: 'GET', headers: buildHeaders(false) });
   const text = await response.text();
@@ -89,7 +88,7 @@ const buildHeaders = (json = false) => {
 };
 
 async function postEvent() {
-  if (!USE_E2E_BYPASS) await primeCsrf();
+  await primeCsrf();
   const res = await fetch(`${BASE}/api/analytics/events`, {
     method: 'POST',
     headers: buildHeaders(true),
@@ -100,7 +99,7 @@ async function postEvent() {
 }
 
 async function postBatch() {
-  if (!USE_E2E_BYPASS) await primeCsrf();
+  await primeCsrf();
   const res = await fetch(`${BASE}/api/analytics/events/batch`, {
     method: 'POST',
     headers: buildHeaders(true),
