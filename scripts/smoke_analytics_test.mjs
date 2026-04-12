@@ -80,6 +80,9 @@ const buildHeaders = (json = false) => {
     headers['x-org-id'] = ORG_ID;
     headers['x-user-role'] = 'admin';
     headers['x-user-id'] = SMOKE_USER_ID;
+    // still include any seeded CSRF tokens so double-submit pattern is satisfied
+    if (csrfState.token) headers['X-CSRF-Token'] = csrfState.token;
+    if (csrfState.cookie) headers['Cookie'] = csrfState.cookie;
     return headers;
   }
   if (csrfState.token) headers['X-CSRF-Token'] = csrfState.token;
