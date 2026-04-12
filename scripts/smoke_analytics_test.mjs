@@ -106,7 +106,7 @@ async function postBatch() {
   const res = await fetch(`${BASE}/api/analytics/events/batch`, {
     method: 'POST',
     headers: buildHeaders(true),
-    body: JSON.stringify({ events: [ { clientEventId: `batch-${Date.now()}`, eventType: 'batch_test', payload: { email: 'batch@example.com' } } ] }),
+    body: JSON.stringify({ events: [ { clientEventId: `batch-${Date.now()}`, eventName: 'batch_test', payload: { email: 'batch@example.com' } } ] }),
   });
   console.log('/api/analytics/events/batch', res.status);
   console.log(await res.text());
