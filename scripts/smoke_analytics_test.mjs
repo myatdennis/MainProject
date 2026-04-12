@@ -1,6 +1,9 @@
 import fetch from 'node-fetch';
 
 const BASE = process.env.ANALYTICS_SMOKE_BASE || 'http://127.0.0.1:3000';
+const ORG_ID = process.env.ANALYTICS_SMOKE_ORG_ID || process.env.E2E_SANDBOX_ORG_ID || 'demo-sandbox-org';
+const USE_E2E_BYPASS = String(process.env.SMOKE_USE_E2E_BYPASS || '').toLowerCase() === 'true';
+const SMOKE_USER_ID = process.env.SMOKE_USER_ID || '00000000-0000-0000-0000-000000000002';
 
 // Minimal double-submit CSRF helpers (borrowed from survey smoke script)
 const mergeSetCookie = (existingCookie, response) => {
@@ -45,6 +48,7 @@ const readCookieValue = (cookieHeader, name) => {
 const csrfState = { token: null, cookie: null };
 
 const primeCsrf = async () => {
+  if (USE_E2E_BYPASS) return; // bypass priming when using e2e bypass headers
   const response = await fetch(`${BASE}/api/auth/csrf`, { method: 'GET' });
   const text = await response.text();
   if (!response.ok) throw new Error(`csrf bootstrap failed (${response.status}): ${text}`);
@@ -61,13 +65,20 @@ const primeCsrf = async () => {
 const buildHeaders = (json = false) => {
   const headers = {};
   if (json) headers['Content-Type'] = 'application/json';
+  if (USE_E2E_BYPASS) {
+    headers['x-e2e-bypass'] = 'true';
+    headers['x-org-id'] = ORG_ID;
+    headers['x-user-role'] = 'admin';
+    headers['x-user-id'] = SMOKE_USER_ID;
+    return headers;
+  }
   if (csrfState.token) headers['X-CSRF-Token'] = csrfState.token;
   if (csrfState.cookie) headers['Cookie'] = csrfState.cookie;
   return headers;
 };
 
 async function postEvent() {
-  await primeCsrf();
+  if (!USE_E2E_BYPASS) await primeCsrf();
   const res = await fetch(`${BASE}/api/analytics/events`, {
     method: 'POST',
     headers: buildHeaders(true),
@@ -78,7 +89,7 @@ async function postEvent() {
 }
 
 async function postBatch() {
-  await primeCsrf();
+  if (!USE_E2E_BYPASS) await primeCsrf();
   const res = await fetch(`${BASE}/api/analytics/events/batch`, {
     method: 'POST',
     headers: buildHeaders(true),
