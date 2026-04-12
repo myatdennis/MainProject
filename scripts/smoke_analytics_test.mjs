@@ -49,16 +49,27 @@ const csrfState = { token: null, cookie: null };
 
 const primeCsrf = async () => {
   if (USE_E2E_BYPASS) return; // bypass priming when using e2e bypass headers
-  const response = await fetch(`${BASE}/api/auth/csrf`, { method: 'GET' });
+  // Prefer to seed CSRF from a simple GET which sets the double-submit cookie via middleware
+  const response = await fetch(`${BASE}/api/health`, { method: 'GET', headers: buildHeaders(false) });
   const text = await response.text();
   if (!response.ok) throw new Error(`csrf bootstrap failed (${response.status}): ${text}`);
-  let parsed = null;
-  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
   const cookie = mergeSetCookie(csrfState.cookie || null, response);
   const cookieToken = readCookieValue(cookie, 'csrf_token');
-  const token = cookieToken || parsed?.csrfToken || parsed?.data?.csrfToken || parsed?.token || null;
-  if (!token) throw new Error(`csrf bootstrap missing token: ${text}`);
-  csrfState.token = token;
+  if (!cookieToken) {
+    // fallback to the dedicated endpoint if available
+    const fallback = await fetch(`${BASE}/api/auth/csrf`, { method: 'GET', headers: buildHeaders(false) });
+    const fallbackText = await fallback.text();
+    if (!fallback.ok) throw new Error(`csrf bootstrap failed (${fallback.status}): ${fallbackText}`);
+    let parsed = null;
+    try { parsed = fallbackText ? JSON.parse(fallbackText) : null; } catch { parsed = null; }
+    const merged = mergeSetCookie(cookie, fallback);
+    const token = readCookieValue(merged, 'csrf_token') || parsed?.csrfToken || parsed?.data?.csrfToken || parsed?.token || null;
+    if (!token) throw new Error(`csrf bootstrap missing token: ${fallbackText}`);
+    csrfState.token = token;
+    csrfState.cookie = merged;
+    return;
+  }
+  csrfState.token = cookieToken;
   csrfState.cookie = cookie;
 };
 
