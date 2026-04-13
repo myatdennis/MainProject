@@ -140,6 +140,31 @@ export const createClientSurveyAssignmentsService = ({
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     const isUserIdUuid = isUuid(context.userId);
 
+    const retryQuery = async (label, buildQuery) => {
+      let lastError;
+      const maxAttempts = 2;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          return await runTimedQuery(label, buildQuery);
+        } catch (error) {
+          lastError = error;
+          if (!isSupabaseTransientError(error) || attempt >= maxAttempts) {
+            throw error;
+          }
+          logger.warn('client_assigned_surveys_query_retry', {
+            requestId,
+            label,
+            attempt,
+            maxAttempts,
+            code: error?.code ?? null,
+            message: error?.message ?? String(error),
+          });
+          await waitForMs(150 * attempt);
+        }
+      }
+      throw lastError;
+    };
+
     const loadAssignmentsForUser = async (column, value) => {
       const buildQuery = () => {
         let query = supabase
@@ -155,7 +180,7 @@ export const createClientSurveyAssignmentsService = ({
         }
         return query;
       };
-      const result = await runTimedQuery('survey.assigned.load_assignments', () => buildQuery());
+      const result = await retryQuery('survey.assigned.load_assignments', () => buildQuery());
       return Array.isArray(result?.data) ? result.data : [];
     };
 

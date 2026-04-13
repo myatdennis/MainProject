@@ -1926,7 +1926,6 @@ export const courseStore = {
       }
       runtimeStatus = runtimeStatus ?? FALLBACK_RUNTIME_STATUS;
       // supabaseOperational is checked implicitly through apiReachable/supabaseHealthy downstream
-      void (runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy);
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
       // HEALTH PROBE DECOUPLED FROM ADMIN API GATE:
@@ -2185,7 +2184,11 @@ export const courseStore = {
       }
 
       const shouldLoadPublishedCatalog =
-        restrictToOrg || (!restrictToOrg && (adminLoadStatus === 'error' || adminLoadStatus === 'api_unreachable'));
+        restrictToOrg || (!restrictToOrg && (
+          adminLoadStatus === 'error' ||
+          adminLoadStatus === 'api_unreachable' ||
+          (adminLoadStatus === 'empty' && !adminSurfaceDetected)
+        ));
       const publishedFallbackAllowed = !adminSurfaceDetected;
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
@@ -2820,12 +2823,12 @@ export const calculateCourseDuration = (modules: Module[]): string => {
   
   if (totalMinutes < 60) {
     return `${totalMinutes} min`;
-  } else {
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
   }
-};
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+}
 
 // Helper function to count total lessons
 export const countTotalLessons = (modules: Module[]): number => {

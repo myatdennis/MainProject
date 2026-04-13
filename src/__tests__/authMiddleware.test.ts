@@ -130,4 +130,15 @@ describe('Auth middleware helpers', () => {
     expect(result).toBe(false);
     expect([403, 503]).toContain(res.status.mock.calls[0][0]);
   });
+
+  it('ensureAdminAccess grants access to allowlisted admin email', async () => {
+    const { ensureAdminAccess } = await import('../../server/middleware/requireAdminAccess.js');
+    const req = { supabaseJwtUser: { id: 'user-allowlist', email: 'mya@the-huddle.co' }, requestId: 'rid' } as any;
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    const result = await ensureAdminAccess(req, res);
+    expect(result).toBe(true);
+    expect(req.adminPortalAllowed).toBe(true);
+    expect(req.adminAccessReason).toBe('allowlisted_email');
+  });
 });

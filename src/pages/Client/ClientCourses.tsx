@@ -88,15 +88,20 @@ const ClientCourses = () => {
   );
 
   // Learners see published + assigned only
-  const assignmentByCourseId = useMemo(
-    () =>
-      new Map(
-        assignments
-          .filter((a): a is CourseAssignment & { courseId: string } => typeof a.courseId === 'string' && a.courseId.length > 0)
-          .map((a) => [a.courseId, a]),
-      ),
-    [assignments],
-  );
+  const assignmentByCourseId = useMemo(() => {
+    const map = new Map<string, CourseAssignment>();
+    assignments
+      .filter((a): a is CourseAssignment & { courseId: string } => typeof a.courseId === 'string' && a.courseId.length > 0)
+      .forEach((a) => {
+        const resolvedCourse = courseStore.resolveCourse(a.courseId);
+        const courseIdKey = resolvedCourse?.id ?? a.courseId;
+        map.set(courseIdKey, a);
+        if (resolvedCourse?.id && resolvedCourse.id !== a.courseId) {
+          map.set(a.courseId, a);
+        }
+      });
+    return map;
+  }, [assignments]);
   const normalizedCourses = useMemo(
     () => normalizedCoursesAll.filter((c) => shouldIncludeCourseForLearner(c.id, assignmentByCourseId)),
     [normalizedCoursesAll, assignmentByCourseId],

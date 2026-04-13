@@ -60,6 +60,7 @@ vi.mock('../../../store/courseStore', () => ({
     getAdminCatalogState: () => adminCatalogStateMock,
     getLearnerCatalogState: () => learnerCatalogStateMock,
     init: vi.fn(async () => undefined),
+    resolveCourse: (identifier: string) => getAllCoursesMock().find((course: any) => course.id === identifier || course.slug === identifier) ?? null,
   },
 }));
 
@@ -166,10 +167,26 @@ describe('ClientCourses', () => {
 
     renderCourses();
 
-  const courseTitle = await screen.findByText('Course 1');
-  const card = courseTitle.closest('[data-test="client-course-card"]') as HTMLElement | null;
-  expect(card).not.toBeNull();
-  expect(within(card as HTMLElement).getByText('Completed')).toBeInTheDocument();
+    const courseTitle = await screen.findByText('Course 1');
+    const card = courseTitle.closest('[data-test="client-course-card"]') as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByText('Completed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review course' })).toBeInTheDocument();
+  });
+
+  it('resolves assigned courses by slug when courseId is a legacy slug', async () => {
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-2',
+        courseId: 'course-1',
+        userId: 'user-123',
+        status: 'assigned',
+        progress: 0,
+      },
+    ] as any);
+
+    renderCourses();
+
+    expect(await screen.findByText('Course 1')).toBeInTheDocument();
   });
 });

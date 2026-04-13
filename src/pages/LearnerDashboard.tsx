@@ -105,7 +105,7 @@ const LearnerDashboard = () => {
         assignmentRecords.forEach((record) => {
           if (!record.courseId) return;
           if (!mergedCourses.some((course) => course.id === record.courseId)) {
-            const fromStore = courseStore.getCourse(record.courseId);
+            const fromStore = courseStore.resolveCourse(record.courseId) ?? courseStore.getCourse(record.courseId);
             if (fromStore) {
               mergedCourses.push(normalizeCourse(fromStore));
             }

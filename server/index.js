@@ -956,45 +956,63 @@ const parseVideoUpload = (req, res, next) => {
 // Helper functions for persistent storage
 function loadPersistedData() {
   try {
-          if (fs.existsSync(STORAGE_FILE)) {
-            try {
-              const stat = fs.statSync(STORAGE_FILE);
-              if (stat.size > MAX_DEMO_FILE_BYTES) {
-                logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
-                return {
-                  courses: [],
-                  documents: [],
-                  surveys: [],
-                  surveyAssignments: [],
-                  lessonReflections: [],
-                  huddlePosts: [],
-                  huddleComments: [],
-                  huddleReactions: [],
-                  huddleReports: [],
-                };
+    if (fs.existsSync(STORAGE_FILE)) {
+      try {
+        const stat = fs.statSync(STORAGE_FILE);
+        if (stat.size > MAX_DEMO_FILE_BYTES) {
+          logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
+          return {
+            courses: [],
+            documents: [],
+            surveys: [],
+            surveyAssignments: [],
+            lessonReflections: [],
+            huddlePosts: [],
+            huddleComments: [],
+            huddleReactions: [],
+            huddleReports: [],
+            organizations: [],
+          };
+        }
+      } catch {}
+      const data = fs.readFileSync(STORAGE_FILE, 'utf8');
+      const parsed = JSON.parse(data);
+      const organizations = Array.isArray(parsed.organizations)
+        ? parsed.organizations
+            .map((item) => {
+              if (Array.isArray(item) && item.length === 2) {
+                return item;
               }
-            } catch {}
-            const data = fs.readFileSync(STORAGE_FILE, 'utf8');
-            return JSON.parse(data);
-          }
+              if (item && typeof item === 'object' && typeof item.id === 'string') {
+                return [item.id, item];
+              }
+              return null;
+            })
+            .filter(Boolean)
+        : [];
+      return {
+        ...parsed,
+        organizations,
+      };
+    }
   } catch (error) {
     logger.error('demo_data_load_failed', { error: error instanceof Error ? error.message : error });
   }
-        return {
-          courses: new Map(),
-          documents: new Map(),
-          modules: new Map(),
-          lessons: new Map(),
-          surveys: new Map(),
-          surveyAssignments: new Map(),
-          lessonReflections: new Map(),
-          huddlePosts: new Map(),
-          huddleComments: new Map(),
-          huddleReactions: new Map(),
-          huddleReports: new Map(),
-        };
+  return {
+    courses: new Map(),
+    documents: new Map(),
+    modules: new Map(),
+    lessons: new Map(),
+    surveys: new Map(),
+    surveyAssignments: new Map(),
+    lessonReflections: new Map(),
+    huddlePosts: new Map(),
+    huddleComments: new Map(),
+    huddleReactions: new Map(),
+    huddleReports: new Map(),
+    organizations: new Map(),
+  };
 }
-
 function savePersistedData(data) {
   try {
     // Convert Maps to arrays for JSON serialization, stripping E2E/test courses at
@@ -1029,6 +1047,7 @@ function savePersistedData(data) {
       huddleComments: Array.from((data.huddleComments || new Map()).entries()),
       huddleReactions: Array.from((data.huddleReactions || new Map()).entries()),
       huddleReports: Array.from((data.huddleReports || new Map()).entries()),
+      organizations: Array.from((data.organizations || new Map()).entries()),
     };
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
     const strippedCount = data.courses.size - filteredCourseEntries.length;
@@ -2564,6 +2583,14 @@ const detectAssignmentsUserIdUuidColumnAvailability = async () => {
       });
       return false;
     }
+    if (isSupabaseTransientError(error)) {
+      assignmentsUserIdUuidColumnAvailable = false;
+      logger.warn('assignments_user_id_uuid_column_probe_timeout', {
+        code: error?.code ?? null,
+        message: error?.message ?? String(error),
+      });
+      return false;
+    }
     throw error;
   }
 
@@ -2588,6 +2615,14 @@ const detectAssignmentsOrganizationIdColumnAvailability = async () => {
       assignmentsOrganizationIdColumnAvailable = false;
       logger.warn('assignments_organization_id_column_missing', {
         message: 'organization_id column does not exist on assignments — assignment writes will use legacy org_id payloads',
+      });
+      return false;
+    }
+    if (isSupabaseTransientError(error)) {
+      assignmentsOrganizationIdColumnAvailable = false;
+      logger.warn('assignments_organization_id_column_probe_timeout', {
+        code: error?.code ?? null,
+        message: error?.message ?? String(error),
       });
       return false;
     }
@@ -2796,6 +2831,7 @@ e2eStore = {
   userAchievements: [], // array of { user_id, org_id, achievement_type, achieved_at, metadata }
   userActivity: [], // array of { user_id, org_id, activity_type, created_at, payload, event_id? }
   orgEngagementMetrics: new Map(), // key org_id -> rollup
+  organizations: new Map(persistedData.organizations || []),
 };
 
 
@@ -2875,10 +2911,30 @@ const buildDemoOrganizations = ({
   subscriptions = [],
   sort = 'created_at',
   ascending = false,
+  persistedOrganizations = [],
 } = {}) => {
   const nowIso = new Date().toISOString();
   const orgIds = new Set();
   orgIds.add(DEFAULT_SANDBOX_ORG_ID);
+
+  const persistedOrgMap = new Map();
+  if (Array.isArray(persistedOrganizations)) {
+    persistedOrganizations.forEach((entry) => {
+      if (!entry) return;
+      if (Array.isArray(entry) && entry.length === 2) {
+        const [rawId, org] = entry;
+        const orgId = normalizeOrgIdValue(rawId) || normalizeOrgIdValue(org?.id);
+        if (!orgId) return;
+        persistedOrgMap.set(orgId, { ...org, id: orgId, organization_id: orgId });
+        orgIds.add(orgId);
+      } else if (typeof entry === 'object' && typeof entry.id === 'string') {
+        const orgId = normalizeOrgIdValue(entry.id);
+        if (!orgId) return;
+        persistedOrgMap.set(orgId, { ...entry, id: orgId, organization_id: orgId });
+        orgIds.add(orgId);
+      }
+    });
+  }
 
   DEMO_ORG_SEED.forEach((org) => {
     if (org?.id) {
@@ -2913,24 +2969,35 @@ const buildDemoOrganizations = ({
 
   const orgNameLookup = new Map(DEMO_ORG_SEED.map((org) => [org.id, org.name]));
 
-  let organizations = Array.from(orgIds).map((orgId) => ({
-    id: orgId,
-    organization_id: orgId,
-    name:
-      orgId === DEFAULT_SANDBOX_ORG_ID
-        ? 'Demo Sandbox Organization'
-        : orgNameLookup.get(orgId) ?? `Organization ${orgId}`,
-    slug: String(orgId).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-    status: 'active',
-    subscription: 'enterprise',
-    contact_email: orgId === DEFAULT_SANDBOX_ORG_ID ? 'sandbox@demo.local' : null,
-    contact_person: orgId === DEFAULT_SANDBOX_ORG_ID ? 'Demo Admin' : null,
-    created_at: nowIso,
-    updated_at: nowIso,
-    total_learners: 0,
-    active_learners: 0,
-    completion_rate: 0,
-  }));
+  let organizations = Array.from(orgIds).map((orgId) => {
+    const persistedOrg = persistedOrgMap.get(orgId);
+    if (persistedOrg) {
+      return {
+        ...persistedOrg,
+        id: orgId,
+        organization_id: orgId,
+      };
+    }
+
+    return {
+      id: orgId,
+      organization_id: orgId,
+      name:
+        orgId === DEFAULT_SANDBOX_ORG_ID
+          ? 'Demo Sandbox Organization'
+          : orgNameLookup.get(orgId) ?? `Organization ${orgId}`,
+      slug: String(orgId).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      status: 'active',
+      subscription: 'enterprise',
+      contact_email: orgId === DEFAULT_SANDBOX_ORG_ID ? 'sandbox@demo.local' : null,
+      contact_person: orgId === DEFAULT_SANDBOX_ORG_ID ? 'Demo Admin' : null,
+      created_at: nowIso,
+      updated_at: nowIso,
+      total_learners: 0,
+      active_learners: 0,
+      completion_rate: 0,
+    };
+  });
 
   if (resolvedRequestedOrgId) {
     organizations = organizations.filter((org) => org.id === requestedOrgId);
@@ -12955,6 +13022,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       subscriptions,
       sort,
       ascending,
+      persistedOrganizations: Array.from(e2eStore.organizations.entries()),
     });
     const totalCount = demoOrganizations.length;
     const safeOrganizations = demoOrganizations.slice(from, to + 1);
@@ -15873,6 +15941,7 @@ const REQUIRED_ADMIN_SURVEY_TABLES = [
 const OPTIONAL_ADMIN_SURVEY_TABLES = [{ table: 'survey_assignments', columns: ['survey_id', 'organization_id'] }];
 const SURVEY_ASSIGNMENT_TYPE = 'survey';
 const SURVEY_ASSIGNMENT_SELECT = '*';
+const CLIENT_SURVEY_ASSIGNMENT_SELECT = 'id,survey_id,status,due_at,note,assigned_by,metadata,active,organization_id,org_id';
 
 const findLatestHdiPreRecord = (records = [], currentRecord = null) => {
   if (!Array.isArray(records) || records.length === 0 || !currentRecord) return null;
@@ -16044,7 +16113,7 @@ app.use(
     getAssignmentsOrgColumnName,
     isUuid,
     runTimedQuery,
-    surveyAssignmentSelect: SURVEY_ASSIGNMENT_SELECT,
+    surveyAssignmentSelect: CLIENT_SURVEY_ASSIGNMENT_SELECT,
     isSupabaseTransientError,
     loadSurveyRecordsByAssignmentIds,
     requireUserContext,

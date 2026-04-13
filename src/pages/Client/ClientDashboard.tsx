@@ -73,12 +73,14 @@ const buildCourseStoreAdapter = (): CourseStoreAdapter => {
           return () => [];
         })();
   const getCourseFn =
-    typeof courseStore.getCourse === 'function'
-      ? courseStore.getCourse
-      : (() => {
-          missing.push('getCourse');
-          return () => null;
-        })();
+    typeof courseStore.resolveCourse === 'function'
+      ? courseStore.resolveCourse
+      : typeof courseStore.getCourse === 'function'
+        ? courseStore.getCourse
+        : (() => {
+            missing.push('getCourse');
+            return () => null;
+          })();
 
   if (missing.length) {
     console.warn('[ClientDashboard] courseStore adapter missing methods; using safe fallbacks.', {

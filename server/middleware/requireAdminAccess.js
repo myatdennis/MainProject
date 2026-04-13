@@ -1,6 +1,9 @@
 import supabaseJwtMiddleware from './supabaseJwt.js';
 import supabase from '../lib/supabaseClient.js';
 import { isDemoMode, isProduction, isTestMode, isDevMode } from '../config/runtimeFlags.js';
+import {
+  isAllowlistedAdminEmail,
+} from './auth.js';
 
 const FALLBACK_SUPERUSER = {
   id: 'dev-admin',
@@ -8,15 +11,6 @@ const FALLBACK_SUPERUSER = {
   role: 'admin',
   platformRole: 'platform_admin',
   isPlatformAdmin: true,
-};
-
-const ALLOWLISTED_ADMIN_EMAILS = [
-  'mya@the-huddle.co',
-  // Add other allowlisted admin emails here
-];
-
-const isAllowlistedAdminEmail = (email) => {
-  return ALLOWLISTED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
 };
 
 const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
