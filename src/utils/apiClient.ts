@@ -242,6 +242,14 @@ const buildNotAuthenticatedError = (url: string) =>
     message: 'Please log in again.',
   });
 
+const buildAdminAccessDeniedError = (url: string, body?: unknown) =>
+  new ApiError(
+    'You need administrator access to perform this action.',
+    403,
+    url,
+    body ?? { message: 'You need administrator access to perform this action.' },
+  );
+
 type UnauthorizedMeta = {
   credentials?: RequestCredentials;
 };
@@ -283,6 +291,7 @@ const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
 const ADMIN_API_PATTERN = /^\/api\/admin\//i;
 const LEARNER_OR_CLIENT_API_PATTERN = /^\/api\/(client|learner)(\/|$)/i;
 const ORG_HEADER_CANDIDATES = ['x-org-id', 'x-organization-id'];
+const AUTH_OVERRIDE_HEADER_CANDIDATES = ['x-user-role', 'x-user-id', 'x-org-id', 'x-organization-id'];
 
 const API_ORIGIN_FOR_CREDENTIALS = (() => {
   try {
@@ -355,6 +364,14 @@ const hasExplicitOrgHeader = (headers?: Record<string, string>): boolean => {
 const stripOrgHeaders = (headers: Record<string, string>) => {
   Object.keys(headers).forEach((key) => {
     if (ORG_HEADER_CANDIDATES.includes(key.toLowerCase())) {
+      delete headers[key];
+    }
+  });
+};
+
+const stripAuthOverrideHeaders = (headers: Record<string, string>) => {
+  Object.keys(headers).forEach((key) => {
+    if (AUTH_OVERRIDE_HEADER_CANDIDATES.includes(key.toLowerCase())) {
       delete headers[key];
     }
   });
@@ -513,6 +530,12 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   // If an org header is required for a specific request, callers can pass it explicitly.
   if (LEARNER_OR_CLIENT_API_PATTERN.test(pathname) && !hasExplicitOrgHeader(options.headers)) {
     stripOrgHeaders(headers);
+  }
+
+  // Prevent stale/no-token audit headers from being sent without a real bearer token.
+  // In production these are rejected as unsafe request header overrides.
+  if (!headers.Authorization && !isE2EBypassActive()) {
+    stripAuthOverrideHeaders(headers);
   }
 
   if (isE2EBypassActive()) {
@@ -807,6 +830,8 @@ export async function apiRequestRaw(path: string, options: ApiRequestOptions = {
   return internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
 }
 
+export default apiRequest;
+
 
 async function ensureAdminAccessForRequest(path: string, options?: InternalRequestOptions): Promise<void> {
   if (options?.skipAdminGateCheck || options?.allowAnonymous) {
@@ -826,110 +851,65 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
 
   if (cached && isAdminAccessSnapshotFresh() && isCachedSnapshotForCurrentUser) {
     const cachedPayload = cached.payload ?? null;
-    if (cachedPayload && hasAdminPortalAccess(cachedPayload)) {
+    if (hasAdminPortalAccess(cachedPayload)) {
       return;
     }
-    // If the cached snapshot belongs to the current session and it denies admin access,
-    // preserve the fast-fail behavior so we do not repeatedly hammer /api/admin/me.
-    throw new ApiError('Administrator privileges required', 403, path, {
-      message: 'You need administrator access to perform this action.',
-    });
   }
 
-  if (cached && isAdminAccessSnapshotFresh() && !isCachedSnapshotForCurrentUser) {
-    if (import.meta.env.DEV) {
-      console.debug('[apiClient] admin_access_snapshot_user_mismatch — ignoring stale snapshot', {
-        currentUserId,
-        cachedUserId,
-      });
-    }
+  if (adminAccessInFlight) {
+    await adminAccessInFlight;
+    return;
   }
-
-  try {
-    const payload = await fetchAdminAccessPayload();
-    if (payload && hasAdminPortalAccess(payload)) {
-      return;
-    }
-    // Simulate a real 403 error as if from the server
-    throw new ApiError('Administrator privileges required', 403, path, {
-      message: 'You need administrator access to perform this action.',
-    });
-  } catch (error: any) {
-    // preserve 401/403 in the admin-access check to surface underlying auth issues.
-    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-      throw error;
-    }
-    if (error && (error.status === 401 || error.status === 403) && typeof error.json === 'function') {
-      const body = await error.json();
-      throw new ApiError('Administrator privileges required', error.status, path, body);
-    }
-    // Otherwise, fallback to generic admin denied
-    throw new ApiError('Administrator privileges required', 403, path, {
-      message: 'You need administrator access to perform this action.',
-    });
-  }
-}
-
-async function fetchAdminAccessPayload(): Promise<AdminAccessPayload | null> {
-  if (!adminAccessInFlight) {
-    adminAccessInFlight = (async () => {
-      try {
-        try {
-          const payload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
-            skipAdminGateCheck: true,
-          });
-          const normalized = normalizeAdminAccessPayload(payload);
-          setAdminAccessSnapshot(normalized);
-          return normalized;
-        } catch (error: any) {
-          if (error instanceof ApiError && error.status === 401) {
-            // Retry once for token refresh path in authorizedFetch.
-            const retryPayload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
-              skipAdminGateCheck: true,
-            });
-            const normalizedRetry = normalizeAdminAccessPayload(retryPayload);
-            setAdminAccessSnapshot(normalizedRetry);
-            return normalizedRetry;
-          }
-          throw error;
-        }
-      } catch (error) {
-        setAdminAccessSnapshot(null);
-        throw error;
-      } finally {
-        adminAccessInFlight = null;
+  const promise = (async () => {
+    try {
+      const supabase = await getSupabase();
+      if (!supabase) {
+        throw new Error('Not authenticated');
       }
-    })();
-  }
-  return adminAccessInFlight;
-}
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session) {
+        throw new Error('Not authenticated');
+      }
+      const accessToken = data.session.access_token;
 
-/**
- * Safe wrapper around apiRequest that NEVER throws.
- *
- * Two call signatures:
- *   safeApiRequest<T>(path, options, fallback: T) → Promise<T>  (never null)
- *   safeApiRequest<T>(path, options?)             → Promise<T | null>
- *
- * Use this for non-critical data fetches (analytics, dashboard stats, activity
- * feeds, etc.) where a failure should degrade gracefully rather than crash the
- * component.
- */
-export async function safeApiRequest<T>(path: string, options: ApiRequestOptions | undefined, fallback: T): Promise<T>;
-export async function safeApiRequest<T>(path: string, options?: ApiRequestOptions): Promise<T | null>;
-export async function safeApiRequest<T>(
-  path: string,
-  options?: ApiRequestOptions,
-  fallback?: T,
-): Promise<T | null> {
-  try {
-    return await apiRequest<T>(path, options);
-  } catch (error) {
-    if (devMode) {
-      console.warn('[safeApiRequest] fetch_error — returning fallback', { path, error });
+      const res = await authorizedFetch(
+        '/api/admin/me',
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        },
+        {
+          requestLabel: '/api/admin/me',
+          timeoutMs: 5000,
+        },
+      );
+      const responseBody = await safeParseJson(res);
+      if (!res.ok) {
+        const body = isPlainObject(responseBody) && 'message' in responseBody
+          ? responseBody
+          : { message: 'You need administrator access to perform this action.' };
+        throw buildAdminAccessDeniedError(path, body);
+      }
+      const normalized = normalizeAdminAccessPayload(responseBody);
+      setAdminAccessSnapshot(normalized);
+      return normalized;
+    } catch (error) {
+      console.warn('[apiClient] Admin access check failed', error);
+      clearAuth();
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      if (error instanceof Error && error.message === 'Not authenticated') {
+        throw buildAdminAccessDeniedError(path);
+      }
+      throw error;
+    } finally {
+      adminAccessInFlight = null;
     }
-    return fallback !== undefined ? fallback : null;
-  }
+  })();
+  adminAccessInFlight = promise;
+  await promise;
 }
-
-export default apiRequest;

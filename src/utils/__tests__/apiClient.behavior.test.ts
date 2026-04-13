@@ -137,6 +137,9 @@ describe('apiClient', () => {
     if ((window as any).__API_DEBUG__) {
       delete (window as any).__API_DEBUG__;
     }
+    if ((window as any).__E2E_BYPASS) {
+      delete (window as any).__E2E_BYPASS;
+    }
     __setTestOrgContext(null);
   });
 
@@ -421,5 +424,21 @@ describe('apiClient', () => {
     vi.setSystemTime(new Date('2024-01-01T00:00:03Z'));
     await apiRequest('/courses');
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('strips override audit headers on public auth requests without a bearer token', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    mockBuildAuthHeaders.mockResolvedValue({ 'X-User-Role': 'learner', 'X-Org-Id': 'org-7' });
+    const { apiRequest } = await loadApiClient();
+    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+
+    await apiRequest('/api/auth/login', { method: 'POST', body: { email: 'test@example.com', password: 'secret' } });
+
+    const [, options] = fetchSpy.mock.calls[0];
+    const headers = headersToObject(options?.headers as HeadersInit);
+    expect(getHeaderValue(headers, 'Authorization')).toBeUndefined();
+    expect(getHeaderValue(headers, 'X-User-Role')).toBeUndefined();
+    expect(getHeaderValue(headers, 'X-Org-Id')).toBeUndefined();
   });
 });
