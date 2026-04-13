@@ -494,6 +494,8 @@ const AdminLogin: React.FC = () => {
     const sanitizedEmail = sanitizeText(email);
     const sanitizedPassword = sanitizeText(password);
 
+    clearAdminAccessSnapshot();
+
     let result;
     try {
       result = await login(sanitizedEmail, sanitizedPassword, 'admin');
@@ -532,6 +534,7 @@ const AdminLogin: React.FC = () => {
       } catch (sessionCheckError) {
         console.warn('[AdminLogin] session verification failed', sessionCheckError);
       }
+      clearAdminAccessSnapshot();
       await handleCapabilityGate();
     } else if (result.mfaRequired) {
       setMfaRequired(true);
@@ -567,6 +570,7 @@ const AdminLogin: React.FC = () => {
       setIsLoading(false);
       if (result.success) {
         await flushAuditQueue();
+        clearAdminAccessSnapshot();
         const allowed = await handleCapabilityGate();
         if (allowed) {
           setMfaRequired(false);

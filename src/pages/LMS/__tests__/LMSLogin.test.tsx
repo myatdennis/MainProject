@@ -60,6 +60,7 @@ describe('LMSLogin runtime awareness', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     currentRuntimeStatus = { ...defaultRuntimeStatus };
+    mockAuth.isAuthenticated = { lms: false, admin: false, client: false };
   });
 
   it('disables registration while in demo mode', () => {
@@ -102,6 +103,16 @@ describe('LMSLogin runtime awareness', () => {
     expect(screen.getByRole('button', { name: /Admin login/i })).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('redirects already authenticated learners to the LMS dashboard', async () => {
+    mockAuth.isAuthenticated = { admin: false, lms: true, client: true };
+
+    renderScreen();
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/lms/dashboard', { replace: true });
+    });
+  });
+
   it('switches to admin mode and signs in through admin auth path', async () => {
     renderScreen();
 
@@ -114,14 +125,14 @@ describe('LMSLogin runtime awareness', () => {
     });
   });
 
-  it('keeps client login redirect pointed to client dashboard', async () => {
+  it('keeps learner login redirect pointed to the LMS dashboard', async () => {
     renderScreen();
 
     fireEvent.click(screen.getByRole('button', { name: /^Sign In$/i }));
 
     await waitFor(() => {
       expect(mockAuth.login).toHaveBeenCalledWith('user@pacificcoast.edu', 'user123', 'lms');
-      expect(mockNavigate).toHaveBeenCalledWith('/client/dashboard', { replace: true });
+      expect(mockNavigate).toHaveBeenCalledWith('/lms/dashboard', { replace: true });
     });
   });
 });

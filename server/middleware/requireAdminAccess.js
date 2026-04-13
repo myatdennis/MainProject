@@ -192,13 +192,14 @@ const ensureAdminAccess = async (req, res) => {
     throw error;
   }
 
-  if (data?.is_admin === true) {
+  const normalizedProfileRole = data?.role ? String(data.role).trim().toLowerCase() : null;
+  if (data?.is_admin === true || normalizedProfileRole === 'admin' || normalizedProfileRole === 'platform_admin') {
     console.info('[requireAdminAccess] profile_flag_passed', {
       requestId: req.requestId ?? null,
       userId: user.id,
       email: user.email ?? null,
-      role: data.role ?? null,
-      is_admin: true,
+      role: normalizedProfileRole,
+      is_admin: data?.is_admin === true,
     });
     return grantAdminAccess(req, 'profile_flag');
   }

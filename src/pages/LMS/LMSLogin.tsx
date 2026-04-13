@@ -84,10 +84,14 @@ const LMSLogin: React.FC = () => {
       navigate(adminLandingTarget, { replace: true });
       return;
     }
-    if (authMode === 'client' && isAuthenticated.client) {
-      navigate('/client/dashboard', { replace: true });
+    if (authMode === 'client') {
+      if (isAuthenticated.lms) {
+        navigate('/lms/dashboard', { replace: true });
+      } else if (isAuthenticated.client) {
+        navigate('/client/dashboard', { replace: true });
+      }
     }
-  }, [adminLandingTarget, authMode, isAuthenticated.admin, isAuthenticated.client, isE2ERuntime, navigate]);
+  }, [adminLandingTarget, authMode, isAuthenticated.admin, isAuthenticated.client, isAuthenticated.lms, isE2ERuntime, navigate]);
 
   useEffect(() => {
     if ((!registrationAvailable || authMode === 'admin') && activeTab === 'register') {
@@ -135,7 +139,7 @@ const LMSLogin: React.FC = () => {
     setIsLoading(false);
     
     if (result.success) {
-      navigate(loginType === 'admin' ? adminLandingTarget : '/client/dashboard', { replace: true });
+      navigate(loginType === 'admin' ? adminLandingTarget : '/lms/dashboard', { replace: true });
     } else {
       setMessage(result.error || 'Sign-in failed.');
       setMessageType('error');
@@ -356,8 +360,10 @@ const LMSLogin: React.FC = () => {
           <div className="mt-6 rounded-[28px] bg-slate-50 p-1">
             <div className="flex gap-1 rounded-full bg-white p-1 text-sm font-semibold shadow-sm shadow-slate-200/60" role="tablist" aria-label="Authentication action">
               <button
+                id="lms-login-tab"
                 type="button"
                 role="tab"
+                aria-controls="lms-login-panel"
                 aria-selected={activeTab === 'login'}
                 onClick={() => setActiveTab('login')}
                 className={`flex-1 rounded-full py-3 transition ${activeTab === 'login' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'}`}
@@ -365,8 +371,10 @@ const LMSLogin: React.FC = () => {
                 Sign in
               </button>
               <button
+                id="lms-register-tab"
                 type="button"
                 role="tab"
+                aria-controls="lms-register-panel"
                 aria-selected={activeTab === 'register'}
                 onClick={() => registrationAvailable && authMode === 'client' && setActiveTab('register')}
                 disabled={!registrationAvailable || authMode === 'admin'}
@@ -421,7 +429,12 @@ const LMSLogin: React.FC = () => {
                     aria-invalid={!!validationErrors.password}
                     aria-describedby={validationErrors.password ? 'password-error' : undefined}
                   />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600">
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                  >
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>

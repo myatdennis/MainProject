@@ -1,6 +1,6 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi, getApiOrigin } from '../config/apiBase';
-import { shouldRequireSession } from '../lib/sessionGate';
+import { getActiveSession, shouldRequireSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import authorizedFetch, { NotAuthenticatedError } from '../lib/authorizedFetch';
@@ -818,15 +818,31 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
   }
 
   const cached = getAdminAccessSnapshot();
-  const cachedPayload = cached?.payload ?? null;
-  if (cachedPayload && hasAdminPortalAccess(cachedPayload)) {
-    return;
-  }
-  if (cached && isAdminAccessSnapshotFresh()) {
-    // Simulate a real 403 error as if from the server
+  const currentSession = getActiveSession();
+  const currentUserId = currentSession?.id ?? null;
+  const cachedUserId = cached?.payload?.user?.id ?? null;
+  const isCachedSnapshotForCurrentUser =
+    currentUserId !== null && cachedUserId !== null && currentUserId === cachedUserId;
+
+  if (cached && isAdminAccessSnapshotFresh() && isCachedSnapshotForCurrentUser) {
+    const cachedPayload = cached.payload ?? null;
+    if (cachedPayload && hasAdminPortalAccess(cachedPayload)) {
+      return;
+    }
+    // If the cached snapshot belongs to the current session and it denies admin access,
+    // preserve the fast-fail behavior so we do not repeatedly hammer /api/admin/me.
     throw new ApiError('Administrator privileges required', 403, path, {
       message: 'You need administrator access to perform this action.',
     });
+  }
+
+  if (cached && isAdminAccessSnapshotFresh() && !isCachedSnapshotForCurrentUser) {
+    if (import.meta.env.DEV) {
+      console.debug('[apiClient] admin_access_snapshot_user_mismatch — ignoring stale snapshot', {
+        currentUserId,
+        cachedUserId,
+      });
+    }
   }
 
   try {
