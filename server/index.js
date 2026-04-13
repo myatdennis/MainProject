@@ -2350,13 +2350,50 @@ console.log('[supabase] startup', {
   serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
 });
 
-let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
-let supabaseAuthClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
-configureEmailLogging({
-  getSupabase: () => supabase,
-});
+// Initialize supabase clients lazily with retries to avoid crashing on transient DNS/network issues.
+let supabase = null;
+let supabaseAuthClient = null;
+
+async function initializeSupabaseWithRetry({ maxAttempts = 5, initialDelayMs = 500 } = {}) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    // Missing configuration: let later checks handle fallback behavior (ensureSupabase) but log loudly now.
+    console.error('[supabase] configuration incomplete - missing SUPABASE_URL or SERVICE_ROLE_KEY', {
+      missing: missingSupabaseEnvVars,
+    });
+    return;
+  }
+
+  const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
+  const authClient = supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      // lightweight health check: HEAD-like select
+      const { error } = await adminClient.from('organizations').select('id', { head: true, count: 'exact' }).limit(1);
+      if (error) throw error;
+      supabase = adminClient;
+      supabaseAuthClient = authClient;
+      console.info('[supabase] connected', { attempts: attempt });
+      return;
+    } catch (err) {
+      console.warn('[supabase] connection attempt failed', { attempt, message: err?.message ?? String(err) });
+      if (attempt >= maxAttempts) break;
+      const delay = initialDelayMs * Math.pow(2, attempt - 1);
+      // jitter
+      const jitter = Math.floor(Math.random() * 200);
+      await new Promise((r) => setTimeout(r, delay + jitter));
+    }
+  }
+
+  console.error('[supabase] failed to connect after retries');
+}
 let surveyAssignmentAggregateRpcMissingLogged = false;
 const shouldUseInMemoryFallback = isDemoMode || E2E_TEST_MODE || TEST_IDEMPOTENCY_FALLBACK_MODE;
+// Attempt to initialize Supabase now (with retries). If this fails we'll either run in
+// fallback mode or let ensureSupabase() respond with a helpful 503 for inbound requests.
+await initializeSupabaseWithRetry();
 if (isFallbackMode) {
   console.log('[server] Running in in-memory fallback mode - ignoring Supabase credentials', {
     triggers: fallbackTriggerReasons,
@@ -2365,6 +2402,8 @@ if (isFallbackMode) {
   supabase = null;
   supabaseAuthClient = null;
 }
+// Wire email logging to the runtime supabase client (may be null in fallback/test modes)
+configureEmailLogging({ getSupabase: () => supabase });
 let loggedMissingSupabaseConfig = false;
 let assignmentsUserIdUuidColumnAvailable = null;
 let assignmentsOrganizationIdColumnAvailable = null;
@@ -8718,7 +8757,7 @@ const fetchRecentRecords = async ({
   }
 };
 
-const loadCrmSummary = async () => {
+async function loadCrmSummary() {
   const summary = cloneCrmSummary();
   if (!supabase) {
     summary.disabled = true;
@@ -8819,7 +8858,7 @@ const loadCrmSummary = async () => {
   return summary;
 };
 
-const loadCrmActivity = async () => {
+async function loadCrmActivity() {
   const activity = cloneCrmActivity();
   if (!supabase) {
     activity.disabled = true;
