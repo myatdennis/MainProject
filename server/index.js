@@ -2365,11 +2365,23 @@ async function initializeSupabaseWithRetry({ maxAttempts = 5, initialDelayMs = 5
 
   const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
   const authClient = supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+  const dnsPromises = dns.promises;
 
   let attempt = 0;
   while (attempt < maxAttempts) {
     attempt += 1;
     try {
+      // Diagnostic: attempt DNS resolution of the Supabase host before making requests.
+      try {
+        const resolveStart = Date.now();
+        const resolved = await dnsPromises.lookup(supabaseUrlHost, { all: true });
+        const resolveMs = Date.now() - resolveStart;
+        console.info('[supabase.dns] lookup_success', { host: supabaseUrlHost, resolved, resolveMs });
+      } catch (dnsErr) {
+        console.warn('[supabase.dns] lookup_failed', { host: supabaseUrlHost, message: dnsErr?.message ?? String(dnsErr) });
+        // Allow retry/backoff to continue — DNS may be transiently failing.
+      }
+
       // lightweight health check: HEAD-like select
       const { error } = await adminClient.from('organizations').select('id', { head: true, count: 'exact' }).limit(1);
       if (error) throw error;
