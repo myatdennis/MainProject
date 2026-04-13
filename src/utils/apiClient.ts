@@ -825,6 +825,24 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   return text as unknown as T;
 }
 
+export async function safeApiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T | null> {
+  try {
+    return await apiRequest<T>(path, options);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (import.meta.env?.DEV) {
+        console.warn('[apiClient] safeApiRequest caught ApiError', {
+          path,
+          status: error.status,
+          body: error.body,
+        });
+      }
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function apiRequestRaw(path: string, options: ApiRequestOptions = {}): Promise<Response> {
   const { skipAdminGateCheck, ...rest } = options;
   return internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
