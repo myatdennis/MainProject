@@ -432,8 +432,13 @@ const AdminCourseDetail = () => {
             <button onClick={() => {
                 try {
                   const link = `${window.location.origin}/courses/${course.id}`;
-                  navigator.clipboard?.writeText(link).then(() => console.log('Link copied:', link)).catch(() => console.log('Copy not supported'));
-                } catch (err) { console.warn('Share failed', err); }
+                  navigator.clipboard
+                    ?.writeText(link)
+                    .then(() => showToast('Course link copied to clipboard.', 'success'))
+                    .catch(() => showToast('Clipboard is unavailable in this browser.', 'error'));
+                } catch {
+                  showToast('Unable to copy the course link right now.', 'error');
+                }
               }} className="btn-outline px-4 py-2 rounded-lg flex items-center space-x-2">
               <Share className="h-4 w-4" />
               <span>Copy Link</span>

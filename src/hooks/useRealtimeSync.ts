@@ -2,6 +2,13 @@ import { useEffect, useCallback, useRef } from 'react';
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import toast from 'react-hot-toast';
 
+const debugRealtime = (...args: unknown[]) => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+  console.log(...args);
+};
+
 export interface RealtimeEvent {
   type: 'course_assigned' | 'course_updated' | 'progress_sync' | 'enrollment_changed' | 'user_status_changed';
   payload: any;
@@ -39,7 +46,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
       userId: payload.user_id || userId
     };
 
-    console.log(`[RealtimeSync] Event received on ${channel}:`, event);
+    debugRealtime(`[RealtimeSync] Event received on ${channel}:`, event);
     
     // Call custom event handler if provided
     onEvent?.(event);
@@ -71,15 +78,15 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
 
   const connect = useCallback(async () => {
     if (!enabled || !hasSupabaseConfig()) {
-      console.log('[RealtimeSync] Connection disabled or Supabase not configured');
+      debugRealtime('[RealtimeSync] Connection disabled or Supabase not configured');
       return;
     }
 
     try {
-      console.log('[RealtimeSync] Establishing realtime connections...');
+      debugRealtime('[RealtimeSync] Establishing realtime connections...');
       const client = await getSupabase();
       if (!client) {
-        console.log('[RealtimeSync] Supabase client unavailable (lazy load failed)');
+        debugRealtime('[RealtimeSync] Supabase client unavailable (lazy load failed)');
         return;
       }
       supabaseRef.current = client;
@@ -113,7 +120,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
             }
           )
           .subscribe((status: any) => {
-            console.log(`[RealtimeSync] Channel ${channelName} status:`, status);
+            debugRealtime(`[RealtimeSync] Channel ${channelName} status:`, status);
             
             if (status === 'SUBSCRIBED') {
               reconnectAttemptsRef.current = 0;
@@ -144,7 +151,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
       reconnectAttemptsRef.current++;
       const delay = baseDelay * Math.pow(2, reconnectAttemptsRef.current - 1);
       
-      console.log(`[RealtimeSync] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxRetries})`);
+      debugRealtime(`[RealtimeSync] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxRetries})`);
       
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -166,7 +173,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   }, [connect]);
 
   const disconnect = useCallback(() => {
-    console.log('[RealtimeSync] Disconnecting...');
+    debugRealtime('[RealtimeSync] Disconnecting...');
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -201,7 +208,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
         }
       });
       
-      console.log('[RealtimeSync] Broadcast sent:', { eventType, data });
+      debugRealtime('[RealtimeSync] Broadcast sent:', { eventType, data });
     } catch (error) {
       console.error('[RealtimeSync] Broadcast error:', error);
       onError?.(error as Error);

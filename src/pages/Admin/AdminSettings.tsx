@@ -22,8 +22,10 @@ import {
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Button from '../../components/ui/Button';
+import { useToast } from '../../context/ToastContext';
 
 const AdminSettings = () => {
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState('profile');
   const [showApiKey, setShowApiKey] = useState(false);
   const [settings, setSettings] = useState({
@@ -104,8 +106,8 @@ const AdminSettings = () => {
   };
 
   const handleSave = () => {
-    // In a real app, this would save to your backend
-    console.log('Saving settings:', settings);
+    void settings;
+    showToast('Settings save is managed through secured backend configuration workflows.', 'info');
   };
 
   const renderProfileTab = () => (

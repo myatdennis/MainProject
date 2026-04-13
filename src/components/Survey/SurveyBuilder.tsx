@@ -142,6 +142,7 @@ const SurveyBuilder: React.FC<SurveyBuilderProps> = ({
 
   const [showAIAssist, setShowAIAssist] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
 
   // Question Management
   const addQuestion = useCallback((blockId: string, type: QuestionType) => {
@@ -246,8 +247,7 @@ const SurveyBuilder: React.FC<SurveyBuilderProps> = ({
       ]
     };
 
-    // Simulate AI response
-    alert(`AI Suggestions for "${prompt}":\n\n${suggestions[type].join('\n\n')}`);
+    setAiFeedback(`AI suggestions for "${prompt}":\n\n${suggestions[type].join('\n\n')}`);
     setShowAIAssist(false);
     setAiPrompt('');
   };
@@ -629,6 +629,22 @@ const SurveyBuilder: React.FC<SurveyBuilderProps> = ({
           </nav>
         </div>
       </div>
+
+      {aiFeedback && (
+        <div className="mx-6 mt-4 whitespace-pre-line rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <div className="flex items-start justify-between gap-3">
+            <span>{aiFeedback}</span>
+            <button
+              type="button"
+              onClick={() => setAiFeedback(null)}
+              className="shrink-0 text-blue-700 hover:text-blue-900"
+              aria-label="Dismiss AI suggestions"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="p-6">

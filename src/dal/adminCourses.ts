@@ -9,6 +9,14 @@ import { publishRequestBodySchema } from '../contracts/courseWriteContract';
 
 export { CourseValidationError };
 
+const unwrapApiData = <T>(payload: T | { data?: T } | null | undefined): T | null => {
+  if (payload == null) return null;
+  if (typeof payload === 'object' && 'data' in (payload as Record<string, unknown>)) {
+    return ((payload as { data?: T }).data ?? null) as T | null;
+  }
+  return payload as T;
+};
+
 export async function syncCourseToDatabase(
   course: Course,
   options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal; clientRevision?: number } = {},
@@ -32,12 +40,12 @@ export async function loadCourseFromDatabase(
 }
 
 export async function adminCreateCourse(payload: any): Promise<any> {
-  const json = await apiRequest<{ data: any }>(`/api/admin/courses`, {
+  const json = await apiRequest<any>(`/api/admin/courses`, {
     method: 'POST',
     body: payload,
     skipAdminGateCheck: true,
   });
-  return json.data;
+  return unwrapApiData(json);
 }
 
 export interface PublishCourseOptions {
@@ -61,14 +69,14 @@ export async function adminPublishCourse(courseId: string, options: PublishCours
 
   const parsedBody = publishRequestBodySchema.parse(Object.keys(body).length > 0 ? body : {});
 
-  const response = await apiRequest<{ data: any }>(`/api/admin/courses/${courseId}/publish`, {
+  const response = await apiRequest<any>(`/api/admin/courses/${courseId}/publish`, {
     method: 'POST',
     body: Object.keys(parsedBody).length > 0 ? parsedBody : undefined,
     skipAdminGateCheck: true,
     timeoutMs: PUBLISH_REQUEST_TIMEOUT_MS,
   });
 
-  return response.data;
+  return unwrapApiData(response);
 }
 
 export interface AdminAssignCoursePayload {
@@ -90,13 +98,13 @@ export async function adminAssignCourse(
     throw new CourseValidationError('adminAssignCourse', ['organizationId is required to assign a course']);
   }
 
-  const response = await apiRequest<{ data: any }>(`/api/admin/courses/${courseId}/assign`, {
+  const response = await apiRequest<any>(`/api/admin/courses/${courseId}/assign`, {
     method: 'POST',
     body: payload,
     skipAdminGateCheck: true,
   });
 
-  return response.data;
+  return unwrapApiData(response);
 }
 
 export async function fetchCourseAssignments(
@@ -115,11 +123,11 @@ export async function fetchCourseAssignments(
     params.set('active', 'false');
   }
   try {
-    const response = await apiRequest<{ data: any[] }>(
+    const response = await apiRequest<any[] | { data?: any[] }>(
       `/api/admin/courses/${courseId}/assignments?${params.toString()}`,
       { skipAdminGateCheck: true },
     );
-    const rows = Array.isArray(response.data) ? response.data : [];
+    const rows = unwrapApiData<any[]>(response) ?? [];
     return mapAssignmentsFromApiRows(rows);
   } catch (error) {
     console.error('[fetchCourseAssignments] fetch_error', { courseId, organizationId, error });

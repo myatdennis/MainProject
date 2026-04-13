@@ -13,6 +13,7 @@ import {
   getSessionMetadata,
   clearAuth,
   __dangerouslyResetSecureStorageStateForTests,
+  __dangerouslyClearInMemoryUserSessionForTests,
 } from '../secureStorage';
 
 const originalSessionStorage = typeof window !== 'undefined' ? window.sessionStorage : undefined;
@@ -74,6 +75,40 @@ describe('secureStorage', () => {
     expect(getAccessToken()).toBeNull();
     expect(getRefreshToken()).toBeNull();
     expect(getSessionMetadata()).toBeNull();
+  });
+
+  it('rehydrates the persisted user session when in-memory state is cleared', () => {
+    setUserSession({ id: 'user-1', email: 'user@example.com', role: 'admin' });
+    __dangerouslyClearInMemoryUserSessionForTests();
+
+    expect(getUserSession()).toMatchObject({
+      id: 'user-1',
+      email: 'user@example.com',
+      role: 'admin',
+    });
+  });
+
+  it('builds a synthetic session during non-production e2e bypass', () => {
+    clearAuth();
+    __dangerouslyClearInMemoryUserSessionForTests();
+    (window as any).__E2E_BYPASS = true;
+    (window as any).__E2E_USER_ID = '00000000-0000-0000-0000-000000000002';
+    (window as any).__E2E_USER_EMAIL = 'user@pacificcoast.edu';
+    (window as any).__E2E_USER_ROLE = 'learner';
+    window.localStorage.setItem('huddle_lms_auth', 'true');
+
+    expect(getUserSession()).toMatchObject({
+      id: '00000000-0000-0000-0000-000000000002',
+      email: 'user@pacificcoast.edu',
+      role: 'learner',
+      activeOrgId: 'demo-sandbox-org',
+    });
+
+    delete (window as any).__E2E_BYPASS;
+    delete (window as any).__E2E_USER_ID;
+    delete (window as any).__E2E_USER_EMAIL;
+    delete (window as any).__E2E_USER_ROLE;
+    window.localStorage.removeItem('huddle_lms_auth');
   });
 
   it('falls back to in-memory storage when sessionStorage is unavailable', () => {

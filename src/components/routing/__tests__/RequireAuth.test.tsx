@@ -16,13 +16,13 @@ vi.mock('../../../context/SecureAuthContext', () => ({
 const mockUseSecureAuth = authHookMocks.useSecureAuth as Mock;
 
 const createAuthState = (overrides: Record<string, unknown> = {}) => ({
-  isAuthenticated: { lms: true, admin: false },
+  isAuthenticated: { lms: true, admin: false, client: true },
   authInitializing: false,
   authStatus: 'authenticated',
   sessionStatus: 'authenticated',
   membershipStatus: 'ready',
   hasActiveMembership: true,
-  surfaceAuthStatus: { admin: 'ready', lms: 'ready' },
+  surfaceAuthStatus: { admin: 'ready', lms: 'ready', client: 'ready' },
   orgResolutionStatus: 'ready',
   user: { id: 'user-1', role: 'learner', email: 'learner@example.com' },
   memberships: [],

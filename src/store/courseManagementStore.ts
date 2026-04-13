@@ -7,6 +7,15 @@ import {
 import type { NormalizedCourse } from '../utils/courseNormalization';
 import { convertModulesToChapters, recalculateCourseDurations, buildModulesFromChapters } from '../utils/courseStructure';
 
+const buildDeterministicRecommendationScore = (learnerId: string, course: Course): number => {
+  const source = `${learnerId}:${course.id}:${course.category ?? ''}:${course.difficulty ?? ''}`;
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+  return (hash % 1000) / 1000;
+};
+
 // Enhanced Course Store with full CMS functionality
 class CourseManagementStore {
   private courses: Map<string, Course> = new Map();
@@ -399,7 +408,7 @@ class CourseManagementStore {
       .filter(course => !learnerCourses.includes(course.id))
       .map(course => ({
         courseId: course.id,
-        score: Math.random(), // Mock scoring
+        score: buildDeterministicRecommendationScore(learnerId, course),
         reason: 'similar-content' as const,
         explanation: `Recommended based on your interest in ${course.category}`,
       }))

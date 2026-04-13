@@ -1,5 +1,12 @@
 import DOMPurify from 'dompurify';
 
+const debugSecurity = (...args: unknown[]) => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+  console.log(...args);
+};
+
 export class SecurityUtils {
   /**
    * Sanitize HTML content to prevent XSS attacks
@@ -244,8 +251,7 @@ export class SecurityUtils {
       sessionId: this.secureStorage.get<string>('session_id') || 'anonymous'
     };
 
-    // In production, send to security monitoring service
-    console.log('Security Event:', logEntry);
+    debugSecurity('Security Event:', logEntry);
 
     // Store locally for audit trail
     try {

@@ -218,8 +218,12 @@ const AdminUsers = () => {
 
       console.info('[AdminUsers] fetchUsers:', { apiPath, activeOrgId, isPlatformAdmin, filterOrg });
 
-      const json = await apiRequest<{ data: any[] }>(apiPath, { noTransform: true });
-      const records = Array.isArray(json?.data) ? json.data : [];
+      const response = await apiRequest<any[] | { data?: any[] }>(apiPath, { noTransform: true });
+      const records = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.data)
+          ? response.data
+          : [];
 
       const mapped = records.map(mapMemberToUser).filter((u): u is User => u !== null);
 

@@ -6,6 +6,14 @@ import { buildOrgHeaders } from '../utils/orgHeaders';
 
 type SurveyApiRecord = any;
 
+const unwrapApiData = <T>(payload: T | { data?: T } | null | undefined): T | null => {
+  if (payload == null) return null;
+  if (typeof payload === 'object' && 'data' in (payload as Record<string, unknown>)) {
+    return ((payload as { data?: T }).data ?? null) as T | null;
+  }
+  return payload as T;
+};
+
 const ensureStringArray = (value?: unknown): string[] => {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -100,37 +108,106 @@ const buildSurveyPayload = (survey: Survey) => {
   };
 };
 
-// Mock analytics; replace with real aggregation queries later
-export async function getAnalytics(surveyId: string) {
+export async function getAnalytics(surveyId: string, options: { organizationId?: string } = {}) {
+  const [survey, responses] = await Promise.all([
+    getSurveyById(surveyId).catch(() => null),
+    fetchAdminSurveyResults(surveyId, { organizationId: options.organizationId, limit: 500 }).catch(() => []),
+  ]);
+
+  const numericBuckets = new Map<string, { total: number; count: number }>();
+  let completedCount = 0;
+  let completionMinutesTotal = 0;
+  let completionMinutesCount = 0;
+
+  for (const response of responses) {
+    const status = String(response?.status ?? '').toLowerCase();
+    if (status === 'completed' || response?.completed_at) {
+      completedCount += 1;
+    }
+
+    const metadata = response?.metadata && typeof response.metadata === 'object' ? response.metadata : {};
+    const completionMinutesCandidate =
+      Number((metadata as Record<string, unknown>).completionTimeMinutes) ||
+      Number((metadata as Record<string, unknown>).completion_time_minutes) ||
+      Number((metadata as Record<string, unknown>).completionMinutes);
+    if (Number.isFinite(completionMinutesCandidate) && completionMinutesCandidate > 0) {
+      completionMinutesTotal += completionMinutesCandidate;
+      completionMinutesCount += 1;
+    }
+
+    const answerRecord = response?.response && typeof response.response === 'object' ? response.response : {};
+    Object.entries(answerRecord as Record<string, unknown>).forEach(([questionId, rawValue]) => {
+      const numericValue =
+        typeof rawValue === 'number'
+          ? rawValue
+          : typeof rawValue === 'string' && rawValue.trim() !== ''
+            ? Number(rawValue)
+            : Number.NaN;
+      if (!Number.isFinite(numericValue)) {
+        return;
+      }
+      const bucket = numericBuckets.get(questionId) ?? { total: 0, count: 0 };
+      bucket.total += numericValue;
+      bucket.count += 1;
+      numericBuckets.set(questionId, bucket);
+    });
+  }
+
+  const questionSummaries = [...numericBuckets.entries()]
+    .map(([questionId, bucket]) => ({
+      questionId,
+      avgScore: Number((bucket.total / Math.max(bucket.count, 1)).toFixed(1)),
+    }))
+    .sort((left, right) => right.avgScore - left.avgScore);
+
+  const completionRate = responses.length > 0 ? Math.round((completedCount / responses.length) * 100) : 0;
+  const avgCompletionTime =
+    completionMinutesCount > 0 ? Number((completionMinutesTotal / completionMinutesCount).toFixed(1)) : 0;
+
+  const insights: string[] = [];
+  if (responses.length === 0) {
+    insights.push('No survey responses yet. Share the survey and review results after the first submissions arrive.');
+  } else {
+    insights.push(
+      completionRate >= 80
+        ? 'Completion is healthy. Respondents are finishing this survey at a strong rate.'
+        : 'Completion is below target. Review reminders, deadlines, and survey length.',
+    );
+    if (questionSummaries.length > 0) {
+      const strongest = questionSummaries[0];
+      insights.push(`Highest-scoring numeric item: ${strongest.questionId} at ${strongest.avgScore.toFixed(1)}.`);
+      const weakest = questionSummaries[questionSummaries.length - 1];
+      if (weakest && weakest.questionId !== strongest.questionId) {
+        insights.push(`Lowest-scoring numeric item: ${weakest.questionId} at ${weakest.avgScore.toFixed(1)}.`);
+      }
+    } else {
+      insights.push('Responses are available, but there are not enough numeric answers yet to calculate question scores.');
+    }
+  }
+
   return {
     surveyId,
-    title: 'Mock Survey Analytics',
-    totalResponses: 180,
-    completionRate: 78,
-    avgCompletionTime: 13,
-    questionSummaries: [
-      { questionId: 'belonging-1', avgScore: 3.8 },
-      { questionId: 'safety-1', avgScore: 3.6 },
-    ],
-    insights: [
-      'Belonging scores above average in Engineering',
-      'New hires report lower psychological safety',
-    ],
+    title: survey?.title ?? `Survey ${surveyId}`,
+    totalResponses: responses.length,
+    completionRate,
+    avgCompletionTime,
+    questionSummaries,
+    insights,
   };
 }
 
 export async function listSurveys(): Promise<Survey[]> {
-  const json = await request<{ data: SurveyApiRecord[] }>('/api/admin/surveys');
-  return (json?.data ?? []).map(mapSurveyRecord);
+  const json = await request<SurveyApiRecord[] | { data?: SurveyApiRecord[] }>('/api/admin/surveys');
+  return (unwrapApiData(json) ?? []).map(mapSurveyRecord);
 }
 
 export async function saveSurvey(survey: Survey) {
-  const json = await request<{ data: SurveyApiRecord }>('/api/admin/surveys', {
+  const json = await request<SurveyApiRecord | { data?: SurveyApiRecord }>('/api/admin/surveys', {
     method: 'POST',
     body: buildSurveyPayload(survey),
   });
 
-  return mapSurveyRecord(json.data);
+  return mapSurveyRecord(unwrapApiData(json));
 }
 
 export type SurveyPatch = Partial<Survey> & { organizationIds?: string[] };
@@ -141,12 +218,12 @@ export async function updateSurvey(id: string, patch: SurveyPatch) {
     organizationIds: patch.organizationIds ?? patch.assignedTo?.organizationIds,
   };
 
-  const json = await request<{ data: SurveyApiRecord }>(`/api/admin/surveys/${id}`, {
+  const json = await request<SurveyApiRecord | { data?: SurveyApiRecord }>(`/api/admin/surveys/${id}`, {
     method: 'PUT',
     body: payload,
   });
 
-  return mapSurveyRecord(json.data);
+  return mapSurveyRecord(unwrapApiData(json));
 }
 
 export async function deleteSurvey(id: string) {
@@ -216,8 +293,9 @@ export const flushNow = async () => {
 
 export async function getSurveyById(id: string) {
   try {
-    const json = await request<{ data: any }>(`/api/admin/surveys/${id}`);
-    return json.data ? mapSurveyRecord(json.data) : null;
+    const json = await request<any | { data?: any }>(`/api/admin/surveys/${id}`);
+    const data = unwrapApiData(json);
+    return data ? mapSurveyRecord(data) : null;
   } catch (err) {
     console.warn('getSurveyById error:', err);
     return null;
@@ -306,19 +384,21 @@ export async function fetchAssignedSurveysForLearner(): Promise<LearnerSurveyAss
   };
 
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const MAX_HYDRATION_RETRIES = 3;
+  const HYDRATION_RETRY_MS = 600;
 
   let lastJson: AssignedResponse | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_HYDRATION_RETRIES; attempt += 1) {
     const json = await request<AssignedResponse>('/api/client/surveys/assigned', {
       headers: buildOrgHeaders(),
     });
     lastJson = json;
     const entries = Array.isArray(json.data) ? json.data : [];
     const hydrationPending = Boolean(json.meta?.hydrationPending);
-    if (entries.length > 0 || !hydrationPending) {
+    if (entries.length > 0 || !hydrationPending || attempt === MAX_HYDRATION_RETRIES - 1) {
       break;
     }
-    await sleep(600);
+    await sleep(HYDRATION_RETRY_MS);
   }
 
   const entries = Array.isArray(lastJson?.data) ? lastJson!.data : [];

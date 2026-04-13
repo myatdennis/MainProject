@@ -5,13 +5,24 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const SUPABASE_URL = process.env.SUPABASE_TEST_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_TEST_SERVICE_KEY;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_TEST_ANON_KEY;
+const REQUIRE_SUPABASE_RLS_TESTS = process.env.REQUIRE_SUPABASE_RLS_TESTS === 'true';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SUPABASE_ANON_KEY) {
-  describe.skip('Supabase RLS enforcement', () => {
-    it('requires SUPABASE_TEST_URL / SUPABASE_TEST_SERVICE_KEY / SUPABASE_TEST_ANON_KEY env vars to run', () => {
-      expect(true).toBe(true);
+  if (REQUIRE_SUPABASE_RLS_TESTS) {
+    describe('Supabase RLS enforcement', () => {
+      it('requires SUPABASE_TEST_URL / SUPABASE_TEST_SERVICE_KEY / SUPABASE_TEST_ANON_KEY env vars to run', () => {
+        throw new Error(
+          'REQUIRE_SUPABASE_RLS_TESTS=true but Supabase RLS test credentials are missing. Configure SUPABASE_TEST_URL, SUPABASE_TEST_SERVICE_KEY, and SUPABASE_TEST_ANON_KEY.',
+        );
+      });
     });
-  });
+  } else {
+    describe.skip('Supabase RLS enforcement', () => {
+      it('requires SUPABASE_TEST_URL / SUPABASE_TEST_SERVICE_KEY / SUPABASE_TEST_ANON_KEY env vars to run', () => {
+        expect(true).toBe(true);
+      });
+    });
+  }
 } else {
   type TestUser = {
     id: string;

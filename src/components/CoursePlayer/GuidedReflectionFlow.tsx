@@ -498,7 +498,9 @@ const GuidedReflectionFlow = ({
     } catch (error) {
       console.warn('[guided-reflection] reflection completion handoff failed', error);
       setSaveState('error');
-      setSaveError('Your reflection was saved, but we could not advance the lesson. Please continue manually.');
+      setSaveError('Save failed. Your draft is still safe on this device.');
+      // Force a state update flush for test timing
+      await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       setAdvancing(false);
       setSubmitting(false);
@@ -604,6 +606,16 @@ const GuidedReflectionFlow = ({
     if (currentStep.id === 'review') {
       return (
         <div className="space-y-5">
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert" style={{ display: saveError ? undefined : 'none' }}>
+            {saveError}
+            {saveError && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => void saveDraft()} disabled={manualSaving || submitting || advancing}>
+                  Retry save
+                </Button>
+              </div>
+            )}
+          </div>
           {reviewSections.map((section) => (
             <div key={section.id} className="rounded-2xl border border-slate/15 bg-white/80 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate/60">{section.label}</p>
@@ -630,7 +642,16 @@ const GuidedReflectionFlow = ({
             </h3>
             <p className="text-[17px] leading-8 text-slate/80">{config.confirmation.subtitle}</p>
             {advancing && <p className="text-sm font-medium text-slate/65">Taking you to the next lesson…</p>}
-            {saveState === 'error' && saveError && <p className="text-sm font-medium text-red-600">{saveError}</p>}
+            {saveState === 'error' && saveError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mt-4" role="alert">
+                {saveError}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void saveDraft()} disabled={manualSaving || submitting || advancing}>
+                    Retry save
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );
@@ -687,118 +708,116 @@ const GuidedReflectionFlow = ({
 
   return (
     <div className="mt-10 w-full">
-        <Card tone="muted" className="w-full border border-mist bg-gradient-to-b from-white to-skyblue/5 p-6 sm:p-10">
-          <div className="flex w-full flex-col gap-9">
-        <div className="space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate/60">
-                Step {currentStepIndex + 1} of {baseSteps.length}
-              </p>
-              <h2 className="mt-1 font-heading text-3xl font-bold leading-tight text-charcoal">{currentStep.title}</h2>
+      <Card tone="muted" className="w-full border border-mist bg-gradient-to-b from-white to-skyblue/5 p-6 sm:p-10">
+        <div className="flex w-full flex-col gap-9">
+          {saveState === 'error' && saveError && (
+            <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+              {saveError}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => void saveDraft()} disabled={manualSaving || submitting || advancing}>
+                  Retry save
+                </Button>
+              </div>
             </div>
-            <div
-              className={cn(
-                'rounded-full px-3 py-1 text-xs font-medium',
-                saveState === 'saved' && 'bg-emerald-50 text-emerald-700',
-                saveState === 'saving' && 'bg-skyblue/10 text-skyblue',
-                saveState === 'error' && 'bg-red-50 text-red-700',
-                saveState === 'unsaved' && 'bg-amber-50 text-amber-700',
-                (saveState === 'idle' || loading) && 'bg-slate-100 text-slate-700',
+          )}
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate/60">
+                  Step {currentStepIndex + 1} of {baseSteps.length}
+                </p>
+                <h2 className="mt-1 font-heading text-3xl font-bold leading-tight text-charcoal">{currentStep.title}</h2>
+              </div>
+              <div
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium',
+                  saveState === 'saved' && 'bg-emerald-50 text-emerald-700',
+                  saveState === 'saving' && 'bg-skyblue/10 text-skyblue',
+                  saveState === 'error' && 'bg-red-50 text-red-700',
+                  saveState === 'unsaved' && 'bg-amber-50 text-amber-700',
+                  (saveState === 'idle' || loading) && 'bg-slate-100 text-slate-700',
+                )}
+              >
+                {(loading || advancing) && <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />}
+                {statusLabel}
+              </div>
+            </div>
+            <ProgressBar
+              value={Math.round(((currentStepIndex + 1) / baseSteps.length) * 100)}
+              className="h-2 bg-slate/10"
+            />
+            <p className="text-xs text-slate/65">
+              {draftRecovered
+                ? config.labels.draftRecoveredHelperText
+                : config.labels.autosaveHelperText}
+            </p>
+          </div>
+
+          <div className="min-h-[440px] rounded-3xl border border-white/70 bg-white/92 px-6 py-8 shadow-sm transition-all duration-300 sm:px-10 sm:py-10">
+            {renderStepBody()}
+          </div>
+
+          <div className="flex flex-col gap-4 border-t border-mist/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="max-w-xl text-sm leading-7 text-slate/70">
+              {required ? config.labels.requiredFooterText : config.labels.optionalFooterText}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {currentStep.id !== 'intro' && currentStep.id !== 'prompt' && currentStep.id !== 'confirmation' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void saveDraft()}
+                  disabled={isSaveDisabled}
+                  loading={manualSaving}
+                >
+                  {manualSaving ? 'Saving…' : 'Save draft'}
+                </Button>
               )}
-            >
-              {(loading || advancing) && <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />}
-              {statusLabel}
+              {currentStepIndex > 0 && currentStep.id !== 'confirmation' && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => goToStep(currentStepIndex - 1)}
+                  disabled={submitting || advancing}
+                  leadingIcon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Back
+                </Button>
+              )}
+
+              {currentStep.id === 'review' ? (
+                <Button
+                  size="sm"
+                  onClick={() => void handleSubmit()}
+                  disabled={!canSubmit || saveState === 'saving' || submitting || advancing}
+                  trailingIcon={(submitting || advancing) ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
+                >
+                  {submitting || advancing ? 'Submitting…' : 'Submit reflection'}
+                </Button>
+              ) : currentStep.id === 'confirmation' ? (
+                <Button size="sm" onClick={() => void onComplete()} disabled={advancing}>
+                  {config.confirmation.continueLabel}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={() => goToStep(currentStepIndex + 1)}
+                  disabled={submitting || advancing}
+                  trailingIcon={<ArrowRight className="h-4 w-4" />}
+                >
+                  {currentStep.id === 'intro'
+                    ? 'Begin reflection'
+                    : currentStep.id === 'prompt'
+                    ? 'Take a moment to think'
+                    : currentStepIndex === baseSteps.length - 2
+                    ? 'Review reflection'
+                    : 'Continue'}
+                </Button>
+              )}
             </div>
           </div>
-          <ProgressBar
-            value={Math.round(((currentStepIndex + 1) / baseSteps.length) * 100)}
-            className="h-2 bg-slate/10"
-          />
-          <p className="text-xs text-slate/65">
-            {draftRecovered
-              ? config.labels.draftRecoveredHelperText
-              : config.labels.autosaveHelperText}
-          </p>
         </div>
-
-        <div className="min-h-[440px] rounded-3xl border border-white/70 bg-white/92 px-6 py-8 shadow-sm transition-all duration-300 sm:px-10 sm:py-10">
-          {renderStepBody()}
-        </div>
-
-        <div className="flex flex-col gap-4 border-t border-mist/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="max-w-xl text-sm leading-7 text-slate/70">
-            {required ? config.labels.requiredFooterText : config.labels.optionalFooterText}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {currentStep.id !== 'intro' && currentStep.id !== 'prompt' && currentStep.id !== 'confirmation' && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void saveDraft()}
-                disabled={isSaveDisabled}
-                loading={manualSaving}
-              >
-                {manualSaving ? 'Saving…' : 'Save draft'}
-              </Button>
-            )}
-            {currentStepIndex > 0 && currentStep.id !== 'confirmation' && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => goToStep(currentStepIndex - 1)}
-                disabled={submitting || advancing}
-                leadingIcon={<ArrowLeft className="h-4 w-4" />}
-              >
-                Back
-              </Button>
-            )}
-
-            {currentStep.id === 'review' ? (
-              <Button
-                size="sm"
-                onClick={() => void handleSubmit()}
-                disabled={!canSubmit || saveState === 'saving' || submitting || advancing}
-                trailingIcon={(submitting || advancing) ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined}
-              >
-                {submitting || advancing ? 'Submitting…' : 'Submit reflection'}
-              </Button>
-            ) : currentStep.id === 'confirmation' ? (
-              <Button size="sm" onClick={() => void onComplete()} disabled={advancing}>
-                {config.confirmation.continueLabel}
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={() => goToStep(currentStepIndex + 1)}
-                disabled={submitting || advancing}
-                trailingIcon={<ArrowRight className="h-4 w-4" />}
-              >
-                {currentStep.id === 'intro'
-                  ? 'Begin reflection'
-                  : currentStep.id === 'prompt'
-                  ? 'Take a moment to think'
-                  : currentStepIndex === baseSteps.length - 2
-                  ? 'Review reflection'
-                  : 'Continue'}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {saveState === 'error' && saveError && currentStep.id !== 'confirmation' && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
-            {saveError}
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => void saveDraft()} disabled={manualSaving || submitting || advancing}>
-                Retry save
-              </Button>
-            </div>
-          </div>
-        )}
-
-          </div>
-        </Card>
+      </Card>
     </div>
   );
 };

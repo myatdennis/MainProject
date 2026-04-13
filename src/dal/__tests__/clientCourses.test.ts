@@ -48,6 +48,15 @@ describe('clientCourses DAL', () => {
     expect(mapCourseRecordMock).toHaveBeenCalledWith({ id: 'course-1', title: 'Inclusive Leadership' });
   });
 
+  it('accepts already-unwrapped course arrays from apiRequest', async () => {
+    apiClientMock.mockResolvedValueOnce([{ id: 'course-3', title: 'Team Trust' }]);
+
+    const courses = await fetchPublishedCourses();
+
+    expect(courses).toEqual([{ id: 'course-3', title: 'Team Trust' }]);
+    expect(mapCourseRecordMock).toHaveBeenCalledWith({ id: 'course-3', title: 'Team Trust' });
+  });
+
   it('fetchCourse falls back to slug when id lookup misses', async () => {
     apiClientMock
       .mockResolvedValueOnce({ data: null })

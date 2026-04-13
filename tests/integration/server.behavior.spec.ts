@@ -507,4 +507,64 @@ describe('Server demo-mode behavior', () => {
       action: payload.action,
     });
   });
+
+  it('imports a legacy TLC-style payload with nested course wrapper', async () => {
+    const slug = `tlc-${randomUUID()}`;
+    const importRes = await server!.fetch('/api/admin/courses/import', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        organizationId: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        items: [
+          {
+            course: {
+              title: `TLC Course ${slug}`,
+              slug,
+              status: 'draft',
+            },
+            modules: [
+              {
+                title: 'Introduction',
+                lessons: [
+                  { title: 'Getting started', type: 'text', content: { textContent: 'Welcome' } },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(importRes.status).toBe(201);
+    const result = await importRes.json();
+    expect(result).toMatchObject({ ok: true, code: 'courses_imported' });
+    expect(result.data?.[0]?.slug).toBe(slug);
+  }, 20000);
+
+  it('imports a direct { course, modules } payload shape successfully', async () => {
+    const slug = `direct-${randomUUID()}`;
+    const importRes = await server!.fetch('/api/admin/courses/import', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        organizationId: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        course: {
+          title: `Direct Course ${slug}`,
+          slug,
+          status: 'draft',
+        },
+        modules: [
+          {
+            title: 'Overview',
+            lessons: [
+              { title: 'Overview lesson', type: 'text', content: { textContent: 'Overview content' } },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(importRes.status).toBe(201);
+    const result = await importRes.json();
+    expect(result).toMatchObject({ ok: true, code: 'courses_imported' });
+    expect(result.data?.[0]?.slug).toBe(slug);
+  }, 20000);
 });

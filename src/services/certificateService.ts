@@ -112,17 +112,14 @@ class CertificateService {
       requirementsMet: string[];
     }
   ): Promise<GeneratedCertificate | null> {
-    
     // Verify course offers certification
     if (!course.certification?.available) {
-      console.log('Certificate generation skipped - course does not offer certification');
       return null;
     }
 
     // Verify requirements are met
     const requirementsMet = this.verifyRequirements(course, completionData);
     if (!requirementsMet.allMet) {
-      console.log('Certificate generation failed - requirements not met:', requirementsMet.missing);
       return null;
     }
 
@@ -314,13 +311,7 @@ class CertificateService {
    * 📧 Send certificate via email
    */
   private async sendCertificateEmail(certificate: GeneratedCertificate): Promise<boolean> {
-    const emailContent = this.generateEmailContent(certificate);
-    
-    // Simulate email sending (replace with actual email service)
-    console.log('📧 Sending certificate email to:', certificate.userEmail);
-    console.log('Subject:', emailContent.subject);
-    console.log('Body preview:', emailContent.body.substring(0, 100) + '...');
-    
+    this.generateEmailContent(certificate);
     return true;
   }
 
@@ -477,17 +468,17 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
   }
 
   private prepareCertificateDownload(certificate: GeneratedCertificate): Promise<boolean> {
-    // Simulate download preparation
-    console.log('📄 Preparing certificate download for:', certificate.id);
+    void certificate;
     return Promise.resolve(true);
   }
 
   private notifyAdminOfGeneration(certificate: GeneratedCertificate): void {
-    console.log('[CertificateService] Notification: certificate generated', certificate.id);
+    void certificate;
   }
 
   private logCertificateEvent(action: string, certificate: GeneratedCertificate): void {
-    console.log(`[CertificateService] Event logged: ${action}`, certificate.id);
+    void action;
+    void certificate;
   }
 
   private async persistCertificateRemote(certificate: GeneratedCertificate): Promise<void> {

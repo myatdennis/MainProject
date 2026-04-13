@@ -23,7 +23,7 @@ const AdminUserProfile: React.FC = () => {
       setMessagesLoading(true);
       try {
         const response = await listUserMessages(userId);
-        setMessages(response?.data ?? []);
+        setMessages(response ?? []);
       } catch (error) {
         console.error('Failed to load user messages', error);
       } finally {
@@ -49,7 +49,7 @@ const AdminUserProfile: React.FC = () => {
       showToast('Message sent successfully.', 'success');
       setMessageForm({ subject: '', body: '' });
       const refreshed = await listUserMessages(userId);
-      setMessages(refreshed?.data ?? []);
+      setMessages(refreshed ?? []);
     } catch (error) {
       console.error('Failed to send user message', error);
       showToast('Unable to send message. Please try again.', 'error');

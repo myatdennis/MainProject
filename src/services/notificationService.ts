@@ -1,4 +1,4 @@
-import apiRequest, { ApiError } from '../utils/apiClient';
+import apiRequest from '../utils/apiClient';
 
 export type Notification = {
   id: string;
@@ -27,19 +27,18 @@ const logNotificationFetch = (label: string, path: string) => {
 };
 
 const isSchemaMissingError = (error: unknown) => {
-  if (!(error instanceof ApiError)) return false;
-  const body = (error.body ?? {}) as Record<string, any>;
-  const code = typeof body.code === 'string' ? body.code : null;
+  const body = (error as any)?.body ?? (error as any)?.response?.body ?? null;
+  const code = body && typeof (body as any).code === 'string' ? (body as any).code : null;
   return code === 'PGRST205';
 };
 
 const handleSchemaMissing = <T>(error: unknown, label: string, fallback: T) => {
   if (isSchemaMissingError(error)) {
-    const apiError = error as ApiError;
-    const body = (apiError.body ?? {}) as Record<string, any>;
+    const body = (error as any)?.body ?? (error as any)?.response?.body ?? {};
+    const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
     console.warn(`[notifications.disabled:${label}] treating notifications as disabled`, {
-      status: apiError.status,
-      code: body.code ?? null,
+      status,
+      code: (body as any).code ?? null,
     });
     return fallback;
   }
@@ -72,14 +71,7 @@ const mapNotification = (record: any): Notification => ({
   messageId: record.messageId ?? record.message_id ?? null,
 });
 
-type AdminNotificationResponse = {
-  ok?: boolean;
-  data?: any[];
-  notificationsDisabled?: boolean;
-};
-
-const isNotificationsDisabled = (payload: unknown): boolean =>
-  Boolean((payload as { notificationsDisabled?: boolean } | null | undefined)?.notificationsDisabled);
+// helper removed: previously used to detect feature-flagged disabled notifications
 
 export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: string; userId?: string }) => {
   const params = new URLSearchParams();
@@ -89,7 +81,7 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
   const path = `/api/admin/notifications${params.toString() ? `?${params.toString()}` : ''}`;
 
   try {
-    const json = await apiFetch<AdminNotificationResponse>('admin.list', path);
+  const json = await apiFetch<any[]>('admin.list', path);
     if (devLogEnabled) {
       try {
         console.debug('[notifications.raw:admin.list]', { path, raw: json });
@@ -97,11 +89,13 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
         // ignore logging failures
       }
     }
-    const items = (json?.data ?? []).map(mapNotification);
+  const raw = (json as any)?.data ?? json;
+    const srcArr = (Array.isArray(raw) ? raw : Array.isArray((raw as any)?.data) ? (raw as any).data : []) as any[];
+    const items: Notification[] = (srcArr ?? []).map(mapNotification);
 
     return {
-      notifications: items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-      notificationsDisabled: Boolean(json?.notificationsDisabled),
+      notifications: items.sort((a: Notification, b: Notification) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+      notificationsDisabled: false,
     };
   } catch (error) {
     if (devLogEnabled) {
@@ -125,7 +119,7 @@ export const listNotifications = async (opts?: { organizationId?: string; userId
 };
 
 export const addNotification = async (notification: Omit<Notification, 'id' | 'createdAt'>) => {
-  const json = await apiFetch<{ data: any }>('admin.create', '/api/admin/notifications', {
+  const json = await apiFetch<any>('admin.create', '/api/admin/notifications', {
     method: 'POST',
     body: {
       title: notification.title,
@@ -135,17 +129,18 @@ export const addNotification = async (notification: Omit<Notification, 'id' | 'c
       read: notification.read ?? false
     }
   });
-
-  return mapNotification(json.data);
+  const raw = (json as any)?.data ?? json;
+  return mapNotification(raw);
 };
 
 export const markNotificationRead = async (id: string, read = true) => {
-  const json = await apiFetch<{ data: any; notificationsDisabled?: boolean }>('admin.markRead', `/api/admin/notifications/${id}/read`, {
+  const json = await apiFetch<any>('admin.markRead', `/api/admin/notifications/${id}/read`, {
     method: 'POST',
     body: { read }
   });
+  const raw = (json as any)?.data ?? json;
 
-  if (isNotificationsDisabled(json) || !json?.data) {
+  if (!raw) {
     return mapNotification({
       id,
       title: 'Notification',
@@ -154,7 +149,7 @@ export const markNotificationRead = async (id: string, read = true) => {
     });
   }
 
-  return mapNotification(json.data);
+  return mapNotification(raw);
 };
 
 export const deleteNotification = async (id: string) => {
@@ -167,7 +162,14 @@ export const deleteNotification = async (id: string) => {
 
 export const clearNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
   const existing = await listNotifications(opts);
-  await Promise.all(existing.map(note => deleteNotification(note.id)));
+  await Promise.all(existing.map((note: Notification) => deleteNotification(note.id)));
+};
+
+export const markLearnerNotificationsRead = async (ids: string[]) => {
+  if (!ids || ids.length === 0) return [] as Notification[];
+  return Promise.all(ids.map((id) =>
+    markLearnerNotificationRead(id).catch(() => null),
+  )).then((results) => results.filter(Boolean) as Notification[]);
 };
 
 const buildLearnerNotificationsPath = (opts?: { limit?: number; unreadOnly?: boolean }) => {
@@ -185,11 +187,11 @@ const buildLearnerNotificationsPath = (opts?: { limit?: number; unreadOnly?: boo
 export const listLearnerNotifications = async (opts?: { limit?: number; unreadOnly?: boolean }) => {
   const path = buildLearnerNotificationsPath(opts);
   try {
-    const json = await apiFetch<{ data: any[] }>('learner.list', path);
-    if (isNotificationsDisabled(json)) {
-      return [] as Notification[];
-    }
-    return (json.data ?? []).map(mapNotification);
+  const json = await apiFetch<any[]>('learner.list', path);
+  if (json && (json as any).notificationsDisabled) return [] as Notification[];
+  const raw = (json as any)?.data ?? json;
+    const srcArr = (Array.isArray(raw) ? raw : Array.isArray((raw as any)?.data) ? (raw as any).data : []) as any[];
+    return (srcArr ?? []).map(mapNotification);
   } catch (error) {
     return handleSchemaMissing(error, 'learner.list', [] as Notification[]);
   }
@@ -197,14 +199,18 @@ export const listLearnerNotifications = async (opts?: { limit?: number; unreadOn
 
 export const markLearnerNotificationRead = async (id: string) => {
   try {
-    const json = await apiFetch<{ data: any; notificationsDisabled?: boolean }>(
+    const json = await apiFetch<any>(
       'learner.markRead',
       `/api/learner/notifications/${id}/read`,
       {
         method: 'POST',
       },
     );
-    if (isNotificationsDisabled(json) || !json?.data) {
+    if (json && (json as any).notificationsDisabled) {
+      return mapNotification({ id, title: 'Notification', created_at: new Date().toISOString(), read: true });
+    }
+    const raw = (json as any)?.data ?? json;
+    if (!raw) {
       return mapNotification({
         id,
         title: 'Notification',
@@ -212,7 +218,7 @@ export const markLearnerNotificationRead = async (id: string) => {
         read: true,
       });
     }
-    return mapNotification(json.data);
+    return mapNotification(raw);
   } catch (error) {
     return handleSchemaMissing(
       error,
@@ -226,14 +232,6 @@ export const markLearnerNotificationRead = async (id: string) => {
     );
   }
 };
-
-export const markLearnerNotificationsRead = async (ids: string[]) => {
-  if (!ids?.length) return [] as Notification[];
-  return Promise.all(ids.map((id) => markLearnerNotificationRead(id).catch(() => null))).then((results) =>
-    results.filter(Boolean) as Notification[]
-  );
-};
-
 export const deleteLearnerNotification = async (id: string) => {
   await apiFetch<void>('learner.delete', `/api/learner/notifications/${id}`, {
     method: 'DELETE',

@@ -2,40 +2,75 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, ty
 import {
   setSessionMetadata,
   setUserSession,
-  getUserSession,
   clearAuth,
   getActiveOrgPreference,
   setActiveOrgPreference,
   clearActiveOrgPreference,
   getAccessToken,
-  getRefreshToken,
   setAccessToken,
   setRefreshToken,
   type UserSession,
   type UserMembership,
   type SessionMetadata,
 } from '../lib/secureStorage';
-import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { getSupabase, AUTH_STORAGE_MODE } from '../lib/supabaseClient';
+import { getSupabase } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
-import { clearAdminAccessSnapshot } from '../lib/adminAccess';
+// admin access snapshot helper intentionally unused in some builds
+// import { clearAdminAccessSnapshot } from '../lib/adminAccess';
 import { setAuthBootstrapping } from '../lib/authBootstrapState';
+import {
+  buildE2EBootstrapPayload,
+  isE2EBootstrapBypassEnabled,
+  normalizeSessionResponsePayload,
+  readSupabaseSessionTokens,
+  type SessionResponsePayload,
+} from './sessionBootstrap';
+import {
+  computeAuthState,
+  type AuthState,
+  type SessionSurface,
+  type SurfaceAuthStatus,
+} from './surfaceAccess';
+import {
+  deriveOrgContextSnapshot,
+  normalizeMembershipStatusFlag,
+  type ActiveOrgSource,
+  type OrgResolutionStatus,
+} from './organizationResolution';
+import { runRefreshTokenCallback } from './tokenRefresh';
+import { createAuthActions } from './authActions';
+import {
+  buildUserSessionFromPayload,
+  resolveSessionStatePayload,
+} from './sessionState';
+import { defaultAuthContext, type AuthContextType } from './authContextContract';
+import type { RefreshOptions } from './authTypes';
+import { performLogout } from './sessionLifecycle';
+import { renderAuthState } from './authRenderState';
+import {
+  logAuthDebug,
+  logAuthSessionState,
+  logRefreshResult,
+  logSessionResult,
+  useAuthDiagnostics,
+} from './authDiagnostics';
 
 // MFA helpers
 
 import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
-import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
-import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
 import { courseStore } from '../store/courseStore';
-import { registerCourseStoreOrgResolver, writeBridgeSnapshot, type OrgContextSnapshot } from '../store/courseStoreOrgBridge';
+// registerCourseStoreOrgResolver and writeBridgeSnapshot are used by other modules
+// and intentionally not referenced here in all builds
+import type { OrgContextSnapshot } from '../store/courseStoreOrgBridge';
+import { logAuthRedirect } from '../utils/logAuthRedirect';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -50,110 +85,6 @@ const BOOTSTRAP_FAIL_OPEN_MS = 8000;
 const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
-const isDevEnvironment = Boolean(import.meta.env?.DEV);
-const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
-  if (!isDevEnvironment) return;
-  try {
-    console.debug(label, payload);
-  } catch {
-    // ignore
-  }
-};
-const logSessionResult = (status: string) => logAuthDebug('[auth] session result', { status });
-const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result', { status });
-
-const readSupabaseSessionTokens = async (
-  options: { refreshIfMissing?: boolean } = {},
-): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
-  let accessToken = getAccessToken() ?? null;
-  let refreshToken = getRefreshToken() ?? null;
-  const authStorageMode = (() => {
-    try {
-      return AUTH_STORAGE_MODE;
-    } catch {
-      return 'unknown';
-    }
-  })();
-
-  if (import.meta.env?.DEV) {
-    console.info('[SecureAuth] boot', {
-      storageMode: authStorageMode,
-      hasAccessToken: Boolean(accessToken),
-      hasRefreshToken: Boolean(refreshToken),
-      refreshIfMissing: options.refreshIfMissing !== false,
-    });
-  }
-
-  if (options.refreshIfMissing !== false && (!accessToken || !refreshToken)) {
-    try {
-      const supabase = getSupabase();
-      const sessionResult = await supabase?.auth?.getSession();
-      const supabaseSession = sessionResult?.data?.session as SupabaseSessionLike | null;
-      if (supabaseSession) {
-        accessToken = accessToken || supabaseSession.access_token || supabaseSession.accessToken || null;
-        refreshToken = refreshToken || supabaseSession.refresh_token || supabaseSession.refreshToken || null;
-      }
-    } catch (sessionError) {
-      console.warn('[SecureAuth] readSupabaseSessionTokens fallback failed', sessionError);
-    }
-  }
-
-  return { accessToken, refreshToken };
-};
-
-
-type SessionSurface = 'admin' | 'lms';
-type RefreshReason = 'protected_401' | 'user_retry';
-type SurfaceAuthStatus = 'idle' | 'checking' | 'ready' | 'error';
-type OrgResolutionStatus = 'idle' | 'resolving' | 'ready' | 'error';
-type ActiveOrgSource =
-  | 'requested_hint'
-  | 'preference'
-  | 'membership_default'
-  | 'session_payload'
-  | 'user_payload'
-  | 'none';
-
-interface RefreshOptions {
-  reason?: RefreshReason;
-}
-
-interface SessionResponsePayload {
-  user?: Record<string, any> | null;
-  memberships?: Array<Record<string, any>>;
-  organizationIds?: string[];
-  accessToken?: string | null;
-  refreshToken?: string | null;
-  expiresAt?: number | null;
-  refreshExpiresAt?: number | null;
-  activeOrgId?: string | null;
-  role?: string | null;
-  platformRole?: string | null;
-  isPlatformAdmin?: boolean;
-  mfaRequired?: boolean;
-  authenticatedOnly?: boolean;
-  membershipStatus?: 'ready' | 'degraded' | 'error' | 'unknown';
-  membershipDegraded?: boolean;
-  membershipCount?: number | null;
-  schemaHealth?: Record<string, any> | null;
-}
-
-type SupabaseSessionLike = {
-  access_token?: string;
-  refresh_token?: string;
-  expires_at?: number | null;
-  refresh_expires_at?: number | null;
-  accessToken?: string;
-  refreshToken?: string;
-  expiresAt?: number | null;
-  refreshExpiresAt?: number | null;
-  user?: Record<string, any> | null;
-  role?: string | null;
-  platform_role?: string | null;
-  platformRole?: string | null;
-  isPlatformAdmin?: boolean;
-};
-
 type MembershipFetchMeta = {
   requestId: number;
   startedAt: number | null;
@@ -161,364 +92,6 @@ type MembershipFetchMeta = {
   statusCode: number | null;
   membershipCount: number | null;
   reason?: string | null;
-};
-
-const coerceString = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-};
-
-const coerceNumber = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
-
-const isSupabaseSessionLike = (value: unknown): value is SupabaseSessionLike => {
-  if (!value || typeof value !== 'object') return false;
-  return 'access_token' in value || 'accessToken' in value || 'refresh_token' in value || 'refreshToken' in value;
-};
-
-const normalizeSessionResponsePayload = (payload: unknown): SessionResponsePayload | null => {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  const source = payload as Record<string, any>;
-  const sessionContainer = source.session && typeof source.session === 'object' ? source.session : null;
-  const supabaseSession: SupabaseSessionLike | null = isSupabaseSessionLike(sessionContainer)
-    ? (sessionContainer as SupabaseSessionLike)
-    : isSupabaseSessionLike(source.session?.session)
-    ? (source.session.session as SupabaseSessionLike)
-    : isSupabaseSessionLike(source)
-    ? (source as SupabaseSessionLike)
-    : null;
-
-  const rawUser = (sessionContainer && sessionContainer.user) || source.user || supabaseSession?.user || null;
-  if (!rawUser) {
-    return null;
-  }
-
-  const derivedRole =
-    source.role ?? sessionContainer?.role ?? rawUser.role ?? rawUser.platformRole ?? rawUser.platform_role ?? null;
-  const derivedPlatformRole =
-    source.platformRole ??
-    sessionContainer?.platformRole ??
-    sessionContainer?.platform_role ??
-    rawUser.platformRole ??
-    rawUser.platform_role ??
-    null;
-
-  const normalizedUser = { ...rawUser };
-  if (derivedRole && !normalizedUser.role) {
-    normalizedUser.role = derivedRole;
-  }
-  if (derivedPlatformRole && !normalizedUser.platformRole) {
-    normalizedUser.platformRole = derivedPlatformRole;
-  }
-
-  const accessToken =
-    source.accessToken ??
-    sessionContainer?.accessToken ??
-    sessionContainer?.access_token ??
-    supabaseSession?.access_token ??
-    supabaseSession?.accessToken ??
-    null;
-  const refreshToken =
-    source.refreshToken ??
-    sessionContainer?.refreshToken ??
-    sessionContainer?.refresh_token ??
-    supabaseSession?.refresh_token ??
-    supabaseSession?.refreshToken ??
-    null;
-
-  const expiresAt =
-    source.expiresAt ??
-    sessionContainer?.expiresAt ??
-    sessionContainer?.expires_at ??
-    coerceNumber(supabaseSession?.expires_at ?? supabaseSession?.expiresAt);
-  const refreshExpiresAt =
-    source.refreshExpiresAt ??
-    sessionContainer?.refreshExpiresAt ??
-    sessionContainer?.refresh_expires_at ??
-    coerceNumber(supabaseSession?.refresh_expires_at ?? supabaseSession?.refreshExpiresAt);
-
-  const derivedIsPlatformAdminSource =
-    source.isPlatformAdmin ?? sessionContainer?.isPlatformAdmin ?? supabaseSession?.isPlatformAdmin ?? normalizedUser.isPlatformAdmin;
-  const derivedIsPlatformAdmin =
-    typeof derivedIsPlatformAdminSource === 'boolean'
-      ? derivedIsPlatformAdminSource
-      : Boolean(
-          (coerceString(derivedRole)?.toLowerCase() === 'admin') ||
-            coerceString(derivedPlatformRole) === 'platform_admin',
-        );
-
-  if (derivedIsPlatformAdmin) {
-    normalizedUser.isPlatformAdmin = true;
-  }
-
-  const normalized: SessionResponsePayload = {
-    user: normalizedUser,
-    memberships: source.memberships ?? sessionContainer?.memberships ?? undefined,
-    organizationIds: source.organizationIds ?? sessionContainer?.organizationIds ?? undefined,
-    accessToken: accessToken ?? null,
-    refreshToken: refreshToken ?? null,
-    expiresAt: expiresAt ?? null,
-    refreshExpiresAt: refreshExpiresAt ?? null,
-    activeOrgId: source.activeOrgId ?? sessionContainer?.activeOrgId ?? normalizedUser.organizationId ?? null,
-    role: derivedRole ?? normalizedUser.role ?? null,
-    platformRole: derivedPlatformRole ?? normalizedUser.platformRole ?? null,
-    isPlatformAdmin: derivedIsPlatformAdmin,
-    mfaRequired: source.mfaRequired ?? sessionContainer?.mfaRequired ?? false,
-    membershipStatus: source.membershipStatus ?? sessionContainer?.membershipStatus ?? undefined,
-    membershipDegraded: source.membershipDegraded ?? sessionContainer?.membershipDegraded ?? undefined,
-    membershipCount:
-      typeof source.membershipCount === 'number'
-        ? source.membershipCount
-        : typeof sessionContainer?.membershipCount === 'number'
-        ? (sessionContainer.membershipCount as number)
-        : Array.isArray(source.memberships ?? sessionContainer?.memberships)
-        ? (source.memberships ?? sessionContainer?.memberships)?.length ?? null
-        : null,
-    schemaHealth: source.schemaHealth ?? sessionContainer?.schemaHealth ?? null,
-  };
-
-  const normalizedMembershipStatus = normalizeMembershipStatusFlag(
-    normalized.membershipStatus,
-    normalized.membershipDegraded
-  );
-  normalized.membershipStatus = normalizedMembershipStatus;
-  normalized.membershipDegraded = normalizedMembershipStatus !== 'ready';
-  if (
-    normalized.membershipCount == null &&
-    Array.isArray(normalized.memberships)
-  ) {
-    normalized.membershipCount = normalized.memberships.length;
-  }
-
-  return normalized;
-};
-
-const dedupeStrings = (values: Array<string | null | undefined>): string[] => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  values.forEach((value) => {
-    if (!value) return;
-    const trimmed = String(value).trim();
-    if (!trimmed || seen.has(trimmed)) return;
-    seen.add(trimmed);
-    result.push(trimmed);
-  });
-  return result;
-};
-
-const normalizeMembershipStatusFlag = (
-  status?: string | null,
-  degradedFlag?: boolean | null
-): 'ready' | 'degraded' | 'error' => {
-  if (degradedFlag) {
-    return 'degraded';
-  }
-  const normalized = typeof status === 'string' ? status.trim().toLowerCase() : null;
-  if (!normalized) {
-    return 'ready';
-  }
-  if (normalized === 'degraded') {
-    return 'degraded';
-  }
-  if (normalized === 'error') {
-    return 'error';
-  }
-  return normalized === 'ready' ? 'ready' : 'ready';
-};
-
-const normalizeMemberships = (rows: Array<Record<string, any>> | undefined): UserMembership[] => {
-  if (!Array.isArray(rows)) return [];
-  return rows.reduce<UserMembership[]>((acc, row) => {
-    const orgId = row?.orgId || row?.organizationId || row?.organization_id || row?.org_id;
-    if (!orgId) {
-      return acc;
-    }
-    acc.push({
-      orgId,
-      organizationId: orgId,
-      role: row.role ?? row.organization_role ?? null,
-      status: row.status ?? 'active',
-      organizationName: row.organizationName ?? row.organization_name ?? row.org_name ?? null,
-      organizationSlug: row.organizationSlug ?? row.organization_slug ?? row.org_slug ?? null,
-      organizationStatus: row.organizationStatus ?? row.organization_status ?? null,
-      subscription: row.subscription ?? null,
-      features: row.features ?? null,
-      acceptedAt: row.acceptedAt ?? row.accepted_at ?? null,
-      lastSeenAt: row.lastSeenAt ?? row.last_seen_at ?? null,
-    });
-    return acc;
-  }, []);
-};
-
-
-const computeAuthState = (user: UserSession | null, surface?: SessionSurface): AuthState => {
-  if (!user) {
-    return { lms: false, admin: false };
-  }
-
-  const role = String(user.role || '').toLowerCase();
-  const isRoleAdmin = role === 'admin' || Boolean(user.isPlatformAdmin);
-
-  if (surface === 'admin') {
-    return { admin: isRoleAdmin, lms: false };
-  }
-  if (surface === 'lms') {
-    return { admin: false, lms: true };
-  }
-  return { admin: isRoleAdmin, lms: !isRoleAdmin };
-};
-
-const logAuthSessionState = (contextLabel: string, session: UserSession | null) => {
-  if (!(import.meta.env && import.meta.env.DEV)) {
-    return;
-  }
-
-  const summary = {
-    event: contextLabel,
-    timestamp: new Date().toISOString(),
-    sessionExists: Boolean(session),
-    accessTokenPresent: Boolean(getAccessToken()),
-    refreshTokenPresent: Boolean(getRefreshToken()),
-    userId: session?.id ?? null,
-    role: session?.role ?? null,
-    isPlatformAdmin: Boolean(session?.isPlatformAdmin || session?.role === 'admin'),
-    organizationId: session?.organizationId ?? null,
-    activeOrgId: session?.activeOrgId ?? null,
-  };
-
-  console.info('[SecureAuth][DEV:auth-session]', summary);
-};
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface AuthState {
-  lms: boolean;
-  admin: boolean;
-}
-
-interface LoginResult {
-  success: boolean;
-  error?: string;
-  errorType?: 'invalid_credentials' | 'network_error' | 'validation_error' | 'unknown_error' | 'supabase_auth_error';
-  mfaRequired?: boolean;
-  mfaEmail?: string;
-}
-
-type RegisterField = 'email' | 'password' | 'confirmPassword' | 'firstName' | 'lastName' | 'organizationId';
-
-interface RegisterInput {
-  email: string;
-  password: string;
-  confirmPassword: string;
-  firstName: string;
-  lastName: string;
-  organizationId?: string;
-}
-
-interface RegisterResult extends LoginResult {
-  fieldErrors?: Partial<Record<RegisterField, string>>;
-}
-
-interface AuthContextType {
-  isAuthenticated: AuthState;
-  authInitializing: boolean;
-  authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
-  sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
-  membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
-  hasActiveMembership: boolean;
-  surfaceAuthStatus: Record<SessionSurface, SurfaceAuthStatus>;
-  orgResolutionStatus: OrgResolutionStatus;
-  user: UserSession | null;
-  memberships: UserMembership[];
-  organizationIds: string[];
-  activeOrgId: string | null;
-  lastActiveOrgId: string | null;
-  requestedOrgId?: string | null;
-  login: (email: string, password: string, type: 'lms' | 'admin', mfaCode?: string) => Promise<LoginResult>;
-  register: (input: RegisterInput) => Promise<RegisterResult>;
-  sendMfaChallenge: (email: string) => Promise<boolean>;
-  verifyMfa: (email: string, code: string) => Promise<boolean>;
-  logout: (type?: 'lms' | 'admin') => Promise<void>;
-  refreshToken: (options?: RefreshOptions) => Promise<boolean>;
-  forgotPassword: (email: string) => Promise<boolean>;
-  setActiveOrganization: (orgId: string | null) => Promise<void>;
-  setRequestedOrgHint: (orgId: string | null) => void;
-  reloadSession: (options?: { surface?: SessionSurface; force?: boolean }) => Promise<boolean>;
-  loadSession: (options?: { surface?: SessionSurface }) => Promise<boolean>;
-  retryBootstrap: () => void;
-}
-
-// ============================================================================
-// Context
-// ============================================================================
-
-const defaultAuthContext: AuthContextType = {
-  isAuthenticated: { lms: false, admin: false },
-  authInitializing: true,
-  authStatus: 'booting',
-  sessionStatus: 'loading',
-  membershipStatus: 'idle',
-  hasActiveMembership: false,
-  surfaceAuthStatus: { admin: 'idle', lms: 'idle' },
-  orgResolutionStatus: 'idle',
-  user: null,
-  memberships: [],
-  organizationIds: [],
-  activeOrgId: null,
-  lastActiveOrgId: null,
-  requestedOrgId: null,
-  setRequestedOrgHint() {},
-  async login() {
-    return {
-      success: false,
-      error: 'Authentication provider not initialized. Please refresh the page.',
-      errorType: 'unknown_error',
-    };
-  },
-  async sendMfaChallenge() {
-    return false;
-  },
-  async register() {
-    return {
-      success: false,
-      error: 'Registration is unavailable. Please refresh and try again.',
-      errorType: 'unknown_error',
-    };
-  },
-  async verifyMfa() {
-    return false;
-  },
-  async logout() {
-    console.warn('[SecureAuth] logout called before provider mounted.');
-  },
-  async refreshToken() {
-    return false;
-  },
-  async forgotPassword() {
-    return false;
-  },
-  async setActiveOrganization() {
-    return;
-  },
-  async reloadSession() {
-    return false;
-  },
-  async loadSession() {
-    return false;
-  },
-  retryBootstrap() {},
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -536,6 +109,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<AuthState>({
     lms: false,
     admin: false,
+    client: false,
   });
   const [user, setUser] = useState<UserSession | null>(null);
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
@@ -635,6 +209,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [surfaceAuthStatus, setSurfaceAuthStatus] = useState<Record<SessionSurface, SurfaceAuthStatus>>({
     admin: 'idle',
     lms: 'idle',
+    client: 'idle',
   });
   const [orgResolutionStatus, setOrgResolutionStatus] = useState<OrgResolutionStatus>('idle');
   const [_sessionMetaVersion, setSessionMetaVersion] = useState(0);
@@ -804,7 +379,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         membershipCacheRef.current = [];
         organizationIdsSnapshotRef.current = [];
         clearMembershipRetryBackoff();
-        setIsAuthenticated({ lms: false, admin: false });
+        setIsAuthenticated({ lms: false, admin: false, client: false });
         if (persistTokens) {
           clearAuth(tokenReason);
           setSessionMetaVersion((value) => value + 1);
@@ -815,111 +390,32 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       hasAuthenticatedSessionRef.current = true;
       hadAuthenticatedSessionRef.current = true;
       lastSessionFetchResultRef.current = 'authenticated';
-      const membershipStateFromPayload = normalizeMembershipStatusFlag(
-        payload.membershipStatus,
-        payload.membershipDegraded
-      );
+      const resolvedState = resolveSessionStatePayload({
+        payload,
+        requestedOrgId: requestedOrgHint,
+        lastActiveOrgId,
+        activeOrgPreference: getActiveOrgPreference(),
+        membershipCache: membershipCacheRef.current,
+        membershipsSnapshot: membershipsSnapshotRef.current,
+        organizationIdsSnapshot: organizationIdsSnapshotRef.current,
+      });
+      const membershipStateFromPayload = resolvedState.membershipState;
+      const resolvedMemberships = resolvedState.resolvedMemberships;
       setMembershipStatus(membershipStateFromPayload);
-      const membershipsTrusted = membershipStateFromPayload === 'ready';
-      const normalizedMembershipsFromPayload = normalizeMemberships(payload.memberships);
-      let resolvedMemberships: UserMembership[] = [];
-      if (membershipsTrusted) {
-        resolvedMemberships = normalizedMembershipsFromPayload;
-      } else if (normalizedMembershipsFromPayload.length > 0) {
-        resolvedMemberships = normalizedMembershipsFromPayload;
-      } else if (membershipCacheRef.current.length > 0) {
-        resolvedMemberships = [...membershipCacheRef.current];
-      } else if (membershipsSnapshotRef.current.length > 0) {
-        resolvedMemberships = [...membershipsSnapshotRef.current];
-      }
       if (resolvedMemberships.length > 0) {
         membershipCacheRef.current = resolvedMemberships;
       }
-      const orgIdSources: string[] = [];
-      if (Array.isArray(payload.organizationIds) && payload.organizationIds.length > 0) {
-        orgIdSources.push(...payload.organizationIds);
-      }
-      if (resolvedMemberships.length > 0) {
-        orgIdSources.push(...resolvedMemberships.map((membership) => membership.orgId));
-      }
-      if (orgIdSources.length === 0 && organizationIdsSnapshotRef.current.length > 0) {
-        orgIdSources.push(...organizationIdsSnapshotRef.current);
-      }
-      const orgIds = dedupeStrings(orgIdSources);
+      const orgIds = resolvedState.organizationIds;
       organizationIdsSnapshotRef.current = orgIds;
-
-      const preferredOrg = resolvePreferredOrgId({
-        memberships: resolvedMemberships,
-        requestedOrgId: requestedOrgHint,
-        lastActiveOrgId: lastActiveOrgId ?? getActiveOrgPreference(),
-        fallbackOrgIds: orgIds,
-      });
-      setLastActiveOrgIdState(preferredOrg.activeOrgId ?? null);
-      setActiveOrgPreference(preferredOrg.activeOrgId ?? null);
-      let activeOrgSource: ActiveOrgSource = 'none';
-      if (preferredOrg.activeOrgId) {
-        if (preferredOrg.source === 'requested') {
-          activeOrgSource = 'requested_hint';
-        } else if (preferredOrg.source === 'lastActive') {
-          activeOrgSource = 'preference';
-        } else if (preferredOrg.source === 'membership') {
-          activeOrgSource = 'membership_default';
-        }
-      }
-
-      const session: UserSession = {
-        id: payload.user.id,
-        email: payload.user.email ?? payload.user.user_email ?? '',
-        role:
-          payload.user.role ||
-          payload.role ||
-          payload.user.platformRole ||
-          payload.platformRole ||
-          payload.user.platform_role ||
-          payload.user.userRole ||
-          (payload.isPlatformAdmin ? 'admin' : null) ||
-          'learner',
-        firstName: payload.user.firstName ?? payload.user.first_name ?? payload.user.user_metadata?.first_name,
-        lastName: payload.user.lastName ?? payload.user.last_name ?? payload.user.user_metadata?.last_name,
-        // Never implicitly fall back to the first organization id when multiple
-        // memberships exist. Force explicit selection (activeOrgId) instead.
-        organizationId: payload.user.organizationId ?? payload.user.organization_id ?? (orgIds.length === 1 ? orgIds[0] : null),
+      setLastActiveOrgIdState(resolvedState.activeOrgId);
+      setActiveOrgPreference(resolvedState.activeOrgId);
+      const session: UserSession = buildUserSessionFromPayload({
+        payload,
         organizationIds: orgIds,
         memberships: resolvedMemberships,
-        activeOrgId:
-          preferredOrg.activeOrgId ??
-          payload.activeOrgId ??
-          payload.user.activeOrgId ??
-          payload.user.organizationId ??
-          null,
-        platformRole:
-          payload.user.platformRole ??
-          payload.user.platform_role ??
-          payload.platformRole ??
-          null,
-        // Determine platform admin: prefer explicit booleans from payload, fall
-        // back to checking platformRole strings. Avoid using nullish coalescing
-        // on boolean expressions (they are never nullish) to satisfy TS checks.
-        isPlatformAdmin: (() => {
-          const explicitFlag =
-            payload.user.isPlatformAdmin ?? payload.isPlatformAdmin ?? null;
-          const roleFlag =
-            (payload.user.platformRole === 'platform_admin') || (payload.platformRole === 'platform_admin');
-          return Boolean(explicitFlag || roleFlag);
-        })(),
-        appMetadata: payload.user.appMetadata ?? payload.user.app_metadata ?? null,
-        userMetadata: payload.user.userMetadata ?? payload.user.user_metadata ?? null,
-      };
-
-      if (session.activeOrgId) {
-        session.organizationId = session.activeOrgId;
-      } else if (activeOrgSource === 'none') {
-        if (payload.activeOrgId) {
-          activeOrgSource = 'session_payload';
-        } else if (payload.user.activeOrgId || payload.user.organizationId) {
-          activeOrgSource = 'user_payload';
-        }
-      }
+        activeOrgId: resolvedState.activeOrgId,
+        activeOrgSource: resolvedState.activeOrgSource,
+      });
 
       setUser(session);
       setMemberships(resolvedMemberships);
@@ -928,7 +424,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setIsAuthenticated(computeAuthState(session, surface));
       setUserSession(session);
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
-      lastActiveOrgSourceRef.current = activeOrgSource;
+      lastActiveOrgSourceRef.current = resolvedState.activeOrgSource;
       clearMembershipRetryBackoff();
       if (import.meta.env?.DEV) {
         console.debug('[AUTH SESSION RESTORED]', {
@@ -961,18 +457,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       }
     },
-    [
-      clearMembershipRetryBackoff,
-      getSkewedNow,
-      lastActiveOrgId,
-      requestedOrgHint,
-      setUser,
-      setMemberships,
-      setMembershipStatus,
-      setOrganizationIds,
-      setActiveOrgIdState,
-      setIsAuthenticated,
-    ],
+    [clearMembershipRetryBackoff, getSkewedNow, lastActiveOrgId, requestedOrgHint, setUser, setMemberships, setMembershipStatus, setOrganizationIds, setActiveOrgIdState, setIsAuthenticated],
   );
 
   const handleSessionUnauthorized = useCallback(
@@ -1542,163 +1027,26 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // ============================================================================
 
   const refreshTokenCallback = useCallback(
-    async (options: RefreshOptions = {}): Promise<boolean> => {
-      const reason: RefreshReason = options.reason ?? 'protected_401';
-      console.debug('[SecureAuth] refreshTokenCallback start', { reason, isPlatformAdmin: hasAuthenticatedSessionRef.current });
-
-      const allowedByReason = reason === 'user_retry' || (reason === 'protected_401' && hasAuthenticatedSessionRef.current);
-      if (!allowedByReason) {
-        console.debug('[SecureAuth] refreshTokenCallback suppressed (not allowed yet)', { reason });
-        return false;
-      }
-
-      // For user-initiated retries (e.g., clicking "Retry" in the UI), clear the
-      // single-use lock so the refresh is allowed to run again.
-      if (reason === 'user_retry') {
-        hasAttemptedRefreshRef.current = false;
-        refreshAttemptedRef.current = false;
-      }
-
-      if (hasAttemptedRefreshRef.current || refreshAttemptedRef.current) {
-        return false;
-      }
-
-      return queueRefresh(async () => {
-        hasAttemptedRefreshRef.current = true;
-        refreshAttemptedRef.current = true;
-        const refreshRunCount = ++refreshRunCountRef.current;
-        logAuthDebug('[auth] refresh start', { count: refreshRunCount, reason });
-        let refreshStatus: 'success' | 'unauthenticated' | 'network_issue' | 'error' | 'skipped' = 'skipped';
-        const now = getSkewedNow();
-        if (lastRefreshAttemptRef.current && now - lastRefreshAttemptRef.current < MIN_REFRESH_INTERVAL_MS) {
-          refreshStatus = 'skipped';
-          logRefreshResult(refreshStatus);
-          return false;
-        }
-
-        if (isNavigatorOffline()) {
-          console.info('[SecureAuth] Skipping refresh while offline');
-          refreshStatus = 'network_issue';
-          logRefreshResult(refreshStatus);
-          return false;
-        }
-
-        lastRefreshAttemptRef.current = now;
-
-        try {
-          let sessionSnapshot: UserSession | null = null;
-          try {
-            sessionSnapshot = getUserSession();
-          } catch (sessionError) {
-            console.warn('[SecureAuth] Failed to read cached user session for refresh payload', sessionError);
-          }
-
-          let refreshToken: string | null =
-            (sessionSnapshot as any)?.session?.refresh_token ??
-            (sessionSnapshot as any)?.session?.refreshToken ??
-            (sessionSnapshot as any)?.refresh_token ??
-            (sessionSnapshot as any)?.refreshToken ??
-            null;
-
-          if (!refreshToken) {
-            try {
-              refreshToken = getRefreshToken();
-            } catch (storageError) {
-              console.warn('[SecureAuth] Failed to read stored refresh token', storageError);
-            }
-          }
-
-          // Prefer Supabase token over existing persistent token to avoid stale values.
-          try {
-            const supabaseClient = getSupabase();
-            if (supabaseClient) {
-              const { data } = await supabaseClient.auth.getSession();
-              const supabaseRefreshToken =
-                (data as any)?.session?.refresh_token ?? (data as any)?.session?.refreshToken ?? null;
-              if (supabaseRefreshToken) {
-                refreshToken = supabaseRefreshToken;
-              }
-            }
-          } catch (supabaseError) {
-            console.warn('[SecureAuth] Unable to read Supabase session for refresh token', supabaseError);
-          }
-
-          if (!refreshToken) {
-            console.warn('[SecureAuth] No refresh token available for /api/auth/refresh request');
-            refreshStatus = 'unauthenticated';
-            return false;
-          }
-
-          const refreshHeaders = {
-            ...buildSessionAuditHeaders(),
-            'Content-Type': 'application/json',
-          };
-          const refreshBody = JSON.stringify({ refreshToken });
-
-          const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
-            method: 'POST',
-            allowAnonymous: true,
-            headers: refreshHeaders,
-            body: refreshBody,
-          });
-
-          if (payload?.user) {
-            applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
-            setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
-            setSessionStatus('authenticated', 'refreshTokenCallback:refresh_success');
-            refreshStatus = 'success';
-            lastRefreshSuccessRef.current = getSkewedNow();
-            console.debug('[SecureAuth] refreshTokenCallback success', { reason, refreshStatus, refreshToken });
-            return true;
-          } else {
-            await fetchServerSession({ silent: true });
-            refreshStatus = 'success';
-          }
-
-          lastRefreshSuccessRef.current = getSkewedNow();
-          console.debug('[SecureAuth] refreshTokenCallback success', { reason, refreshStatus, refreshToken });
-          return true;
-        } catch (error) {
-          if (error instanceof ApiError) {
-            if (error.status === 401 || error.status === 403) {
-              console.warn('[SecureAuth] Refresh token rejected, clearing session');
-              if (import.meta.env?.DEV) {
-                console.warn('[AUTH_RESET]', {
-                  source: 'refreshTokenCallback:refresh_rejected',
-                  reason: 'refresh_rejected',
-                  pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-                  hadUser: hasAuthenticatedSessionRef.current,
-                  hadToken: Boolean(getAccessToken()),
-                });
-              }
-              hasAuthenticatedSessionRef.current = false;
-              applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
-              setAuthStatus('unauthenticated', 'refreshTokenCallback:refresh_rejected');
-              if (typeof window !== 'undefined') {
-                toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
-                const loginPath = resolveLoginPath();
-                logAuthRedirect('SecureAuthContext.refresh_rejected', { target: loginPath });
-                window.location.assign(loginPath);
-              }
-              refreshStatus = 'unauthenticated';
-              return false;
-            }
-
-            if ((error.body as any)?.code === 'timeout' || error.status === 0) {
-              console.warn('[SecureAuth] Refresh deferred due to network issue');
-              refreshStatus = 'network_issue';
-              return false;
-            }
-          }
-
-          console.error('Token refresh failed:', error);
-          refreshStatus = 'error';
-          return false;
-        } finally {
-          logRefreshResult(refreshStatus);
-        }
-      });
-    },
+    async (options: RefreshOptions = {}): Promise<boolean> =>
+      runRefreshTokenCallback(options, {
+        hasAuthenticatedSessionRef,
+        hasAttemptedRefreshRef,
+        refreshAttemptedRef,
+        refreshRunCountRef,
+        lastRefreshAttemptRef,
+        lastRefreshSuccessRef,
+        queueRefresh,
+        getSkewedNow,
+        buildSessionAuditHeaders,
+        applySessionPayload,
+        setAuthStatus,
+        setSessionStatus,
+        fetchServerSession,
+        logAuthDebug,
+        logRefreshResult,
+        MIN_REFRESH_INTERVAL_MS,
+        isNavigatorOffline,
+      }),
     [applySessionPayload, fetchServerSession, getSkewedNow],
   );
 
@@ -1725,64 +1073,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // stale key from a previous dev/test session would otherwise grant any
       // browser full admin access without a real credential exchange.
       try {
-        // Client-side E2E detection: prefer an explicit in-browser override
-        // (injected by Playwright) or Vite-provided env flags. Avoid using
-        // Node's process.env at runtime in the browser since it's not
-        // available in production bundles.
-        const isNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
-        const hasWindowOverride = typeof window !== 'undefined' && Boolean((window as any).__E2E_SUPABASE_CLIENT);
-        const hasE2EBypassFlag = typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS === true);
-        const clientE2EFlag = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.E2E_TEST_MODE === 'true' || (import.meta as any).env?.DEV_FALLBACK === 'true');
-        // Also check localStorage key set by Playwright addInitScript (works even if window flags race)
-        // Restricted to non-production AND requires an explicit window E2E flag to also be present,
-        // so a stale localStorage key left over from a prior test run cannot auto-authenticate a
-        // real browser session on its own.
-        const hasLocalStorageBypass = isNotProduction &&
-          typeof window !== 'undefined' &&
-          (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
-          (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })();
-        if (hasWindowOverride || clientE2EFlag || hasE2EBypassFlag || hasLocalStorageBypass) {
-          const e2eUserId =
-            typeof window !== 'undefined' && typeof (window as any).__E2E_USER_ID === 'string'
-              ? (window as any).__E2E_USER_ID
-              : '00000000-0000-0000-0000-000000000001';
-          const e2eEmail =
-            typeof window !== 'undefined' && typeof (window as any).__E2E_USER_EMAIL === 'string'
-              ? (window as any).__E2E_USER_EMAIL
-              : 'mya@the-huddle.co';
-          const e2eRoleRaw =
-            typeof window !== 'undefined' && typeof (window as any).__E2E_USER_ROLE === 'string'
-              ? String((window as any).__E2E_USER_ROLE)
-              : 'admin';
-          const e2eRole = e2eRoleRaw.trim().toLowerCase();
-          const isE2EAdmin = e2eRole === 'admin' || e2eRole === 'owner' || e2eRole === 'platform_admin';
-
-          const mockPayload: SessionResponsePayload = {
-            user: { id: e2eUserId, email: e2eEmail } as any,
-            memberships: [
-              {
-                orgId: 'demo-sandbox-org',
-                role: isE2EAdmin ? 'admin' : e2eRole || 'learner',
-                status: 'active',
-                organizationName: 'Demo Sandbox Org',
-              } as any,
-            ],
-            organizationIds: ['demo-sandbox-org'],
-            accessToken: 'e2e-access-token',
-            refreshToken: 'e2e-refresh-token',
-            expiresAt: Math.floor(Date.now() / 1000) + 3600,
-            isPlatformAdmin: isE2EAdmin,
-            platformRole: isE2EAdmin ? 'admin' : null,
-          };
+        if (isE2EBootstrapBypassEnabled()) {
+          const { payload: mockPayload, authState } = buildE2EBootstrapPayload();
           // Persist tokens during E2E so client-side authorizedFetch and
           // other synchronous token readers see the tokens immediately.
           // This is safe because it's gated behind E2E_TEST_MODE/DEV_FALLBACK
           // and will not run in production.
           applySessionPayload(mockPayload, { persistTokens: true, reason: 'e2e_bypass' });
-          // computeAuthState returns { admin: true, lms: false } for platform admins
+          // computeAuthState returns { admin: true, lms: false, client: false } for platform admins
           // when no surface is provided, which breaks the LMS/client portal check in
           // RequireAuth. Override explicitly so E2E works across all portals.
-          setIsAuthenticated({ admin: true, lms: true });
+          setIsAuthenticated(authState);
           setAuthStatus('authenticated');
           setSessionStatus('authenticated');
           setAuthInitializing(false);
@@ -1792,18 +1093,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         // if anything goes wrong in the bypass, try a minimal fallback before
         // falling back to normal bootstrap — this handles the case where
         // applySessionPayload throws (e.g., Supabase placeholder errors)
-        const _bypassIsNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
-        const _bypassRetry =
-          typeof window !== 'undefined' &&
-          (Boolean((window as any).__E2E_BYPASS) ||
-            Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-            (_bypassIsNotProduction &&
-              (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
-              (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
+        const _bypassRetry = isE2EBootstrapBypassEnabled();
         if (_bypassRetry) {
           console.warn('[SecureAuth] E2E bypass threw, retrying with minimal mock', e);
           try {
-            setIsAuthenticated({ admin: true, lms: true });
+            setIsAuthenticated({ admin: true, lms: true, client: true });
             setAuthStatus('authenticated');
             setSessionStatus('authenticated');
             setAuthInitializing(false);
@@ -1818,14 +1112,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       // Detect E2E bypass outside the try block too, so a throw can't override it
       // Restrict the localStorage key to non-production environments.
-      const _isNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
-      const _e2eFallbackBypass =
-        typeof window !== 'undefined' &&
-        (Boolean((window as any).__E2E_BYPASS) ||
-          Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-          (_isNotProduction &&
-            (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
-            (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
+      const _e2eFallbackBypass = isE2EBootstrapBypassEnabled();
 
       if (!_e2eFallbackBypass && isLoginPath()) {
         continueAsGuest('bootstrap_login_route');
@@ -1986,14 +1273,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // Skip the login-path short-circuit when running in E2E / dev-bypass mode
       // so runBootstrap can inject the mock session even when the URL is /login.
       // Restrict the localStorage key to non-production environments.
-      const _startIsNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
-      const _isE2EBypass =
-        typeof window !== 'undefined' &&
-        (Boolean((window as any).__E2E_BYPASS) ||
-          Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-          (_startIsNotProduction &&
-            (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
-            (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
+      const _isE2EBypass = isE2EBootstrapBypassEnabled();
       if (!_isE2EBypass && isLoginPath()) {
         bootstrappedRef.current = true;
         clearBootstrapFailOpenTimer();
@@ -2159,54 +1439,24 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Logout
   // ============================================================================
 
-  const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
-    try {
-      const refreshToken = getRefreshToken();
-      await apiRequest('/api/auth/logout', {
-        method: 'POST',
-        body: refreshToken ? { refreshToken } : {},
-        headers: buildSessionAuditHeaders(),
-      });
-    } catch (error) {
-      console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);
-    } finally {
-      // Ensure the Supabase client clears any persisted session in browser storage.
-      try {
-        const supabaseClient = getSupabase();
-  // signOut may fail in some E2E override scenarios; ignore errors.
-        supabaseClient?.auth.signOut();
-      } catch (signOutErr) {
-        console.warn('[SecureAuth] supabase.signOut() failed during logout cleanup', signOutErr);
-      }
-      if (user?.role === 'admin') {
-        enqueueAudit({ action: 'admin_logout', details: { email: user.email, id: user.id } });
-      }
-
-      clearAuth('manual_logout');
-      clearAdminAccessSnapshot();
-      setUser(null);
-      setMemberships([]);
-      setOrganizationIds([]);
-      setActiveOrgIdState(null);
-      setSessionMetaVersion((value) => value + 1);
-      clearActiveOrgPreference();
-      hasAuthenticatedSessionRef.current = false;
-      setAuthStatus('unauthenticated', 'logout:manual_logout');
-      setSessionStatus('unauthenticated', 'logout:manual_logout');
-
-      if (type) {
-        setIsAuthenticated((prev) => ({
-          ...prev,
-          [type]: false,
-        }));
-      } else {
-        setIsAuthenticated({
-          lms: false,
-          admin: false,
-        });
-      }
-    }
-  }, [buildSessionAuditHeaders, user]);
+  const logout = useCallback(
+    async (type?: 'lms' | 'admin'): Promise<void> =>
+      performLogout(type, {
+        buildSessionAuditHeaders,
+        enqueueAudit,
+        setUser,
+        setMemberships,
+        setOrganizationIds,
+        setActiveOrgIdState,
+        setSessionMetaVersion,
+        setAuthStatus,
+        setSessionStatus,
+        setIsAuthenticated,
+        hasAuthenticatedSessionRef,
+        user,
+      }),
+    [buildSessionAuditHeaders, user],
+  );
 
   useEffect(() => {
     // Fast paths — immediately resolve to 'ready' or 'resolving'.
@@ -2250,549 +1500,53 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     };
   }, [authInitializing, user, memberships, activeOrgId]);
 
-  useEffect(() => {
-    if (orgResolutionStatus !== 'ready') {
-      return;
-    }
-    const resolvedOrgId = activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null;
-    const key = `${user?.id ?? 'anon'}:${resolvedOrgId ?? 'none'}:${memberships.length}`;
-    if (orgContextLoggedRef.current === key) {
-      return;
-    }
-    orgContextLoggedRef.current = key;
-    console.info('[ORG CONTEXT READY]', {
-      userId: user?.id ?? null,
-      activeOrgId: resolvedOrgId,
-      membershipCount: memberships.length,
-    });
-  }, [orgResolutionStatus, activeOrgId, memberships.length, user?.id, user?.activeOrgId, user?.organizationId]);
-
-  useEffect(() => {
-    if (sessionStatus !== 'authenticated') {
-      return;
-    }
-    if (hasLoggedAppLoadRef.current) {
-      return;
-    }
-    logAuthSessionState('app_load', user);
-    hasLoggedAppLoadRef.current = true;
-  }, [sessionStatus, user]);
-
-  const publishAuthDebugSnapshot = useCallback(
-    (reason: string) => {
-      if (typeof window === 'undefined') {
-        return;
-      }
-      try {
-        const pathname = window.location?.pathname ?? '';
-        let surfaceStatus: 'admin' | 'client' = 'client';
-        try {
-          surfaceStatus = isAdminSurface(pathname) ? 'admin' : 'client';
-        } catch {
-          surfaceStatus = 'client';
-        }
-        const hasSession = Boolean(user);
-        const lastRedirect = window.__HUDDLE_LAST_AUTH_REDIRECT__ ?? null;
-        let secureSessionStored = false;
-        try {
-          secureSessionStored = Boolean(window.localStorage?.getItem('secure_user_session'));
-        } catch {
-          secureSessionStored = false;
-        }
-        const payload = {
-          pathname,
-          surfaceStatus,
-          authStatus,
-          sessionStatus,
-          surfaceAuthStatus,
-          orgResolutionStatus,
-          membershipStatus,
-          membershipCount: memberships.length,
-          hasActiveMembership,
-          hasSession,
-          activeOrgId,
-          requestedOrgId: requestedOrgHint,
-          lastActiveOrgId,
-          storageMode: AUTH_STORAGE_MODE,
-          lastRedirect,
-          lastMembershipFetch: lastMembershipFetchMeta,
-          secureUserSessionKeyPresent: secureSessionStored,
-          redirectReason: reason,
-          timestamp: new Date().toISOString(),
-        };
-        if (import.meta.env?.DEV) {
-          const debugSnapshot: typeof payload & { dump?: () => Record<string, unknown> } = { ...payload };
-          debugSnapshot.dump = () => {
-            const { dump, ...rest } = debugSnapshot;
-            console.info('[SecureAuth][debug] dump', rest);
-            return rest;
-          };
-          window.__HUDDLE_AUTH_DEBUG__ = debugSnapshot;
-          const signature = JSON.stringify({
-            pathname,
-            surfaceStatus,
-            authStatus,
-            sessionStatus,
-            hasSession,
-            orgResolutionStatus,
-            surfaceAuthStatus,
-          });
-          if (authDebugSignatureRef.current !== signature) {
-            authDebugSignatureRef.current = signature;
-            console.info('[SecureAuth][debug] auth_state_update', { reason, payload });
-          }
-        }
-      } catch (error) {
-        if (import.meta.env?.DEV) {
-          console.warn('[SecureAuth][debug] snapshot_failed', error);
-        }
-      }
-    },
-    [
-      authStatus,
-      orgResolutionStatus,
-      sessionStatus,
-      surfaceAuthStatus,
-      user,
+  const deriveOrgContextSnapshotCallback = useCallback((): OrgContextSnapshot => {
+    return deriveOrgContextSnapshot({
       membershipStatus,
-      memberships,
-      hasActiveMembership,
+      sessionStatus,
       activeOrgId,
-      requestedOrgHint,
       lastActiveOrgId,
-      lastMembershipFetchMeta,
-    ],
-  );
+      user,
+    });
+  }, [activeOrgId, lastActiveOrgId, membershipStatus, sessionStatus, user]);
 
-  useEffect(() => {
-    publishAuthDebugSnapshot('state_change');
-  }, [publishAuthDebugSnapshot]);
+  useAuthDiagnostics({
+    authInitializing,
+    authStatus,
+    sessionStatus,
+    membershipStatus,
+    orgResolutionStatus,
+    surfaceAuthStatus,
+    user,
+    memberships,
+    activeOrgId,
+    hasActiveMembership,
+    requestedOrgHint,
+    lastActiveOrgId,
+    lastMembershipFetchMeta,
+    authDebugSignatureRef,
+    hasLoggedAppLoadRef,
+    lastMembershipStatusRef,
+    orgContextLoggedRef,
+    deriveOrgContextSnapshotCallback,
+  });
 
-  // ── Global auth state machine trace ──────────────────────────────────────
-  // Fires on every transition of the canonical auth state.  This is the single
-  // source of truth log — every gate decision elsewhere references these values.
-  useEffect(() => {
-    if (import.meta.env?.DEV) {
-      console.debug('[AUTH_STATE_MACHINE]', {
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        authInitializing,
-        authStatus,
-        sessionStatus,
-        membershipStatus,
-        activeOrgId: activeOrgId ?? null,
-        ts: Date.now(),
-      });
-    }
-  }, [authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId]);
+  const authActions = createAuthActions({
+    buildSessionAuditHeaders,
+    requestJsonWithClock,
+    applySessionPayload,
+    setAuthStatus,
+    setSessionStatus,
+    logAuthSessionState,
+    enqueueAudit,
+    flushAuditQueue,
+  });
 
-  useEffect(() => {
-    if (membershipStatus === 'ready' && lastMembershipStatusRef.current !== 'ready') {
-      if (typeof window !== 'undefined') {
-        const detail = {
-          activeOrgId: activeOrgId ?? null,
-          membershipCount: memberships.length,
-          userId: user?.id ?? null,
-        };
-        if (import.meta.env?.DEV) {
-          console.debug('[AUTH READY]', {
-            sessionStatus,
-            membershipStatus,
-            activeOrgId: activeOrgId ?? null,
-            userId: user?.id ?? null,
-            membershipCount: memberships.length,
-            pathname: window.location?.pathname ?? 'ssr',
-            ts: Date.now(),
-          });
-        }
-        window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
-      }
-    }
-    lastMembershipStatusRef.current = membershipStatus;
-  }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
-
-  const deriveOrgContextSnapshot = useCallback((): OrgContextSnapshot => {
-    const normalizedMembership = membershipStatus ?? 'idle';
-    const sessionReady = sessionStatus === 'authenticated';
-    const membershipReady = normalizedMembership === 'ready' || normalizedMembership === 'degraded';
-
-    if (!sessionReady) {
-      return {
-        status: 'loading',
-        membershipStatus: normalizedMembership,
-        activeOrgId: null,
-        orgId: null,
-        role: null,
-        userId: null,
-      };
-    }
-
-    if (!membershipReady) {
-      return {
-        status: normalizedMembership === 'error' ? 'error' : 'loading',
-        membershipStatus: normalizedMembership,
-        activeOrgId: null,
-        orgId: null,
-        role: user?.role ?? null,
-        userId: user?.id ?? null,
-      };
-    }
-
-    const resolvedOrgId =
-      activeOrgId ??
-      user?.activeOrgId ??
-      user?.organizationId ??
-      lastActiveOrgId ??
-      null;
-
-    return {
-      status: 'ready',
-      membershipStatus: normalizedMembership,
-      activeOrgId: resolvedOrgId,
-      orgId: resolvedOrgId,
-      role: user?.role ?? null,
-      userId: user?.id ?? null,
-    };
-  }, [activeOrgId, lastActiveOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
-
-  useEffect(() => {
-    try {
-      writeBridgeSnapshot(deriveOrgContextSnapshot());
-    } catch (error) {
-      console.warn('[SecureAuthContext] Failed to write org snapshot bridge', error);
-    }
-  }, [deriveOrgContextSnapshot]);
-
-  useEffect(() => {
-    registerCourseStoreOrgResolver(() => deriveOrgContextSnapshot());
-    return () => {
-      registerCourseStoreOrgResolver(null);
-    };
-  }, [deriveOrgContextSnapshot]);
-
-// ============================================================================
-// Login
-// ============================================================================
-
-  const login = useCallback(async (
-    email: string,
-    password: string,
-    type: 'lms' | 'admin',
-    mfaCode?: string
-  ): Promise<LoginResult> => {
-    try {
-      // Validate input
-      const validation = loginSchema.safeParse({ email, password });
-      if (!validation.success) {
-        return {
-          success: false,
-          error: validation.error.errors[0].message,
-          errorType: 'validation_error',
-        };
-      }
-
-      const normalizedEmail = email.toLowerCase().trim();
-      const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: buildSessionAuditHeaders(),
-        body: {
-          email: normalizedEmail,
-          password,
-          mfaCode,
-        },
-      });
-      // If MFA required, backend should respond with mfaRequired
-      if ((rawPayload as { mfaRequired?: boolean } | null)?.mfaRequired) {
-        return {
-          success: false,
-          mfaRequired: true,
-          mfaEmail: email,
-          error: 'Multi-factor authentication required',
-        };
-      }
-
-      const normalizedPayload = normalizeSessionResponsePayload(rawPayload);
-
-      // Fallback path for environments where /api/auth/login is not available or
-      // returns empty results (e.g. integration test stubs). Try to recover from
-      // Supabase signInWithPassword if configured.
-      let payloadFromFallback: SessionResponsePayload | null = normalizedPayload;
-      if (!payloadFromFallback) {
-        const supabase = getSupabase();
-        if (supabase?.auth?.signInWithPassword) {
-          const signInResult = await supabase.auth.signInWithPassword({
-            email: normalizedEmail,
-            password,
-          } as any);
-
-          if (signInResult.error) {
-            if (signInResult.error.status === 400) {
-              return {
-                success: false,
-                error: 'Invalid email or password',
-                errorType: 'invalid_credentials',
-              };
-            }
-            return {
-              success: false,
-              error: signInResult.error.message || 'Login failed. Please try again.',
-              errorType: 'unknown_error',
-            };
-          }
-
-          try {
-            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
-              method: 'GET',
-              requireAuth: true,
-            });
-            payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
-          } catch (sessionError) {
-            console.warn('[SecureAuth] login fallback /auth/session failed', sessionError);
-            payloadFromFallback = null;
-          }
-        } else {
-          try {
-            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
-              method: 'GET',
-              requireAuth: true,
-            });
-            payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
-          } catch {
-            payloadFromFallback = null;
-          }
-        }
-      }
-
-      if (!payloadFromFallback) {
-        console.debug('[SecureAuth] login fallback failed', {
-          hasNormalizedPayload: Boolean(normalizedPayload),
-          supabaseSignInAvailable: Boolean(getSupabase()?.auth?.signInWithPassword),
-          signInResult: undefined,
-        });
-        return {
-          success: false,
-          error: 'Authentication failed. Please try again.',
-          errorType: 'unknown_error',
-        };
-      }
-
-      applySessionPayload(payloadFromFallback, {
-        surface: type,
-        persistTokens: true,
-        reason: `${type}_login_success`,
-      });
-      setAuthStatus('authenticated', `login:${type}_success`);
-      setSessionStatus('authenticated', `login:${type}_success`);
-
-      logAuthSessionState(`${type}-login_success`, getUserSession());
-      console.info('[LOGIN SUCCESS]', {
-        surface: type,
-        userId: payloadFromFallback.user?.id ?? null,
-        membershipCount: payloadFromFallback.memberships?.length ?? 0,
-      });
-
-      if (type === 'admin') {
-        enqueueAudit({
-          action: 'admin_login',
-          details: {
-            email: payloadFromFallback.user?.email ?? normalizedEmail,
-            id: payloadFromFallback.user?.id ?? null,
-          },
-        });
-        void flushAuditQueue();
-      }
-
-      return { success: true };
-    } catch (error: any) {
-      if (error instanceof ApiError) {
-        const body = (error.body as { message?: string; mfaRequired?: boolean } | undefined) ?? {};
-        if (body.mfaRequired) {
-          return {
-            success: false,
-            mfaRequired: true,
-            mfaEmail: email,
-            error: 'Multi-factor authentication required',
-          };
-        }
-        if (error.status === 503) {
-          return {
-            success: false,
-            error: 'Authentication service is not configured. Please try again later.',
-            errorType: 'network_error',
-          };
-        }
-        if (error.status === 401) {
-          return {
-            success: false,
-            error: 'Invalid email or password',
-            errorType: 'invalid_credentials',
-          };
-        }
-        if (error.status === 429) {
-          return {
-            success: false,
-            error: 'Too many login attempts. Please try again later.',
-            errorType: 'network_error',
-          };
-        }
-        if (error.status === 0) {
-          return {
-            success: false,
-            error: 'Network error. Please check your connection.',
-            errorType: 'network_error',
-          };
-        }
-      } else {
-        console.error('Login error (non-ApiError):', error);
-      }
-      return {
-        success: false,
-        error:
-          (error instanceof ApiError && (error.body as { message?: string } | undefined)?.message) ||
-          'Login failed. Please try again.',
-        errorType: 'unknown_error',
-      };
-    }
-  }, [applySessionPayload, fetchServerSession, requestJsonWithClock]);
-
-  const register = useCallback(async (input: RegisterInput): Promise<RegisterResult> => {
-    try {
-      const validation = registerSchema.safeParse(input);
-      if (!validation.success) {
-        const fieldErrors: RegisterResult['fieldErrors'] = {};
-        validation.error.errors.forEach((err) => {
-          const field = err.path[0] as RegisterField | undefined;
-          if (field) {
-            fieldErrors[field] = err.message;
-          }
-        });
-        return {
-          success: false,
-          error: 'Please fix the highlighted fields',
-          errorType: 'validation_error',
-          fieldErrors,
-        };
-      }
-
-      const payload = {
-        ...validation.data,
-        organizationId: validation.data.organizationId ?? undefined,
-      };
-
-      // DEV log registration payload (mask password)
-      if (import.meta.env && import.meta.env.DEV) {
-        console.log('REGISTER payload', { ...payload, password: payload?.password ? '***' : payload?.password });
-      }
-
-      const rawResponsePayload = await requestJsonWithClock<unknown>('/api/auth/register', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: buildSessionAuditHeaders(),
-        body: payload,
-      });
-      const normalizedResponse = normalizeSessionResponsePayload(rawResponsePayload);
-      applySessionPayload(normalizedResponse ?? null, {
-        surface: 'lms',
-        persistTokens: true,
-        reason: 'register_success',
-      });
-      setAuthStatus('authenticated');
-
-      return { success: true };
-    } catch (error) {
-      console.error('Registration error:', error);
-      if (error instanceof ApiError) {
-        const backendMsg = (error.body as { message?: string } | undefined)?.message;
-        if (error.status === 409) {
-          return {
-            success: false,
-            error: backendMsg || 'An account with this email already exists.',
-            errorType: 'invalid_credentials',
-          };
-        }
-        if (error.status === 503) {
-          return {
-            success: false,
-            error: backendMsg || 'Registration is unavailable in demo mode.',
-            errorType: 'network_error',
-          };
-        }
-        if (error.status === 400) {
-          const details = (error.body as { details?: Record<string, string> } | undefined)?.details;
-          return {
-            success: false,
-            error: backendMsg || 'Please review your information.',
-            errorType: 'validation_error',
-            fieldErrors: details ?? undefined,
-          };
-        }
-      }
-
-      return {
-        success: false,
-        error: 'Registration failed. Please try again later.',
-        errorType: 'unknown_error',
-      };
-    }
-  }, [applySessionPayload, requestJsonWithClock]);
-
-  // Send MFA challenge (email code)
-  const sendMfaChallenge = useCallback(async (email: string): Promise<boolean> => {
-    try {
-      await apiRequest('/api/mfa/challenge', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: buildSessionAuditHeaders(),
-        body: { email },
-      });
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }, []);
-
-  // Verify MFA code
-  const verifyMfa = useCallback(async (email: string, code: string): Promise<boolean> => {
-    try {
-      const res = await requestJsonWithClock<{ success?: boolean }>('/api/mfa/verify', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: buildSessionAuditHeaders(),
-        body: { email, code },
-      });
-      return !!res?.success;
-    } catch (e) {
-      return false;
-    }
-  }, [requestJsonWithClock]);
-
-  // ============================================================================
-  // Forgot Password
-  // ============================================================================
-
-  const forgotPassword = useCallback(async (email: string): Promise<boolean> => {
-    try {
-      // Validate email
-      const validation = emailSchema.safeParse(email);
-      if (!validation.success) {
-        return false;
-      }
-
-      await apiRequest('/api/auth/forgot-password', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: buildSessionAuditHeaders(),
-        body: {
-          email: email.toLowerCase().trim(),
-        },
-      });
-
-      return true;
-    } catch (error) {
-      console.error('Forgot password error:', error);
-      return false;
-    }
-  }, []);
+  const login = useCallback(authActions.login, [authActions]);
+  const register = useCallback(authActions.register, [authActions]);
+  const sendMfaChallenge = useCallback(authActions.sendMfaChallenge, [authActions]);
+  const verifyMfa = useCallback(authActions.verifyMfa, [authActions]);
+  const forgotPassword = useCallback(authActions.forgotPassword, [authActions]);
 
   // ============================================================================
   // Context Value
@@ -2841,190 +1595,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     </AuthContext.Provider>
   );
 }
-
-const renderAuthState = ({
-  authStatus,
-  authInitializing,
-  bootstrapError,
-  onRetry,
-  onGoToLogin,
-  children,
-  shouldRedirectToLogin,
-}: {
-  authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
-  authInitializing: boolean;
-  bootstrapError: string | null;
-  onRetry: () => void;
-  onGoToLogin: () => void;
-  children: ReactNode;
-  shouldRedirectToLogin: boolean;
-}) => {
-  const pathname =
-    typeof window !== 'undefined' && window.location ? window.location.pathname || '' : '';
-  const isAuthenticatedUser = authStatus === 'authenticated';
-  const isPublicAuthPath =
-    isLoginPath(pathname) ||
-    pathname.startsWith('/auth/callback') ||
-    pathname.startsWith('/invite/');
-  const isMarketingLanding = pathname === '/';
-  const isProtectedAppRoute = /^\/(admin|lms|client)(?:\/|$)/i.test(pathname);
-
-  if (authStatus === 'booting') {
-    // On a protected app route (admin/lms/client), render children optimistically
-    // while the session is being re-verified. This prevents a full-screen
-    // "INITIALIZING SESSION" overlay from appearing during normal navigation or
-    // after a recoverable auth hiccup. The child routes themselves will guard
-    // via RequireAuth/AdminLayout once the real auth state arrives.
-    if (isProtectedAppRoute && !isPublicAuthPath) {
-      return <>{children}</>;
-    }
-    return <BootstrapLoading />;
-  }
-
-  const shouldBypassErrorOverlay = authStatus === 'error' && isPublicAuthPath;
-
-  if (bootstrapError && authStatus !== 'authenticated') {
-    return (
-      <BootstrapErrorOverlay
-        message={bootstrapError}
-        onRetry={onRetry}
-        onGoToLogin={onGoToLogin}
-      />
-    );
-  }
-
-  if (authStatus === 'error' && !shouldBypassErrorOverlay) {
-    return (
-      <BootstrapErrorOverlay
-        message={bootstrapError || 'We could not restore your session. Please try again.'}
-        onRetry={onRetry}
-        onGoToLogin={onGoToLogin}
-      />
-    );
-  }
-
-  if (authStatus === 'error' && shouldBypassErrorOverlay) {
-    return <>{children}</>;
-  }
-
-  if (authStatus === 'unauthenticated') {
-    if (!isAuthenticatedUser && (isPublicAuthPath || isMarketingLanding)) {
-      return <>{children}</>;
-    }
-    // Bootstrap is still in progress — the server session call hasn't completed
-    // yet (e.g. Supabase token read returned empty before /auth/session resolved).
-    // Suppress the redirect and render optimistically so we don't bounce the user
-    // to /login and then immediately restore their authenticated session.
-    if (authInitializing) {
-      console.debug('[AUTH REDIRECT DECISION]', {
-        decision: 'suppressed_bootstrap_in_progress',
-        authStatus,
-        authInitializing,
-        shouldRedirectToLogin,
-        pathname,
-        ts: Date.now(),
-      });
-      if (isProtectedAppRoute && !isPublicAuthPath) return <>{children}</>;
-      return <BootstrapLoading />;
-    }
-    const onLoginRoute = isLoginPath();
-    if (!onLoginRoute && shouldRedirectToLogin) {
-      if (typeof window !== 'undefined') {
-        const target = resolveLoginPath();
-        console.debug('[AUTH REDIRECT DECISION]', {
-          decision: 'redirecting',
-          authStatus,
-          authInitializing,
-          shouldRedirectToLogin,
-          pathname,
-          target,
-          ts: Date.now(),
-        });
-        logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
-          target,
-          pathname,
-        });
-        window.location.assign(target);
-      }
-      return <BootstrapRedirecting message="Redirecting to login…" />;
-    }
-    return <BootstrapUnauthenticated onGoToLogin={onGoToLogin} />;
-  }
-
-  return children;
-};
-
-const BootstrapErrorOverlay = ({
-  message,
-  onRetry,
-  onGoToLogin,
-}: {
-  message: string;
-  onRetry: () => void;
-  onGoToLogin: () => void;
-}) => (
-  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
-    <div className="w-full max-w-lg rounded-2xl border border-red-100 bg-white p-6 shadow-lg">
-      <div className="flex items-center gap-2 text-red-600">
-        <span className="text-base font-semibold uppercase tracking-wide">Session Error</span>
-      </div>
-      <p className="mt-4 text-sm text-gray-700" role="alert">
-        {message}
-      </p>
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <button
-          type="button"
-          className="inline-flex flex-1 items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
-          onClick={onRetry}
-        >
-          Retry
-        </button>
-        <button
-          type="button"
-          className="inline-flex flex-1 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
-          onClick={onGoToLogin}
-        >
-          Go to login
-        </button>
-      </div>
-    </div>
-  </div>
-);
-
-const BootstrapLoading = () => (
-  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
-    <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
-      <span className="text-sm font-semibold uppercase tracking-wide text-slate">Initializing session</span>
-      <div className="h-10 w-10 animate-spin rounded-full border-4 border-cloud border-t-sunrise" aria-label="Loading" />
-      <p className="text-center text-sm text-slate/70">Please hold while we verify your access…</p>
-    </div>
-  </div>
-);
-
-const BootstrapRedirecting = ({ message }: { message: string }) => (
-  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
-    <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
-      <span className="text-sm font-semibold uppercase tracking-wide text-slate">Redirecting</span>
-      <p className="text-center text-sm text-slate/70">{message}</p>
-    </div>
-  </div>
-);
-
-const BootstrapUnauthenticated = ({ onGoToLogin }: { onGoToLogin: () => void }) => (
-  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
-    <div className="w-full max-w-lg rounded-2xl border border-mist bg-white p-6 shadow-lg text-center">
-      <p className="text-base font-semibold text-charcoal">Please log in</p>
-      <p className="mt-2 text-sm text-slate/70">To continue, sign in again.</p>
-      <button
-        type="button"
-        className="mt-5 inline-flex items-center justify-center rounded-xl bg-charcoal px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-charcoal/90"
-        onClick={onGoToLogin}
-      >
-        Go to login
-      </button>
-    </div>
-  </div>
-);
 
 // ============================================================================
 // Hook

@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { SecureAuthProvider, useSecureAuth } from '../SecureAuthContext';
-import { ApiError as MockApiError } from '../../utils/apiClient';
 import * as secureStorage from '../../lib/secureStorage';
 import type { SessionMetadata, UserSession } from '../../lib/secureStorage';
 
@@ -64,22 +63,11 @@ vi.mock('axios', () => {
 });
 
 vi.mock('../../utils/apiClient', () => {
-  class MockApiError extends Error {
-    status?: number;
-    url?: string;
-    body?: unknown;
-    constructor(message: string, status = 500, url = '', body: unknown = null) {
-      super(message);
-      this.status = status;
-      this.url = url;
-      this.body = body;
-    }
-  }
-  return {
-    __esModule: true,
-    default: (...args: unknown[]) => mockApiRequest(...args),
-    apiRequestRaw: (...args: unknown[]) => mockApiRequestRaw(...args),
-    ApiError: MockApiError,
+    return {
+      __esModule: true,
+      default: (...args: unknown[]) => mockApiRequest(...args),
+      apiRequestRaw: (...args: unknown[]) => mockApiRequestRaw(...args),
+      // ApiError: MockApiError, // Removed unused declaration
   };
 });
 
@@ -288,9 +276,9 @@ describe('SecureAuthContext', () => {
       await result.current.logout();
     });
 
-    expect(spies.clearAuth).toHaveBeenCalled();
-    expect(result.current.user).toBeNull();
-    expect(result.current.isAuthenticated).toEqual({ lms: false, admin: false });
+  expect(spies.clearAuth).toHaveBeenCalled();
+  expect(result.current.user).toBeNull();
+  expect(result.current.isAuthenticated).toEqual({ lms: false, admin: false, client: false });
   });
 
   it('returns friendly errors on invalid credentials', async () => {
@@ -309,5 +297,56 @@ describe('SecureAuthContext', () => {
 
     expect(loginResult).toMatchObject({ success: false, errorType: 'invalid_credentials' });
     expect(storedState.user).toBeNull();
+  });
+
+  it('updates active organization locally and persists it to the server', async () => {
+    storedState.user = {
+      id: 'user-1',
+      email: 'multi@thehuddle.co',
+      role: 'learner',
+      organizationId: 'org-1',
+      activeOrgId: 'org-1',
+    } as UserSession;
+    mockApiRequestRaw.mockImplementation((path: string) => {
+      if (path === '/auth/session') {
+        return jsonResponse({
+          user: storedState.user,
+          memberships: [
+            { organization_id: 'org-1', role: 'learner', status: 'active' },
+            { organization_id: 'org-2', role: 'admin', status: 'active' },
+          ],
+          organizationIds: ['org-1', 'org-2'],
+          membershipStatus: 'ready',
+          accessToken: 'api-access',
+          refreshToken: 'api-refresh',
+          expiresAt: Date.now() + 60_000,
+          refreshExpiresAt: Date.now() + 120_000,
+        });
+      }
+      return defaultRawHandler(path);
+    });
+    mockApiRequest.mockImplementation((path: string) => {
+      if (path === '/api/auth/active-org') {
+        return Promise.resolve({ ok: true, data: { orgId: 'org-2' } });
+      }
+      return Promise.resolve({ ok: true, data: null });
+    });
+
+    const { result } = renderAuth();
+    await waitFor(() => expect(result.current.user?.email).toBe('multi@thehuddle.co'));
+
+    await act(async () => {
+      await result.current.setActiveOrganization('org-2');
+    });
+
+    expect(result.current.activeOrgId).toBe('org-2');
+    expect(result.current.user?.activeOrgId).toBe('org-2');
+    expect(mockApiRequest).toHaveBeenCalledWith(
+      '/api/auth/active-org',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: { orgId: 'org-2' },
+      }),
+    );
   });
 });

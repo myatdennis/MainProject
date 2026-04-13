@@ -399,7 +399,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
           return `${node.tagName}${id}${classes}`;
         })
         .filter(Boolean);
-      console.log('[AdminMenu] document click', {
+      console.debug('[AdminMenu] document click', {
         pointerType,
         target,
         onButton,

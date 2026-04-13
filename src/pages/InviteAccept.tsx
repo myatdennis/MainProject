@@ -107,8 +107,8 @@ const InviteAccept = () => {
     setLoading(true);
     setError(null);
     try {
-  const response = await getInvite(token);
-      setInvite(response.data);
+      const response = await getInvite(token);
+      setInvite(response);
     } catch (err: any) {
       const message = err?.message || 'Unable to load invite';
       setError(message);
@@ -157,22 +157,25 @@ const InviteAccept = () => {
         fullName,
         password,
       });
+      if (!response) {
+        throw new Error('Invite acceptance returned no payload');
+      }
       setAcceptedPayload({
-        orgName: response.data.orgName,
-        loginUrl: response.data.loginUrl,
-        email: response.data.email,
+        orgName: response.orgName,
+        loginUrl: response.loginUrl,
+        email: response.email,
       });
-      if (response.data.orgId) {
+      if (response.orgId) {
         try {
-          setActiveOrgPreference(response.data.orgId);
+          setActiveOrgPreference(response.orgId);
         } catch {
           // ignore storage issues
         }
       }
       storeOnboardingSuccess({
-        orgId: response.data.orgId ?? null,
-        orgName: response.data.orgName ?? null,
-        email: response.data.email,
+        orgId: response.orgId ?? null,
+        orgName: response.orgName ?? null,
+        email: response.email,
         assignments: {
           courses: coursePreview.length,
           surveys: surveyPreview.length,

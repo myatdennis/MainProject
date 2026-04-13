@@ -96,7 +96,7 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
   // Admin Course Management
   { id: 'admin-courses-create', label: 'Create Course', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/course-builder/new', created: true, status: 'working' },
   { id: 'admin-courses-import', label: 'Import Courses', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/import', created: true, status: 'working' },
-  { id: 'admin-courses-bulk-assign', label: 'Bulk Assign', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/bulk', params: { ids: 'selected' }, created: true, status: 'working' },
+  { id: 'admin-courses-bulk-assign', label: 'Bulk Assign', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/bulk', params: { ids: 'selected' }, created: false, status: 'stub', description: 'Hidden from production until the bulk assignment workflow is fully implemented.' },
   { id: 'admin-courses-bulk-publish', label: 'Bulk Publish', roles: ['admin'], location: 'Admin Courses', action: 'bulk-publish', created: true, status: 'working' },
   { id: 'admin-courses-select-all', label: 'Select All', roles: ['admin'], location: 'Admin Courses', action: 'select-all', created: true, status: 'working' },
   { id: 'admin-courses-export', label: 'Export Selected', roles: ['admin'], location: 'Admin Courses', action: 'export-courses', created: false, status: 'stub' },
@@ -177,7 +177,7 @@ export const MISSING_PAGES: RouteStatus[] = [
   { route: '/admin/course-builder/:courseId', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBuilder' },
   { route: '/admin/organizations/new', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminOrganizationCreate' },
   { route: '/admin/org-profiles/:orgProfileId', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminOrgProfile' },
-  { route: '/admin/courses/bulk', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBulkPlaceholder' },
+  { route: '/admin/courses/bulk', exists: true, requiredRoles: ['admin'], status: 'stub', component: 'AdminCourseBulkPlaceholder' },
   { route: '/admin/courses/import', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCoursesImport' },
   { route: '/admin/surveys/import', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminSurveysImport' },
   { route: '/admin/reports', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminReports' },

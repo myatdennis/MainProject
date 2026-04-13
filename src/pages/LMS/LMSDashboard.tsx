@@ -62,9 +62,9 @@ const LMSDashboard = () => {
     let active = true;
     (async () => {
       try {
-        const response = await apiRequest<{ data: ProgressSummary }>('/api/client/progress/summary');
-        if (active && response?.data) {
-          setProgressSummary(response.data);
+        const response = await apiRequest<ProgressSummary>('/api/client/progress/summary');
+        if (active && response) {
+          setProgressSummary(response);
         }
       } catch (err) {
         // Non-fatal: stats will show defaults
@@ -81,11 +81,11 @@ const LMSDashboard = () => {
     let active = true;
     (async () => {
       try {
-        const response = await apiRequest<{ data: Array<{ id: string; action: string; details: Record<string, unknown>; createdAt: string }> }>(
+        const response = await apiRequest<Array<{ id: string; action: string; details: Record<string, unknown>; createdAt: string }>>(
           '/api/client/activity?limit=5'
         );
-        if (active && Array.isArray(response?.data) && response.data.length > 0) {
-          const mapped: ActivityItem[] = response.data.map((item) => {
+        if (active && Array.isArray(response) && response.length > 0) {
+          const mapped: ActivityItem[] = response.map((item) => {
             const isComplete = item.action?.includes('complet') || item.action?.includes('finish');
             return {
               action: item.action ?? 'Activity',

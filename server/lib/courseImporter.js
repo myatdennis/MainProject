@@ -487,17 +487,24 @@ export const normalizeImportEntries = (body) => {
     if (!entry || typeof entry !== 'object') {
       return { course: {}, modules: [], index };
     }
-    if (entry.course || entry.modules) {
-      return {
-        course: entry.course ?? entry,
-        modules: Array.isArray(entry.modules) ? entry.modules : [],
-        index,
-      };
-    }
-    const { modules, ...courseFields } = entry;
+    const modules = Array.isArray(entry.modules) ? entry.modules : [];
+    const courseSource = entry.course && typeof entry.course === 'object' ? { ...entry.course } : { ...entry };
+    const normalizedCourse = {
+      ...courseSource,
+      slug:
+        (typeof courseSource.slug === 'string' && courseSource.slug.trim()) ||
+        (typeof entry.slug === 'string' && entry.slug.trim()) ||
+        undefined,
+      title:
+        (typeof courseSource.title === 'string' && courseSource.title.trim()) ||
+        (typeof entry.title === 'string' && entry.title.trim()) ||
+        undefined,
+    };
     return {
-      course: courseFields,
-      modules: Array.isArray(modules) ? modules : [],
+      course: normalizedCourse,
+      modules,
+      slug: normalizedCourse.slug,
+      title: normalizedCourse.title,
       index,
     };
   };

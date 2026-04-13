@@ -4,9 +4,9 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 
 const DIST = path.resolve(process.cwd(), 'dist', 'assets');
-const WARN_JS_GZIP_KB = 300; // vendor max gz
-const WARN_NON_VENDOR_JS_GZIP_KB = 150; // feature chunk max gz
-const WARN_CSS_GZIP_KB = 120;
+const WARN_JS_GZIP_KB = 240; // vendor max gz
+const WARN_NON_VENDOR_JS_GZIP_KB = 100; // feature chunk max gz
+const WARN_CSS_GZIP_KB = 40;
 
 const isVendor = (name) => /vendor|node\-modules|vendor\-/.test(name);
 

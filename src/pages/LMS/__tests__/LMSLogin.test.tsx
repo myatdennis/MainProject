@@ -42,7 +42,7 @@ const mockAuth = {
   login: vi.fn().mockResolvedValue({ success: true }),
   register: vi.fn().mockResolvedValue({ success: true }),
   forgotPassword: vi.fn().mockResolvedValue(true),
-  isAuthenticated: { lms: false, admin: false },
+  isAuthenticated: { lms: false, admin: false, client: false },
 };
 
 vi.mock('../../../context/SecureAuthContext', () => ({
@@ -66,7 +66,7 @@ describe('LMSLogin runtime awareness', () => {
     renderScreen();
 
     expect(screen.getByText(/Demo mode active/i)).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /Create Account tab/i })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: /Create account/i })).toBeDisabled();
   });
 
   it('enables registration when Supabase is healthy', () => {
@@ -82,7 +82,7 @@ describe('LMSLogin runtime awareness', () => {
     renderScreen();
 
     expect(screen.getByText(/Secure mode connected/i)).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /Create Account tab/i })).not.toBeDisabled();
+    expect(screen.getByRole('tab', { name: /Create account/i })).not.toBeDisabled();
   });
 
   it('shows a helpful message when forgot password is clicked offline', async () => {
@@ -98,15 +98,15 @@ describe('LMSLogin runtime awareness', () => {
   it('defaults to client login mode', () => {
     renderScreen();
 
-    expect(screen.getByRole('tab', { name: /Client Login/i })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: /Admin Login/i })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('button', { name: /Learner login/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Admin login/i })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('switches to admin mode and signs in through admin auth path', async () => {
     renderScreen();
 
-    fireEvent.click(screen.getByRole('tab', { name: /Admin Login/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Sign In to Admin Portal/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Admin login/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Sign in to admin portal/i }));
 
     await waitFor(() => {
       expect(mockAuth.login).toHaveBeenCalledWith('user@pacificcoast.edu', 'user123', 'admin');
@@ -114,14 +114,14 @@ describe('LMSLogin runtime awareness', () => {
     });
   });
 
-  it('keeps client login redirect pointed to learner dashboard', async () => {
+  it('keeps client login redirect pointed to client dashboard', async () => {
     renderScreen();
 
     fireEvent.click(screen.getByRole('button', { name: /^Sign In$/i }));
 
     await waitFor(() => {
       expect(mockAuth.login).toHaveBeenCalledWith('user@pacificcoast.edu', 'user123', 'lms');
-      expect(mockNavigate).toHaveBeenCalledWith('/lms/dashboard', { replace: true });
+      expect(mockNavigate).toHaveBeenCalledWith('/client/dashboard', { replace: true });
     });
   });
 });

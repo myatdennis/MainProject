@@ -326,7 +326,7 @@ export const progressService = {
     try {
       const response = await NetworkErrorHandler.handleApiCall(
         () =>
-          apiRequest<{ data: { lessons: LessonProgressRow[] } }>(
+          apiRequest<{ lessons?: LessonProgressRow[] }>(
             `/api/learner/progress?${params.toString()}`,
             {
               headers: buildSessionAuditHeaders(),
@@ -339,7 +339,8 @@ export const progressService = {
         }
       );
 
-      return response?.data?.lessons ?? [];
+      const payload = (response as any)?.data ?? response;
+      return payload?.lessons ?? [];
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 401 || error.status === 403) {

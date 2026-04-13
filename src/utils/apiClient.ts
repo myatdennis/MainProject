@@ -782,8 +782,19 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
 
   // Parse JSON if possible, otherwise return text
   if (isJsonResponse(contentType)) {
-    const data = await safeParseJson(res);
-    const transformed = options.noTransform ? data : transformKeysDeep(data, 'camel');
+    const envelope = await safeParseJson(res);
+    const transformed = options.noTransform ? envelope : transformKeysDeep(envelope, 'camel');
+    // Enforce envelope contract
+    if (typeof transformed === 'object' && transformed !== null) {
+      if ('ok' in transformed) {
+        if (transformed.ok) {
+          return transformed.data as T;
+        } else {
+          throw new ApiError(transformed.message || 'API error', res.status, path, transformed);
+        }
+      }
+    }
+    // Fallback for legacy responses
     return transformed as T;
   }
 

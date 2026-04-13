@@ -6,6 +6,11 @@ import { useOfflineProgressQueue } from './useOfflineProgressQueue';
 import toast from 'react-hot-toast';
 import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabase';
 
+const logCourseProgressDebug = (message: string, payload?: unknown) => {
+  if (!import.meta.env.DEV) return;
+  console.debug(message, payload);
+};
+
 interface UseCourseProgressOptions {
   userId?: string;
   enableAutoSave?: boolean;
@@ -40,7 +45,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
     enabled: enableAutoSave,
     saveInterval: autoSaveInterval,
     onSaveSuccess: (data) => {
-      console.log('[CourseProgress] Auto-save successful:', data);
+      logCourseProgressDebug('[CourseProgress] Auto-save successful:', data);
       setSyncStatus('synced');
       pendingUpdatesRef.current.delete(`${data.courseId}_${data.lessonId}`);
     },
@@ -53,7 +58,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
   // Initialize offline queue
   const offlineQueue = useOfflineProgressQueue({
     onSync: (item) => {
-      console.log('[CourseProgress] Offline item synced:', item);
+      logCourseProgressDebug('[CourseProgress] Offline item synced:', item);
       toast.success(`Progress synced: ${item.action}`);
       // indicate that processing succeeded
       return true;
@@ -67,11 +72,11 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
   // Handle real-time events
   const handleRealtimeEvent = useCallback((event: RealtimeEvent) => {
     if (event.type === 'course_updated' && event.payload.course_id === courseId) {
-      console.log('[CourseProgress] Course updated via realtime:', event.payload);
+      logCourseProgressDebug('[CourseProgress] Course updated via realtime:', event.payload);
       // Reload course data
       loadProgressData();
     } else if (event.type === 'progress_sync' && event.payload.course_id === courseId) {
-      console.log('[CourseProgress] Progress sync event:', event.payload);
+      logCourseProgressDebug('[CourseProgress] Progress sync event:', event.payload);
       // Update local progress if from another device
       if (event.userId !== userId) {
         updateLessonProgressFromSync(event.payload);
@@ -101,7 +106,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
       
       if (!supabaseUrl || !supabaseAnonKey) {
         // Demo mode - create mock data and return immediately
-        console.log('[CourseProgress] Running in demo mode');
+        logCourseProgressDebug('[CourseProgress] Running in demo mode');
         const demoEnrollment: UserCourseEnrollment = {
           id: `enrollment_demo_${Date.now()}`,
           user_id: userId,
@@ -122,7 +127,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
       // Try to get current user lazily
       const supabase = await getSupabase();
       if (!supabase) {
-        console.log('[CourseProgress] Supabase client unavailable despite env vars');
+        logCourseProgressDebug('[CourseProgress] Supabase client unavailable despite env vars');
         setLoading(false);
         return;
       }
@@ -254,7 +259,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
 
       // If in demo mode, skip database operations
       if (!supabaseUrl || !supabaseAnonKey) {
-        console.log('[CourseProgress] Demo mode - progress updated locally only');
+        logCourseProgressDebug('[CourseProgress] Demo mode - progress updated locally only');
         setSyncStatus('synced');
         return;
       }
@@ -372,7 +377,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
 
       // If in demo mode, skip database operations
       if (!supabaseUrl || !supabaseAnonKey) {
-        console.log('[CourseProgress] Demo mode - reflection saved locally only');
+        logCourseProgressDebug('[CourseProgress] Demo mode - reflection saved locally only');
         return;
       }
 

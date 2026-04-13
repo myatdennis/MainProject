@@ -579,7 +579,7 @@ const AdminCourses = () => {
 
   return (
     <>
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+      <div className="container-page py-8">
         <div className="mb-6">
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
         </div>
@@ -613,8 +613,8 @@ const AdminCourses = () => {
               </div>
             </div>
 
-            <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm mb-8">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm mb-8">
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-4 flex-1">
                   <div className="relative flex-1 min-w-0">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -653,12 +653,7 @@ const AdminCourses = () => {
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 justify-end">
-                  {selectedCourses.length > 0 && (
-                    <Button variant="outline" size="sm" onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)}>
-                      Bulk assign ({selectedCourses.length})
-                    </Button>
-                  )}
+                <div className="flex flex-wrap items-center gap-3 justify-end">
                   {selectedCourses.length > 0 && (
                     <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
                       Publish selected
@@ -722,12 +717,12 @@ const AdminCourses = () => {
 
             {/* Course Table */}
             <div className="rounded-[32px] border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-5 border-b border-slate-200 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="px-6 py-6 border-b border-slate-200 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Courses</h2>
                   <p className="text-sm text-slate-500 max-w-xl">A calm overview of active learning experiences and the next actions you can take.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <button
                     onClick={handleSelectAll}
                     type="button"

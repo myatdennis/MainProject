@@ -18,6 +18,13 @@ export interface AdminUserRecord {
   org?: any;
 }
 
+const unwrapApiData = <T,>(payload: T | { data?: T } | null | undefined): T | null => {
+  if (payload && typeof payload === 'object' && 'data' in (payload as Record<string, unknown>)) {
+    return ((payload as { data?: T }).data ?? null) as T | null;
+  }
+  return (payload ?? null) as T | null;
+};
+
 const normalizeUserId = (row: any) =>
   String(
     row?.user_id ??
@@ -97,8 +104,8 @@ export const listUsersByOrg = async (orgId: string): Promise<AdminUserRecord[]> 
     throw new Error('orgId is required to load users');
   }
   const params = new URLSearchParams({ orgId });
-  const json = await apiRequest<{ data: any[] }>(`/api/admin/users?${params.toString()}`);
-  return (json.data ?? [])
+  const payload = await apiRequest<any[] | { data?: any[] }>(`/api/admin/users?${params.toString()}`);
+  return (unwrapApiData(payload) ?? [])
     .filter((row) =>
       Boolean(
         row?.user_id ||

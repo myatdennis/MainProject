@@ -110,8 +110,6 @@ class ClientErrorBoundary extends Component<Props, State> {
       }
       
       localStorage.setItem('client_errors', JSON.stringify(existingErrors));
-
-      console.log('[ClientErrorBoundary] Error logged:', errorReport);
     } catch (loggingError) {
       console.error('[ClientErrorBoundary] Failed to log error:', loggingError);
     }

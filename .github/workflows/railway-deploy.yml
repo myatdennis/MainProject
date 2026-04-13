@@ -1,6 +1,4 @@
-# Updated Railway Deployment Workflow
-
-name: Railway Deploy
+name: Backend Deploy (Canonical Railway)
 
 on:
   push:
@@ -10,9 +8,40 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      CI: 'true'
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
+      RAILWAY_SERVICE_NAME: api
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET }}
+      JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+      SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_POOLER_URL: ${{ secrets.DATABASE_POOLER_URL }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Assert Railway secrets are configured
+        run: |
+          if [ -z "${RAILWAY_TOKEN}" ] || [ -z "${RAILWAY_PROJECT_ID}" ]; then
+            echo "Railway deployment secrets are missing."
+            exit 1
+          fi
+
+      - name: Verify server environment
+        run: node scripts/check_deploy_env.cjs
 
       - name: Set up variables
         run: |

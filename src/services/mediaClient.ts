@@ -40,14 +40,14 @@ export const signMediaAsset = async (assetId: string): Promise<SignedMediaRespon
     throw new Error('Media source is external and does not require signing.');
   }
 
-  const payload = await apiRequest<{ data: SignedMediaResponse }>(`/api/media/assets/${encodeURIComponent(assetId)}/sign`, {
+  const payload = await apiRequest<SignedMediaResponse>(`/api/media/assets/${encodeURIComponent(assetId)}/sign`, {
     method: 'POST',
     timeoutMs: MEDIA_SIGN_TIMEOUT_MS,
   });
-  if (!payload?.data?.signedUrl) {
+  if (!payload?.signedUrl) {
     throw new Error('Signed URL not returned by media service');
   }
-  return payload.data;
+  return payload;
 };
 
 export const shouldRefreshSignedUrl = (expiresAt?: string | null, bufferMs = 60_000) => {

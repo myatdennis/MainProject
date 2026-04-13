@@ -122,11 +122,11 @@ const AdminDashboard = () => {
     let active = true;
     (async () => {
       try {
-        const res = await apiRequest<{
-          data: Array<{ id: string; action: string; details: Record<string, unknown>; createdAt: string; userEmail?: string; orgName?: string }>;
-        }>('/api/admin/activity?limit=10');
-        if (active && Array.isArray(res?.data) && res.data.length > 0) {
-          const mapped: ActivityEntry[] = res.data.map((entry) => {
+        const res = await apiRequest<
+          Array<{ id: string; action: string; details: Record<string, unknown>; createdAt: string; userEmail?: string; orgName?: string }>
+        >('/api/admin/activity?limit=10');
+        if (active && Array.isArray(res) && res.length > 0) {
+          const mapped: ActivityEntry[] = res.map((entry) => {
             const isWarning = entry.action?.includes('overdue') || entry.action?.includes('fail') || entry.action?.includes('error');
             const isMessage = entry.action?.includes('feedback') || entry.action?.includes('survey') || entry.action?.includes('comment');
             const isUser = entry.action?.includes('enroll') || entry.action?.includes('invite') || entry.action?.includes('register');
@@ -163,8 +163,8 @@ const AdminDashboard = () => {
     let active = true;
     (async () => {
       try {
-        const res = await apiRequest<{ data: any }>('/api/admin/growth/overview', { credentials: 'include' });
-        if (active) setGrowthOverview(res?.data ?? null);
+        const res = await apiRequest<any>('/api/admin/growth/overview', { credentials: 'include' });
+        if (active) setGrowthOverview(res ?? null);
       } catch {
         // non-fatal
       } finally {

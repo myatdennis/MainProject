@@ -84,10 +84,10 @@ const LMSLogin: React.FC = () => {
       navigate(adminLandingTarget, { replace: true });
       return;
     }
-    if (authMode === 'client' && isAuthenticated.lms) {
-      navigate('/lms/dashboard', { replace: true });
+    if (authMode === 'client' && isAuthenticated.client) {
+      navigate('/client/dashboard', { replace: true });
     }
-  }, [adminLandingTarget, authMode, isAuthenticated.admin, isAuthenticated.lms, isE2ERuntime, navigate]);
+  }, [adminLandingTarget, authMode, isAuthenticated.admin, isAuthenticated.client, isE2ERuntime, navigate]);
 
   useEffect(() => {
     if ((!registrationAvailable || authMode === 'admin') && activeTab === 'register') {
@@ -135,7 +135,7 @@ const LMSLogin: React.FC = () => {
     setIsLoading(false);
     
     if (result.success) {
-      navigate(loginType === 'admin' ? adminLandingTarget : '/lms/dashboard', { replace: true });
+      navigate(loginType === 'admin' ? adminLandingTarget : '/client/dashboard', { replace: true });
     } else {
       setMessage(result.error || 'Sign-in failed.');
       setMessageType('error');
@@ -285,7 +285,8 @@ const LMSLogin: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setAuthMode('client')}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'client'
+                aria-pressed={authMode === 'client'}
+                className={`min-w-[130px] rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'client'
                   ? 'border-orange-500 bg-orange-500 text-white shadow-sm shadow-orange-200/40'
                   : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
               >
@@ -294,8 +295,9 @@ const LMSLogin: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setAuthMode('admin')}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'admin'
-                  ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                aria-pressed={authMode === 'admin'}
+                className={`min-w-[130px] rounded-full border px-4 py-2 text-sm font-semibold transition ${authMode === 'admin'
+                  ? 'border-slate-900 bg-slate-900 text-white shadow-sm shadow-slate-400/20'
                   : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
               >
                 Admin login

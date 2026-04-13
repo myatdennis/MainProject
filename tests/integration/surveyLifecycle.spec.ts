@@ -239,4 +239,42 @@ describe('Survey lifecycle contract', () => {
       await deleteSurvey(surveyId);
     }
   });
+
+  it('persists assignment to an explicit learner and learner can fetch it', async () => {
+    const surveyId = await createSurvey(orgAdminHeaders, 'published');
+
+    try {
+      const assignRes = await server!.fetch(`/api/admin/surveys/${encodeURIComponent(surveyId)}/assign`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          ...orgAdminHeaders,
+        },
+        body: JSON.stringify({
+          userIds: [LEARNER_ID],
+        }),
+      });
+      const assignBody = await parseJson(assignRes as any);
+      expect([200, 201]).toContain(assignRes.status);
+      expect(assignBody?.meta?.inserted ?? 0).toBeGreaterThanOrEqual(1);
+
+      const learnerAssignedRes = await server!.fetch('/api/client/surveys/assigned', {
+        headers: {
+          Accept: 'application/json',
+          'x-organization-id': DEMO_ORG_ID,
+          ...learnerHeaders,
+        },
+      });
+      const learnerAssignedBody = await parseJson(learnerAssignedRes as any);
+      expect(learnerAssignedRes.status).toBe(200);
+      const assignedEntry = (learnerAssignedBody?.data ?? []).find(
+        (entry: any) => String(entry?.survey?.id ?? entry?.assignment?.survey_id ?? '') === String(surveyId),
+      );
+      expect(assignedEntry?.assignment?.id).toBeTruthy();
+      expect(assignedEntry?.assignment?.user_id || assignedEntry?.assignment?.userId).toBe(String(LEARNER_ID));
+    } finally {
+      await deleteSurvey(surveyId);
+    }
+  });
 });

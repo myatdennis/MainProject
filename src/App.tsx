@@ -18,36 +18,7 @@ import ToastContext from './context/ToastContext';
 
 // Import components used in routes/layout
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
-import ClientDashboard from './pages/Client/ClientDashboard';
-import ClientCourses from './pages/Client/ClientCourses';
-import ClientCourseDetail from './pages/Client/ClientCourseDetail';
-import ClientLessonView from './pages/Client/ClientLessonView';
-import ClientCourseCompletion from './pages/Client/ClientCourseCompletion';
-import ClientSurveys from './pages/Client/ClientSurveys';
-import ClientTeamHuddle from './pages/Client/ClientTeamHuddle';
-import ClientTeamHuddlePostDetail from './pages/Client/ClientTeamHuddlePostDetail';
-import ClientSurveyTake from './pages/Client/ClientSurveyTake';
-import ClientSurveyResults from './pages/Client/ClientSurveyResults';
-import ClientSurveyProgress from './pages/Client/ClientSurveyProgress';
-import ClientDocuments from './pages/Client/DocumentsPage';
-import ClientProfile from './pages/Client/ClientProfile';
-import ClientLayout from './pages/Client/ClientLayout';
 import LMSLayout from './components/LMS/LMSLayout';
-import LMSDashboard from './pages/LMS/LMSDashboard';
-import LMSCourses from './pages/LMS/LMSCourses';
-import LMSProgress from './pages/LMS/LMSProgress';
-import LMSCertificates from './pages/LMS/LMSCertificates';
-import LMSDownloads from './pages/LMS/LMSDownloads';
-import LMSFeedback from './pages/LMS/LMSFeedback';
-import LMSContact from './pages/LMS/LMSContact';
-import LMSSettings from './pages/LMS/LMSSettings';
-import LMSHelp from './pages/LMS/LMSHelp';
-import LMSMeeting from './pages/LMS/LMSMeeting';
-import LMSModule from './pages/LMS/LMSModule';
-import LMSCourseCompletion from './pages/LMS/LMSCourseCompletion';
-import LMSLessonView from './pages/LMS/LMSLessonView';
-import LMSTeamHuddle from './pages/LMS/LMSTeamHuddle';
-import LMSTeamHuddlePostDetail from './pages/LMS/LMSTeamHuddlePostDetail';
 import NotFound from './pages/NotFound';
 import AIBot from './components/AIBot/AIBot';
 import InviteAccept from './pages/InviteAccept';
@@ -63,6 +34,35 @@ const ResourcePage = lazy(() => import('./pages/ResourcePage'));
 const TestimonialsPage = lazy(() => import('./pages/TestimonialsPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const ClientPortalPage = lazy(() => import('./pages/ClientPortalPage'));
+const ClientLayout = lazy(() => import('./pages/Client/ClientLayout'));
+const ClientDashboard = lazy(() => import('./pages/Client/ClientDashboard'));
+const ClientCourses = lazy(() => import('./pages/Client/ClientCourses'));
+const ClientCourseDetail = lazy(() => import('./pages/Client/ClientCourseDetail'));
+const ClientLessonView = lazy(() => import('./pages/Client/ClientLessonView'));
+const ClientCourseCompletion = lazy(() => import('./pages/Client/ClientCourseCompletion'));
+const ClientSurveys = lazy(() => import('./pages/Client/ClientSurveys'));
+const ClientTeamHuddle = lazy(() => import('./pages/Client/ClientTeamHuddle'));
+const ClientTeamHuddlePostDetail = lazy(() => import('./pages/Client/ClientTeamHuddlePostDetail'));
+const ClientSurveyTake = lazy(() => import('./pages/Client/ClientSurveyTake'));
+const ClientSurveyResults = lazy(() => import('./pages/Client/ClientSurveyResults'));
+const ClientSurveyProgress = lazy(() => import('./pages/Client/ClientSurveyProgress'));
+const ClientDocuments = lazy(() => import('./pages/Client/DocumentsPage'));
+const ClientProfile = lazy(() => import('./pages/Client/ClientProfile'));
+const LMSDashboard = lazy(() => import('./pages/LMS/LMSDashboard'));
+const LMSCourses = lazy(() => import('./pages/LMS/LMSCourses'));
+const LMSProgress = lazy(() => import('./pages/LMS/LMSProgress'));
+const LMSCertificates = lazy(() => import('./pages/LMS/LMSCertificates'));
+const LMSDownloads = lazy(() => import('./pages/LMS/LMSDownloads'));
+const LMSFeedback = lazy(() => import('./pages/LMS/LMSFeedback'));
+const LMSContact = lazy(() => import('./pages/LMS/LMSContact'));
+const LMSSettings = lazy(() => import('./pages/LMS/LMSSettings'));
+const LMSHelp = lazy(() => import('./pages/LMS/LMSHelp'));
+const LMSMeeting = lazy(() => import('./pages/LMS/LMSMeeting'));
+const LMSModule = lazy(() => import('./pages/LMS/LMSModule'));
+const LMSCourseCompletion = lazy(() => import('./pages/LMS/LMSCourseCompletion'));
+const LMSLessonView = lazy(() => import('./pages/LMS/LMSLessonView'));
+const LMSTeamHuddle = lazy(() => import('./pages/LMS/LMSTeamHuddle'));
+const LMSTeamHuddlePostDetail = lazy(() => import('./pages/LMS/LMSTeamHuddlePostDetail'));
 const Unauthorized = lazy(() => import('./pages/Unauthorized'));
 const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
 const AdminHealth = lazy(() => import('./pages/Admin/AdminHealth'));
@@ -428,7 +428,16 @@ function AppContent() {
           <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
 
           {/* ── Client portal ──────────────────────────────────────────── */}
-          <Route path="/client/*" element={<ClientProtectedLayout />}>
+          <Route
+            path="/client/*"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading Client Portal..." />}>
+                <ErrorBoundary resetKey={location.pathname}>
+                  <ClientProtectedLayout />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          >
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<ClientDashboard />} />
             <Route path="courses" element={<ClientCourses />} />

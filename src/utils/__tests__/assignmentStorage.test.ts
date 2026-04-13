@@ -132,6 +132,35 @@ describe('assignmentStorage session enforcement', () => {
     ] satisfies CourseAssignment[]);
   });
 
+  it('returns mapped assignments when apiRequest already unwraps the envelope', async () => {
+    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+
+    const now = new Date().toISOString();
+    mockApiRequest.mockResolvedValue([
+      {
+        id: 'assign-2',
+        course_id: 'course-2',
+        user_id: 'user-123',
+        status: 'assigned',
+        progress: 0,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+
+    const { getAssignmentsForUser } = await importModule();
+    const result = await getAssignmentsForUser('user-123');
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'assign-2',
+        courseId: 'course-2',
+        userId: 'user-123',
+        assignmentType: 'course',
+      }),
+    ]);
+  });
+
   it('maps UUID-backed assignment rows that only expose user_id_uuid', async () => {
     const now = new Date().toISOString();
 

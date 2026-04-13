@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-09T21:14:37.470Z",
+        "published_at": "2026-04-12T21:10:21.533Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -158,32 +158,73 @@
   "surveyAssignments": [],
   "lessonReflections": [
     [
-      "demo-sandbox-org:e2e-course-1775769278903:2869360f-ef5c-4200-961b-bd52cc206101:eabd0230-2a38-4af4-b623-480388c4970c",
+      "demo-sandbox-org:e2e-course-1776028227037:lesson-reflection-1776028227021:00000000-0000-0000-0000-000000000002",
       {
-        "id": "reflection-mnrz6h4t-4c6yba",
+        "id": "reflection-mnw9cq5j-bv14hl",
         "organization_id": "demo-sandbox-org",
-        "course_id": "e2e-course-1775769278903",
-        "module_id": "7eafa824-ca8a-411b-bc18-55a614757c4c",
-        "lesson_id": "2869360f-ef5c-4200-961b-bd52cc206101",
-        "user_id": "eabd0230-2a38-4af4-b623-480388c4970c",
-        "response_text": "I will apply this in my next team retrospective.",
+        "course_id": "e2e-course-1776028227037",
+        "module_id": "6690011f-4f0d-4a82-a4b7-ea296bd70779",
+        "lesson_id": "lesson-reflection-1776028227021",
+        "user_id": "00000000-0000-0000-0000-000000000002",
+        "response_text": "I need to slow down and listen more carefully.",
         "response_data": {
-          "version": 1,
+          "version": 2,
           "answers": {
-            "promptResponse": "I will apply this in my next team retrospective."
+            "prompt_response": "I need to slow down and listen more carefully.",
+            "promptResponse": "I need to slow down and listen more carefully."
           },
-          "step_order": null,
-          "prompt_response": "I will apply this in my next team retrospective.",
+          "step_order": [
+            "promptResponse",
+            "deeperReflection1",
+            "deeperReflection2",
+            "actionCommitment"
+          ],
+          "prompt_response": "I need to slow down and listen more carefully.",
           "deeper_reflection_1": "",
           "deeper_reflection_2": "",
           "deeper_reflection_3": "",
           "action_commitment": "",
-          "current_step_id": "intro",
+          "current_step_id": "promptResponse",
           "submitted_at": null
         },
         "status": "draft",
-        "created_at": "2026-04-09T21:14:39.293Z",
-        "updated_at": "2026-04-09T21:14:39.293Z"
+        "created_at": "2026-04-12T21:10:31.782Z",
+        "updated_at": "2026-04-12T21:10:31.782Z"
+      }
+    ],
+    [
+      "demo-sandbox-org:e2e-course-1776028233530:lesson-reflection-1776028233525:00000000-0000-0000-0000-000000000002",
+      {
+        "id": "reflection-mnw9ctuo-fjdlr0",
+        "organization_id": "demo-sandbox-org",
+        "course_id": "e2e-course-1776028233530",
+        "module_id": "f48e0ae2-959b-497c-97cd-bc4453baf702",
+        "lesson_id": "lesson-reflection-1776028233525",
+        "user_id": "00000000-0000-0000-0000-000000000002",
+        "response_text": "I will pause before reacting.",
+        "response_data": {
+          "version": 2,
+          "answers": {
+            "prompt_response": "I will pause before reacting.",
+            "promptResponse": "I will pause before reacting."
+          },
+          "step_order": [
+            "promptResponse",
+            "deeperReflection1",
+            "deeperReflection2",
+            "actionCommitment"
+          ],
+          "prompt_response": "I will pause before reacting.",
+          "deeper_reflection_1": "",
+          "deeper_reflection_2": "",
+          "deeper_reflection_3": "",
+          "action_commitment": "",
+          "current_step_id": "review",
+          "submitted_at": "2026-04-12T21:10:36.572Z"
+        },
+        "status": "submitted",
+        "created_at": "2026-04-12T21:10:36.576Z",
+        "updated_at": "2026-04-12T21:10:36.576Z"
       }
     ]
   ],

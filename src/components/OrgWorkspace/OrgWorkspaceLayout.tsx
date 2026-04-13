@@ -3,6 +3,7 @@ import { LazyImage } from '../PerformanceComponents';
 import { Link, Outlet, useLocation, useParams } from 'react-router-dom';
 import notificationService from '../../dal/notifications';
 import { useSecureAuth } from '../../context/SecureAuthContext';
+import { useToast } from '../../context/ToastContext';
 import { useActiveOrganization } from '../../hooks/useActiveOrganization';
 import { ErrorBoundary } from '../ErrorHandling';
 
@@ -10,7 +11,8 @@ const OrgWorkspaceLayout: React.FC = () => {
   const { orgId } = useParams();
   const location = useLocation();
   const { isAuthenticated } = useSecureAuth();
-  const { memberships, selectOrganization } = useActiveOrganization({ surface: 'admin' });
+  const { showToast } = useToast();
+  const { memberships, selectOrganization } = useActiveOrganization({ surface: 'client' });
   const [orgName, setOrgName] = useState<string>(`Organization ${orgId}`);
   const [allowed, setAllowed] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -128,7 +130,19 @@ const OrgWorkspaceLayout: React.FC = () => {
             <h3 className="text-lg font-semibold mb-2">Access Restricted</h3>
             <p className={`text-sm mb-4 ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}>You must be a member of this organization or a Huddle Co. admin to view this workspace.</p>
             <div className="space-x-2">
-              <button onClick={() => alert('Request access (mock)')} className={`px-4 py-2 rounded font-heading btn-cta`}>Request Access</button>
+              <Link
+                to={`/contact?topic=workspace-access&orgId=${encodeURIComponent(orgId ?? '')}`}
+                onClick={() =>
+                  showToast(
+                    'Workspace access requests are routed through the contact form so the team can verify your organization membership.',
+                    'info',
+                    5000,
+                  )
+                }
+                className={`inline-flex px-4 py-2 rounded font-heading btn-cta`}
+              >
+                Request Access
+              </Link>
             </div>
           </div>
         )}

@@ -379,7 +379,3 @@ export const createMediaService = ({
     DEFAULT_SIGN_TTL_SECONDS,
   };
 };
-
-export default {
-  createMediaService,
-};

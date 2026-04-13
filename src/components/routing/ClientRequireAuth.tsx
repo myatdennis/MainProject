@@ -7,7 +7,7 @@ interface ClientRequireAuthProps {
 
 const ClientRequireAuth = ({ children }: ClientRequireAuthProps) => {
   return (
-    <RequireAuth mode="lms" loginPathOverride="/login">
+    <RequireAuth mode="client" loginPathOverride="/login">
       {children}
     </RequireAuth>
   );

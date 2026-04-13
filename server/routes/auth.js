@@ -31,6 +31,7 @@ import {
   isProduction,
 } from '../config/runtimeFlags.js';
 import { getSupabaseConfig } from '../config/supabaseConfig.js';
+import { sendError, sendOk } from '../lib/apiEnvelope.js';
 
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
@@ -972,12 +973,42 @@ router.patch('/active-org', (req, res) => {
 });
 
 router.get('/verify', async (req, res) => {
-  res.json({
+  return sendOk(res, {
     valid: true,
     user: req.user,
     memberships: req.user?.memberships || [],
     activeOrgId: req.activeOrgId || null,
   });
+});
+
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body || {};
+
+  if (!email) {
+    return sendError(res, 400, 'email_required', 'Email required');
+  }
+
+  if (isDemoModeExplicit || !supabase) {
+    return sendOk(res, {
+      success: true,
+      message: 'Password reset email sent (demo mode - not actually sent)',
+    });
+  }
+
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (error) {
+      return sendError(res, 400, 'password_reset_failed', error.message || 'Password reset failed');
+    }
+
+    return sendOk(res, {
+      success: true,
+      message: 'Password reset email sent',
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return sendError(res, 500, 'password_reset_failed', 'Password reset failed');
+  }
 });
 
 router.post('/self-heal-membership', async (req, res) => {

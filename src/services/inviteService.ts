@@ -46,15 +46,24 @@ export type AcceptInviteResponse = {
   loginUrl: string;
 };
 
+const unwrapApiData = <T,>(payload: T | { data?: T } | null | undefined): T | null => {
+  if (payload && typeof payload === 'object' && 'data' in (payload as Record<string, unknown>)) {
+    return ((payload as { data?: T }).data ?? null) as T | null;
+  }
+  return (payload ?? null) as T | null;
+};
+
 const getInvite = async (token: string) => {
-  return apiRequest<{ data: InvitePreview }>(`/api/invite/${token}`);
+  const payload = await apiRequest<InvitePreview | { data?: InvitePreview }>(`/api/invite/${token}`);
+  return unwrapApiData(payload);
 };
 
 const acceptInvite = async (token: string, payload: AcceptInvitePayload) => {
-  return apiRequest<{ data: AcceptInviteResponse }>(`/api/invite/${token}/accept`, {
+  const response = await apiRequest<AcceptInviteResponse | { data?: AcceptInviteResponse }>(`/api/invite/${token}/accept`, {
     method: 'POST',
     body: payload,
   });
+  return unwrapApiData(response);
 };
 
 export default {

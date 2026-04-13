@@ -43,17 +43,13 @@ export async function request<T = any>(url: string, options: RequestOptions = {}
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeouts.requestMs);
     try {
-      // apiRequest already throws on non-ok; it also handles auth headers and transforms.
-      // RequestOptions extends the broad RequestInit type whose `method` and `headers`
-      // fields are wider than apiRequest's narrower ApiRequestOptions union types.
-      // We cast at this boundary — runtime behaviour is identical.
+      // apiRequest now enforces the envelope contract
       type AnyFn = (...args: any[]) => Promise<T>;
-      const json = await (apiRequest as unknown as AnyFn)(url, { ...options, signal: controller.signal });
-      return json as T;
+      const data = await (apiRequest as unknown as AnyFn)(url, { ...options, signal: controller.signal });
+      return data as T;
     } catch (err: any) {
       const status = typeof err?.status === 'number' ? err.status : undefined;
       const code = err?.code || err?.name;
-      // Preserve the full response body so callers can surface field-level errors
       const body = err?.body ?? undefined;
       throw new DalError(err?.message || 'Request failed', status, code, body);
     } finally {
@@ -66,7 +62,6 @@ export async function request<T = any>(url: string, options: RequestOptions = {}
     backoffMs: config.retries.backoffMs,
     shouldRetry: (error) => {
       const status = (error as any)?.status;
-      // retry network-ish errors and 5xx
       return status === undefined || (typeof status === 'number' && status >= 500);
     },
   });

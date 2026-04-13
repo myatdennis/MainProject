@@ -54,9 +54,12 @@ const checks: HealthCheckDefinition[] = [
     path: '/api/health',
     interpret: (payload: any) => {
       if (payload?.status === 'ok') {
-        const uptimeSeconds = typeof payload?.uptime === 'number' ? payload.uptime : undefined;
+        const uptimeSeconds = typeof payload?.uptimeSeconds === 'number' ? payload.uptimeSeconds : undefined;
         const humanUptime = uptimeSeconds ? `${Math.round(uptimeSeconds / 60)} min uptime` : 'Responded OK';
         return { status: 'ok', message: humanUptime };
+      }
+      if (payload?.status === 'degraded') {
+        return { status: 'warn', message: 'Core API responded, but one or more dependencies are degraded.' };
       }
       return { status: 'warn', message: 'Unexpected payload structure' };
     },

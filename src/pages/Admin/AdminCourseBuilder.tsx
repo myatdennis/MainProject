@@ -32,54 +32,38 @@ import {
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
 import { COURSE_DOCUMENTS_BUCKET } from '../../config/mediaBuckets';
 import GuidedReflectionLessonEditor from '../../components/Admin/GuidedReflectionLessonEditor';
-import { 
-  ArrowLeft, 
-  Save, 
-  Plus, 
-  Trash2, 
-  Edit, 
+import {
+  Plus,
+  Trash2,
+  Edit,
   Eye,
   Upload,
-  Download,
   Video,
   FileText,
   MessageSquare,
   CheckCircle,
-  
   Clock,
-  Users,
   BookOpen,
   Target,
   Settings,
-  
   X,
   ChevronUp,
   ChevronDown,
-  Copy,
   Loader,
   GripVertical,
-  Undo2,
   RefreshCcw,
   AlertTriangle,
   WifiOff,
-  ShieldCheck
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import AdminCourseAssignmentsPanel from '../../components/AdminCourseAssignmentsPanel';
-import LivePreview from '../../components/LivePreview';
-import CoursePreviewDock from '../../components/preview/CoursePreviewDock';
-import AIContentAssistant from '../../components/AIContentAssistant';
-import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
 import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
 import CourseSyncTruthIndicator from '../../components/Admin/CourseSyncTruthIndicator';
 import ScenarioBuilder from '../../components/Admin/ScenarioBuilder';
 import SortableItem from '../../components/SortableItem';
-import Button from '../../components/ui/Button';
+// Button intentionally not imported here to avoid unused-import warnings; use native <button> or ui Button inside subcomponents
 import useIsMobile from '../../hooks/useIsMobile';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import useSwipeNavigation from '../../hooks/useSwipeNavigation';
-import VersionControl from '../../components/VersionControl';
 import { ModuleIssueBadge, LessonIssueTag } from '../../components/Admin/ValidationIssueIndicators';
 import { useToast } from '../../context/ToastContext';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
@@ -107,6 +91,23 @@ import {
   formatApiErrorToast,
 } from './courseBuilder/apiErrors';
 import { resolveCourseSyncTruth } from './courseBuilder/syncTruth';
+import {
+  CourseBuilderHeader,
+  CourseBuilderLoadingState,
+  type BuilderBanner,
+  type ConfirmDialogConfig,
+} from './courseBuilder/CourseBuilderChrome';
+import {
+  CourseBuilderMobileActions,
+  CourseBuilderModals,
+  CourseBuilderPreviewDockPanel,
+} from './courseBuilder/CourseBuilderAuxiliaryUi';
+import {
+  CourseBuilderHistoryPanel,
+  CourseBuilderOverviewPanel,
+  CourseBuilderOverviewAssistant,
+  CourseBuilderSettingsPanel,
+} from './courseBuilder/CourseBuilderSidePanels';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -242,26 +243,6 @@ const isUuid = (value?: string | null): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
-type ConfirmTone = 'info' | 'warning' | 'danger';
-
-type BannerTone = 'warning' | 'danger';
-
-interface BuilderBanner {
-  tone: BannerTone;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  actionLabel?: string;
-  onAction?: () => void;
-}
-
-interface ConfirmDialogConfig {
-  title: string;
-  description: string;
-  confirmLabel: string;
-  tone: ConfirmTone;
-}
-
 type IntegrityRepairSummary = {
   code: string;
   label: string;
@@ -299,31 +280,6 @@ const summarizeIntegrityRepairs = (issues: string[]): IntegrityRepairSummary[] =
       count,
     }))
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
-};
-
-const confirmToneIconClasses: Record<ConfirmTone, string> = {
-  info: 'bg-blue-50 text-blue-600',
-  warning: 'bg-amber-50 text-amber-600',
-  danger: 'bg-red-50 text-red-600'
-};
-
-const confirmToneButtonClasses: Record<ConfirmTone, string> = {
-  info: 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
-  warning: 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500',
-  danger: 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
-};
-
-const bannerToneClasses: Record<BannerTone, { container: string; icon: string; cta: string }> = {
-  warning: {
-    container: 'border-amber-200 bg-amber-50 text-amber-900',
-    icon: 'text-amber-600',
-    cta: 'border border-amber-200 text-amber-900 hover:bg-amber-100'
-  },
-  danger: {
-    container: 'border-red-200 bg-red-50 text-red-900',
-    icon: 'text-red-600',
-    cta: 'border border-red-200 text-red-900 hover:bg-red-100'
-  }
 };
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -552,6 +508,7 @@ const AdminCourseBuilder = () => {
   const lastAutoSaveErrorRef = useRef<{ status: number | null; code: string | null; message: string | null; timestamp: number } | null>(null);
   const [initializing, setInitializing] = useState(isEditing);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
+  const flushPendingWritesRef = useRef<((reason: 'manual' | 'publish' | 'preview' | 'beforeunload' | 'navigation') => Promise<void>) | null>(null);
   const draftCheckIdRef = useRef<string | null>(null);
   const suppressNextDirtyRef = useRef(false);
   const isMobile = useIsMobile();
@@ -769,6 +726,58 @@ const AdminCourseBuilder = () => {
         };
       });
   }, [course.modules, uploadingVideos, uploadProgress]);
+
+  const handleBackToCourses = useCallback(async () => {
+    if (flushPendingWritesRef.current) {
+      await flushPendingWritesRef.current('navigation');
+    }
+    navigate('/admin/courses');
+  }, [navigate]);
+
+  const handleOpenBuilderPreview = useCallback(async () => {
+    if (flushPendingWritesRef.current) {
+      await flushPendingWritesRef.current('preview');
+    }
+    setShowPreview(true);
+  }, []);
+
+  const handleOpenLearnerPreview = useCallback(() => {
+    window.open(`/courses/${course.id}`, '_blank');
+  }, [course.id]);
+
+  const handleDuplicateCourse = useCallback(() => {
+    try {
+      const newId = generateId('course');
+      const cloned = {
+        ...course,
+        id: newId,
+        title: `${course.title} (Copy)`,
+        createdDate: new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+        enrollments: 0,
+        completions: 0,
+        completionRate: 0,
+      };
+      courseStore.saveCourse(cloned, { skipRemoteSync: true });
+      navigate(`/admin/course-builder/${newId}`);
+    } catch (err) {
+      console.warn('Failed to duplicate course', err);
+    }
+  }, [course, navigate]);
+
+  const handleExportCourse = useCallback(() => {
+    try {
+      const dataStr = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(course, null, 2))}`;
+      const dlAnchor = document.createElement('a');
+      dlAnchor.setAttribute('href', dataStr);
+      dlAnchor.setAttribute('download', `${course.title.replace(/\s+/g, '_').toLowerCase() || 'course'}.json`);
+      document.body.appendChild(dlAnchor);
+      dlAnchor.click();
+      dlAnchor.remove();
+    } catch (err) {
+      console.warn('Export failed', err);
+    }
+  }, [course]);
 
   const moduleSensors = useSensors(
     useSensor(PointerSensor, {
@@ -2195,6 +2204,10 @@ const scheduleAutosave = useCallback(
     [flushAutosave, hasPendingChanges, logAutoSaveEvent],
   );
 
+    // Expose the concrete implementation to earlier handlers via ref so they
+    // can safely call it before the function declaration is reached.
+    flushPendingWritesRef.current = flushPendingWrites;
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -2324,14 +2337,11 @@ const scheduleAutosave = useCallback(
         break;
       case 'performance-lazy-load':
         // This would be handled at the system level
-        console.log('Performance optimization applied');
         break;
     }
   };
 
-  const handleDismissSuggestion = (suggestionId: string) => {
-    console.log('Dismissed suggestion:', suggestionId);
-  };
+  const handleDismissSuggestion = (_suggestionId: string) => {};
 
   const reindexLessons = useCallback((lessons: Lesson[] = []) => {
     return lessons.map((lesson, index) => ({
@@ -5444,17 +5454,7 @@ const scheduleAutosave = useCallback(
   ];
 
   if (initializing && isEditing) {
-    return (
-      <div className="p-6 max-w-4xl mx-auto">
-        <div className="flex items-center space-x-3 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <Loader className="h-5 w-5 animate-spin text-orange-500" />
-          <div>
-            <p className="text-sm font-medium text-gray-900">Loading course builder…</p>
-            <p className="text-xs text-gray-500">Fetching the latest course data.</p>
-          </div>
-        </div>
-      </div>
-    );
+    return <CourseBuilderLoadingState />;
   }
 
   return (
@@ -5463,316 +5463,49 @@ const scheduleAutosave = useCallback(
         <div className="max-w-7xl mx-auto">
           <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
             <div className="order-2 xl:order-1 space-y-8">
-      {/* Header */}
-      <div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={async () => {
-            await flushPendingWrites('navigation');
-            navigate('/admin/courses');
-          }}
-          className="mb-4 inline-flex items-center text-orange-500 hover:text-orange-600"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Courses
-        </Button>
-        {staleFromOtherTab && (
-          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="h-5 w-5 mt-0.5 text-amber-600 shrink-0" />
-                <p className="font-semibold">
-                  This course was saved in another tab. Reload to get the latest version and avoid overwriting changes.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => {
-                    setStaleFromOtherTab(false);
-                    void refreshCourseFromServer(courseId);
-                  }}
-                  className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 transition-colors"
-                >
-                  Reload Latest
-                </button>
-                <button
-                  onClick={() => setStaleFromOtherTab(false)}
-                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors"
-                  title="Dismiss — your local changes will be saved on next autosave"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        {statusBanner && (
-          <div className={`mb-4 rounded-2xl p-4 text-sm ${bannerToneClasses[statusBanner.tone].container}`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-start gap-3">
-                <statusBanner.icon className={`h-5 w-5 mt-0.5 ${bannerToneClasses[statusBanner.tone].icon}`} />
-                <div>
-                  <p className="font-semibold">{statusBanner.title}</p>
-              <div
-                className={`mb-6 rounded-2xl border p-4 text-sm ${supabaseConnected ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
-              >
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-start gap-3">
-                    {supabaseConnected ? (
-                      <ShieldCheck className="h-5 w-5 mt-0.5 text-green-600" />
-                    ) : (
-                      <WifiOff className="h-5 w-5 mt-0.5 text-amber-600" />
-                    )}
-                    <div>
-                      <p className="font-semibold">
-                        {supabaseConnected ? 'Secure mode connected' : runtimeStatus.demoModeEnabled ? 'Demo mode active' : 'Supabase connection degraded'}
-                      </p>
-                      <p className="mt-1 leading-relaxed">
-                        {supabaseConnected
-                          ? 'Edits sync to Supabase immediately. Publishing, assignments, and analytics reflect your changes in real time.'
-                          : runtimeStatus.demoModeEnabled
-                            ? 'You are editing in demo mode. Changes stay local until Supabase is re-enabled—export drafts before sharing externally.'
-                            : 'Supabase is unreachable right now. Autosave continues locally, but publish/sync calls will retry once connectivity returns.'}
-                      </p>
-                      {!supabaseConnected && runtimeStatus.lastError && (
-                        <p className="mt-2 text-xs opacity-80">Last error: {runtimeStatus.lastError}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-start gap-2 md:items-end">
-                    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${supabaseConnected ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                      Status: {runtimeStatus.statusLabel}
-                    </span>
-                    <span className="text-xs opacity-80">Last health check {runtimeLastCheckedLabel}</span>
-                  </div>
-                </div>
-              </div>
-                  <p className="mt-1 leading-relaxed">{statusBanner.description}</p>
-                </div>
-              </div>
-              {statusBanner.onAction && (
-                <button
-                  onClick={statusBanner.onAction}
-                  className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold transition ${bannerToneClasses[statusBanner.tone].cta}`}
-                >
-                  {statusBanner.actionLabel || 'Retry'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-        {draftSnapshotPrompt && (
-          <div className="mb-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="font-semibold">Unsynced local draft available</p>
-                <p className="mt-1 leading-relaxed">
-                  We saved edits on {new Date(draftSnapshotPrompt.updatedAt).toLocaleString()} when Huddle couldn’t reach Supabase.
-                  Restore them to continue where you left off or discard the local copy.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={handleRestoreDraftSnapshot}
-                  className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-                >
-                  Restore draft
-                </button>
-                <button
-                  onClick={handleDiscardDraftSnapshot}
-                  className="inline-flex items-center rounded-lg border border-blue-200 px-4 py-2 text-sm font-semibold text-blue-900 transition hover:bg-blue-100"
-                >
-                  Discard local copy
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              {isEditing ? 'Edit Course' : 'Create New Course'}
-            </h1>
-            <p className="text-gray-600">
-              {isEditing ? `Editing: ${course.title}` : 'Build a comprehensive learning experience'}
-            </p>
-            {isEditing && (
-              <div
-                className={`mt-2 px-3 py-2 rounded-lg text-sm ${
-                  effectiveValidationSummary.isValid
-                    ? 'bg-green-50 text-green-700 border border-green-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-200'
-                }`}
-              >
-                {effectiveValidationSummary.isValid ? (
-                  <span>✅ Course is valid and ready to publish</span>
-                ) : (
-                  <div>
-                    <span>⚠️ {blockingIssueCount} validation issue(s) detected</span>
-                    <p className="mt-1 text-xs">Resolve the blockers below before publishing.</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          
-          <div className="flex w-full flex-col items-end gap-3">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                onClick={() => setConfirmDialog('discard')}
-                disabled={!canDiscardChanges}
-                className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                  canDiscardChanges
-                    ? 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                    : 'border-gray-100 text-gray-400 cursor-not-allowed opacity-60'
-                }`}
-                title={canDiscardChanges ? 'Revert to the last saved draft' : 'No saved draft to revert to yet'}
-              >
-                <Undo2 className="h-4 w-4" />
-                <span>Discard</span>
-              </button>
-              <button
-                onClick={() => setConfirmDialog('reset')}
-                className="flex items-center gap-2 rounded-lg border border-orange-200 px-4 py-2 text-sm font-medium text-orange-700 transition-colors hover:bg-orange-50"
-                title="Replace everything with the starter template"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                <span>Reset Template</span>
-              </button>
-              <button
-                onClick={async () => {
-                  await flushPendingWrites('preview');
-                  setShowPreview(true);
-                }}
-                className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2 font-medium"
-                title="Preview course as learner"
-              >
-                <Eye className="h-4 w-4" />
-                <span>Live Preview</span>
-              </button>
-              
-              <button
-                onClick={handleSave}
-                data-save-button
-                disabled={saveButtonDisabled}
-                title={saveButtonTitle}
-                className={`px-6 py-3 rounded-lg transition-all duration-200 flex items-center space-x-2 font-medium ${
-                  saveStatus === 'saved' 
-                    ? 'bg-green-500 text-white hover:bg-green-600' 
-                    : saveStatus === 'error'
-                    ? 'bg-red-500 text-white hover:bg-red-600'
-                    : 'bg-blue-500 text-white hover:bg-blue-600'
-                } ${saveButtonDisabled ? 'opacity-75 cursor-not-allowed' : ''}`}
-              >
-                {saveStatus === 'saving' ? (
-                  <>
-                    <Loader className="h-4 w-4 animate-spin" />
-                    <span>Saving...</span>
-                  </>
-                ) : saveStatus === 'saved' ? (
-                  <>
-                    <CheckCircle className="h-4 w-4" />
-                    <span>Saved just now</span>
-                  </>
-                ) : saveStatus === 'error' ? (
-                  <>
-                    <X className="h-4 w-4" />
-                    <span>Retry Save</span>
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4" />
-                    <span>Save Draft</span>
-                    <span className="hidden md:inline text-xs opacity-75">⌘S</span>
-                  </>
-                )}
-              </button>
-              <button
-                onClick={() => setShowAssignmentModal(true)}
-                className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
-                disabled={!course.id || (course.modules || []).length === 0}
-                title={
+              <CourseBuilderHeader
+                course={course}
+                isEditing={isEditing}
+                staleFromOtherTab={staleFromOtherTab}
+                setStaleFromOtherTab={setStaleFromOtherTab}
+                onBack={handleBackToCourses}
+                onReloadLatest={() => void refreshCourseFromServer(courseId)}
+                statusBanner={statusBanner}
+                supabaseConnected={supabaseConnected}
+                runtimeDemoModeEnabled={runtimeStatus.demoModeEnabled}
+                runtimeLastError={runtimeStatus.lastError ?? null}
+                runtimeStatusLabel={runtimeStatus.statusLabel}
+                runtimeLastCheckedLabel={runtimeLastCheckedLabel}
+                draftSnapshotPrompt={draftSnapshotPrompt}
+                onRestoreDraft={handleRestoreDraftSnapshot}
+                onDiscardDraft={handleDiscardDraftSnapshot}
+                validationIsValid={effectiveValidationSummary.isValid}
+                blockingIssueCount={blockingIssueCount}
+                onDiscard={() => setConfirmDialog('discard')}
+                canDiscardChanges={canDiscardChanges}
+                onResetTemplate={() => setConfirmDialog('reset')}
+                onOpenPreview={handleOpenBuilderPreview}
+                onSave={handleSave}
+                saveStatus={saveStatus}
+                saveButtonDisabled={saveButtonDisabled}
+                saveButtonTitle={saveButtonTitle}
+                onOpenAssignments={() => setShowAssignmentModal(true)}
+                assignmentDisabled={!course.id || (course.modules || []).length === 0}
+                assignmentTitle={
                   !course.id || (course.modules || []).length === 0
                     ? 'Save this course and add at least one lesson before assigning'
                     : 'Assign this course to organizations or hand-picked learners'
                 }
-              >
-                <Users className="h-4 w-4" />
-                <span>Assign Course</span>
-              </button>
-            <button
-              onClick={handlePublish}
-              className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center space-x-2"
-              disabled={publishDisabled}
-              title={publishButtonTitle}
-            >
-              <CheckCircle className="h-4 w-4" />
-              <span>{course.status === 'published' ? 'Update Published' : 'Publish Course'}</span>
-              {publishDevHint && (
-                <span className="text-xs font-semibold uppercase tracking-wide text-lime-100">
-                  {publishDevHint}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => window.open(`/courses/${course.id}`, '_blank')}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Eye className="h-4 w-4" />
-              <span>Preview</span>
-            </button>
-            <button
-              onClick={() => {
-                try {
-                  const newId = generateId('course');
-                  const cloned = { ...course, id: newId, title: `${course.title} (Copy)`, createdDate: new Date().toISOString(), lastUpdated: new Date().toISOString(), enrollments: 0, completions: 0, completionRate: 0 };
-                  courseStore.saveCourse(cloned, { skipRemoteSync: true });
-                  navigate(`/admin/course-builder/${newId}`);
-                } catch (err) {
-                  console.warn('Failed to duplicate course', err);
-                }
-              }}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Copy className="h-4 w-4" />
-              <span>Duplicate</span>
-            </button>
-            <button
-              onClick={() => {
-                try {
-                  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(course, null, 2));
-                  const dlAnchor = document.createElement('a');
-                  dlAnchor.setAttribute('href', dataStr);
-                  dlAnchor.setAttribute('download', `${course.title.replace(/\s+/g, '_').toLowerCase() || 'course'}.json`);
-                  document.body.appendChild(dlAnchor);
-                  dlAnchor.click();
-                  dlAnchor.remove();
-                } catch (err) {
-                  console.warn('Export failed', err);
-                }
-              }}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Download className="h-4 w-4" />
-              <span>Export</span>
-            </button>
-            <button
-              onClick={() => setConfirmDialog('delete')}
-              className="border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              <span>Delete</span>
-            </button>
-            </div>
-
-            {/* Auto-save status indicator */}
-            <CourseSyncTruthIndicator syncTruth={syncTruth} />
-          </div>
-        </div>
-      </div>
+                onPublish={handlePublish}
+                publishDisabled={publishDisabled}
+                publishButtonTitle={publishButtonTitle}
+                publishDevHint={publishDevHint}
+                onOpenLearnerPreview={handleOpenLearnerPreview}
+                onDuplicate={handleDuplicateCourse}
+                onExport={handleExportCourse}
+                onDelete={() => setConfirmDialog('delete')}
+                syncIndicator={<CourseSyncTruthIndicator syncTruth={syncTruth} />}
+              />
 
       {isEditing && (
         <div className="mt-6">
@@ -5856,272 +5589,19 @@ const scheduleAutosave = useCallback(
 
         <div className="p-6">
           {activeTab === 'overview' && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label htmlFor="admin-course-title" className="block text-sm font-medium text-gray-700 mb-2">Course Title *</label>
-                  <input
-                    id="admin-course-title"
-                    type="text"
-                    value={course.title}
-                    onChange={(e) => setCourse(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder="e.g., Foundations of Inclusive Leadership"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="admin-course-difficulty" className="block text-sm font-medium text-gray-700 mb-2">Difficulty Level</label>
-                  <select
-                    id="admin-course-difficulty"
-                    value={course.difficulty}
-                    onChange={(e) => setCourse(prev => ({ ...prev, difficulty: e.target.value as Course['difficulty'] }))}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  >
-                    <option value="Beginner">Beginner</option>
-                    <option value="Intermediate">Intermediate</option>
-                    <option value="Advanced">Advanced</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="admin-course-description" className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                <textarea
-                  id="admin-course-description"
-                  value={course.description}
-                  onChange={(e) => setCourse(prev => ({ ...prev, description: e.target.value }))}
-                  rows={4}
-                  placeholder="Describe what learners will gain from this course..."
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Learning Objectives</label>
-                <div className="space-y-2">
-                  {(course.learningObjectives || []).map((objective, index) => (
-                    <div key={index} className="flex items-center space-x-2">
-                      <input
-                        type="text"
-                        value={objective}
-                        onChange={(e) => {
-                          const updated = [...(course.learningObjectives || [])];
-                          updated[index] = e.target.value;
-                          setCourse(prev => ({ ...prev, learningObjectives: updated }));
-                        }}
-                        placeholder="Learning objective..."
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                      />
-                      <button
-                        onClick={() => {
-                          const updated = (course.learningObjectives || []).filter((_, i) => i !== index);
-                          setCourse(prev => ({ ...prev, learningObjectives: updated }));
-                        }}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => setCourse(prev => ({ 
-                      ...prev, 
-                      learningObjectives: [...(prev.learningObjectives || []), ''] 
-                    }))}
-                    className="text-blue-600 hover:text-blue-700 text-sm"
-                  >
-                    + Add Learning Objective
-            </button>
-          </div>
-        </div>
-
-        <div
-          ref={validationPanelRef}
-          className={`mt-4 rounded-2xl border px-4 py-3 shadow-sm transition-all ${
-            effectiveValidationSummary.isValid
-              ? 'border-green-200 bg-green-50 text-green-900'
-              : 'border-amber-200 bg-amber-50 text-amber-900'
-          } ${validationPanelPulse ? 'ring-2 ring-amber-400' : ''}`}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              {effectiveValidationSummary.isValid ? (
-                <ShieldCheck className="h-5 w-5 text-green-600" aria-hidden="true" />
-              ) : (
-                <AlertTriangle className="h-5 w-5 text-amber-500" aria-hidden="true" />
-              )}
-              <div>
-                <p className="text-sm font-semibold">
-                  {effectiveValidationSummary.isValid
-                    ? 'All publish checks passed'
-                    : `${blockingIssueCount} publish blocker(s)`}
-                </p>
-                <p className="text-xs opacity-80">
-                  {effectiveValidationSummary.isValid
-                    ? 'Learners will see the latest content as soon as you publish.'
-                    : 'Resolve the issues below before publishing to learners.'}
-                </p>
-                {!effectiveValidationSummary.isValid && (
-                  <p className="text-xs mt-1">
-                    Each module needs at least one publish-ready lesson: a video with stored media metadata, a quiz with questions, or a text lesson with learner-facing content.
-                  </p>
-                )}
-              </div>
-            </div>
-            {!effectiveValidationSummary.isValid && firstNavigableIssue && (
-              <button
-                onClick={() => focusValidationIssue(firstNavigableIssue)}
-                className="inline-flex items-center rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-900 hover:bg-white/40"
-              >
-                Focus first issue
-              </button>
-            )}
-          </div>
-          {effectiveValidationSummary.issues.length > 0 ? (
-            <div className="mt-3 max-h-56 overflow-y-auto pr-1">
-              <ul className="space-y-2">
-                {effectiveValidationSummary.issues.map((issue, index) => {
-                  const canNavigate = Boolean(issue.lessonId || issue.moduleId);
-                  return (
-                    <li
-                      key={`${issue.code}-${issue.lessonId ?? issue.moduleId ?? index}`}
-                      className="flex items-start justify-between gap-3 rounded-xl bg-white/80 px-3 py-2 text-sm shadow-sm ring-1 ring-black/5"
-                    >
-                      <div>
-                        <p className="font-semibold text-amber-900">{issue.message}</p>
-                        <p className="text-xs text-amber-600">
-                          {issue.severity.toUpperCase()} • {issue.code}
-                        </p>
-                      </div>
-                      {canNavigate && (
-                        <button
-                          onClick={() => focusValidationIssue(issue)}
-                          className="text-xs font-semibold text-amber-900 underline-offset-2 hover:underline"
-                        >
-                          Jump
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-green-800">
-              Publish validation is using stricter checks, and your course passes them all.
-            </p>
-          )}
-        </div>
-
-        {integrityRepairSummary.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-orange-900">Auto-fixes applied to this draft</p>
-                <p className="text-xs text-orange-700">
-                  We repaired missing lesson data during save/publish prep. Review these updates before publishing.
-                </p>
-              </div>
-              <button
-                onClick={() => setLatestIntegrityRepairIssues([])}
-                className="inline-flex items-center rounded-lg border border-orange-300 px-3 py-1 text-xs font-semibold text-orange-900 hover:bg-orange-100"
-              >
-                Dismiss
-              </button>
-            </div>
-            <ul className="mt-3 space-y-2">
-              {integrityRepairSummary.map((entry) => (
-                <li
-                  key={entry.code}
-                  className="flex items-center justify-between rounded-lg bg-white/80 px-3 py-2 text-sm text-orange-900 ring-1 ring-orange-100"
-                >
-                  <span>{entry.label}</span>
-                  <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-800">
-                    {entry.count}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Key Takeaways</label>
-                <div className="space-y-2">
-                  {(course.keyTakeaways || []).map((takeaway, index) => (
-                    <div key={index} className="flex items-center space-x-2">
-                      <input
-                        type="text"
-                        value={takeaway}
-                        onChange={(e) => {
-                          const updated = [...(course.keyTakeaways || [])];
-                          updated[index] = e.target.value;
-                          setCourse(prev => ({ ...prev, keyTakeaways: updated }));
-                        }}
-                        placeholder="Key takeaway..."
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                      />
-                      <button
-                        onClick={() => {
-                          const updated = (course.keyTakeaways || []).filter((_, i) => i !== index);
-                          setCourse(prev => ({ ...prev, keyTakeaways: updated }));
-                        }}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => setCourse(prev => ({ 
-                      ...prev, 
-                      keyTakeaways: [...(prev.keyTakeaways || []), ''] 
-                    }))}
-                    className="text-blue-600 hover:text-blue-700 text-sm"
-                  >
-                    + Add Key Takeaway
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {(course.tags || []).map((tag, index) => (
-                    <span key={index} className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm flex items-center space-x-1">
-                      <span>{tag}</span>
-                      <button
-                        onClick={() => {
-                          const updated = (course.tags || []).filter((_, i) => i !== index);
-                          setCourse(prev => ({ ...prev, tags: updated }));
-                        }}
-                        className="text-orange-600 hover:text-orange-800"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="text"
-                    placeholder="Add a tag..."
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        const input = e.target as HTMLInputElement;
-                        const tag = input.value.trim();
-                        if (tag && !(course.tags || []).includes(tag)) {
-                          setCourse(prev => ({ ...prev, tags: [...(prev.tags || []), tag] }));
-                          input.value = '';
-                        }
-                      }
-                    }}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                  <span className="text-sm text-gray-500">Press Enter to add</span>
-                </div>
-              </div>
-            </div>
+            <CourseBuilderOverviewPanel
+              course={course}
+              setCourse={setCourse}
+              validationPanelRef={validationPanelRef}
+              validationPanelPulse={validationPanelPulse}
+              validationIsValid={effectiveValidationSummary.isValid}
+              blockingIssueCount={blockingIssueCount}
+              validationIssues={effectiveValidationSummary.issues}
+              firstNavigableIssue={firstNavigableIssue}
+              onFocusValidationIssue={focusValidationIssue}
+              integrityRepairSummary={integrityRepairSummary}
+              onDismissIntegrityRepairs={() => setLatestIntegrityRepairIssues([])}
+            />
           )}
 
           {activeTab === 'content' && (
@@ -6375,335 +5855,72 @@ const scheduleAutosave = useCallback(
           )}
 
           {activeTab === 'overview' && (
-            <div className="mt-8">
-              <AIContentAssistant
-                course={course}
-                onApplySuggestion={handleApplySuggestion}
-                onDismissSuggestion={handleDismissSuggestion}
-              />
-            </div>
+            <CourseBuilderOverviewAssistant
+              course={course}
+              onApplySuggestion={handleApplySuggestion}
+              onDismissSuggestion={handleDismissSuggestion}
+            />
           )}
 
           {activeTab === 'settings' && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Course Type</label>
-                  <select
-                    value={course.type}
-                    onChange={(e) => setCourse(prev => ({ ...prev, type: e.target.value }))}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  >
-                    <option value="Video">Video</option>
-                    <option value="Interactive">Interactive</option>
-                    <option value="Mixed">Mixed</option>
-                    <option value="Workshop">Workshop</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Estimated Time</label>
-                  <input
-                    type="text"
-                    value={course.estimatedTime}
-                    onChange={(e) => setCourse(prev => ({ ...prev, estimatedTime: e.target.value }))}
-                    placeholder="e.g., 45-60 minutes"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Prerequisites</label>
-                <div className="space-y-2">
-                  {(course.prerequisites || []).map((prerequisite, index) => (
-                    <div key={index} className="flex items-center space-x-2">
-                      <input
-                        type="text"
-                        value={prerequisite}
-                        onChange={(e) => {
-                          const updated = [...(course.prerequisites || [])];
-                          updated[index] = e.target.value;
-                          setCourse(prev => ({ ...prev, prerequisites: updated }));
-                        }}
-                        placeholder="Prerequisite..."
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                      />
-                      <button
-                        onClick={() => {
-                          const updated = (course.prerequisites || []).filter((_, i) => i !== index);
-                          setCourse(prev => ({ ...prev, prerequisites: updated }));
-                        }}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => setCourse(prev => ({ 
-                      ...prev, 
-                      prerequisites: [...(prev.prerequisites || []), ''] 
-                    }))}
-                    className="text-blue-600 hover:text-blue-700 text-sm"
-                  >
-                    + Add Prerequisite
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Certification Settings</label>
-                <div className="space-y-4 p-4 border border-gray-200 rounded-lg">
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={course.certification?.available || false}
-                      onChange={(e) => setCourse(prev => ({
-                        ...prev,
-                        certification: {
-                          // ensure a full certification object exists so types remain compatible
-                          ...(prev.certification ?? { available: false, name: '', requirements: [], validFor: '1 year', renewalRequired: false }),
-                          available: e.target.checked
-                        }
-                      }))}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <span className="text-sm text-gray-700">Offer certification for this course</span>
-                  </label>
-
-                  {course.certification?.available && (
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Certificate Name</label>
-                        <input
-                          type="text"
-                          value={course.certification.name}
-                          onChange={(e) => setCourse(prev => ({
-                            ...prev,
-                            certification: {
-                              ...prev.certification!,
-                              name: e.target.value
-                            }
-                          }))}
-                          placeholder="e.g., Inclusive Leadership Foundation Certificate"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Requirements</label>
-                        <div className="space-y-2">
-                          {course.certification.requirements.map((requirement, index) => (
-                            <div key={index} className="flex items-center space-x-2">
-                              <input
-                                type="text"
-                                value={requirement}
-                                onChange={(e) => {
-                                  const updated = [...course.certification!.requirements];
-                                  updated[index] = e.target.value;
-                                  setCourse(prev => ({
-                                    ...prev,
-                                    certification: {
-                                      ...prev.certification!,
-                                      requirements: updated
-                                    }
-                                  }));
-                                }}
-                                placeholder="Certification requirement..."
-                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                              />
-                              <button
-                                onClick={() => {
-                                  const updated = course.certification!.requirements.filter((_, i) => i !== index);
-                                  setCourse(prev => ({
-                                    ...prev,
-                                    certification: {
-                                      ...prev.certification!,
-                                      requirements: updated
-                                    }
-                                  }));
-                                }}
-                                className="text-red-600 hover:text-red-800"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                          <button
-                            onClick={() => setCourse(prev => ({
-                              ...prev,
-                              certification: {
-                                ...prev.certification!,
-                                requirements: [...prev.certification!.requirements, '']
-                              }
-                            }))}
-                            className="text-blue-600 hover:text-blue-700 text-sm"
-                          >
-                            + Add Requirement
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <CourseBuilderSettingsPanel course={course} setCourse={setCourse} />
           )}
 
           {activeTab === 'history' && (
-            <div className="space-y-6">
-              <VersionControl
-                course={course}
-                onRestore={handleRestoreVersion}
-              />
-            </div>
+            <CourseBuilderHistoryPanel course={course} onRestore={handleRestoreVersion} />
           )}
         </div>
       </div>
             </div>
-            <div className="order-1 xl:order-2 w-full">
-              <CoursePreviewDock
-                course={course}
-                activeLessonId={editingLesson?.lessonId ?? null}
-                onLaunchFullPreview={() => setShowPreview(true)}
-              />
-            </div>
+            <CourseBuilderPreviewDockPanel
+              course={course}
+              activeLessonId={editingLesson?.lessonId ?? null}
+              onLaunchFullPreview={() => setShowPreview(true)}
+            />
           </div>
         </div>
       </div>
 
-      {isMobile && activeTab === 'content' && (
-        <MobileCourseToolbar
-          onAddModule={addModule}
-          onPreview={async () => {
-            await flushPendingWrites('preview');
-            setShowPreview(true);
-          }}
-          onSave={handleSave}
-          onAssign={() => setShowAssignmentModal(true)}
-          onPublish={handlePublish}
-          saveStatus={saveStatus}
-          hasPendingChanges={hasPendingChanges}
-          lastSaved={lastSaveTime}
-          disabled={initializing}
-          saveDisabled={saveButtonDisabled}
-          saveTitle={saveButtonTitle || undefined}
-          saveLabel={eliteSaveLabel}
-          publishDisabled={publishDisabled}
-          publishTitle={publishButtonTitle || undefined}
-        />
-      )}
-
-      {/* Course Assignment Modal */}
-      <CourseAssignmentModal
-        isOpen={showAssignmentModal}
-        onClose={() => setShowAssignmentModal(false)}
-        onAssignComplete={handleAssignmentComplete}
-        selectedUsers={[]}
-        course={{
-          id: course.id,
-          title: course.title,
-          duration: course.duration,
-          organizationId: course.organizationId ?? null,
-        }}
+      <CourseBuilderMobileActions
+        isVisible={isMobile && activeTab === 'content'}
+        onAddModule={addModule}
+        onPreview={handleOpenBuilderPreview}
+        onSave={handleSave}
+        onAssign={() => setShowAssignmentModal(true)}
+        onPublish={handlePublish}
+        saveStatus={saveStatus}
+        hasPendingChanges={hasPendingChanges}
+        lastSaved={lastSaveTime}
+        disabled={initializing}
+        saveDisabled={saveButtonDisabled}
+        saveTitle={saveButtonTitle || undefined}
+        saveLabel={eliteSaveLabel}
+        publishDisabled={publishDisabled}
+        publishTitle={publishButtonTitle || undefined}
       />
 
-      {/* Live Preview Modal */}
-      <LivePreview
-        isOpen={showPreview}
-        onClose={() => setShowPreview(false)}
+      <CourseBuilderModals
         course={course}
-        currentModule={editingLesson ? course.modules?.find(m => m.id === editingLesson.moduleId) : undefined}
-        currentLesson={editingLesson ? 
-          course.modules?.find(m => m.id === editingLesson.moduleId)
-            ?.lessons.find(l => l.id === editingLesson.lessonId) : undefined}
+        showAssignmentModal={showAssignmentModal}
+        onCloseAssignmentModal={() => setShowAssignmentModal(false)}
+        onAssignComplete={handleAssignmentComplete}
+        showPreview={showPreview}
+        onClosePreview={() => setShowPreview(false)}
+        currentModule={editingLesson ? course.modules?.find((m) => m.id === editingLesson.moduleId) : undefined}
+        currentLesson={
+          editingLesson
+            ? course.modules?.find((m) => m.id === editingLesson.moduleId)?.lessons.find((l) => l.id === editingLesson.lessonId)
+            : undefined
+        }
+        confirmDialogContent={confirmDialogContent}
+        onCloseConfirmDialog={() => setConfirmDialog(null)}
+        onConfirmAction={handleConfirmAction}
+        isValidationModalOpen={isValidationModalOpen}
+        activeValidationIntent={activeValidationIntent}
+        validationIssues={validationIssues}
+        onCloseValidationModal={() => setValidationModalOpen(false)}
+        onFixValidationIssue={focusValidationIssue}
       />
-
-      {confirmDialog && confirmDialogContent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start gap-4">
-              <div className={`flex h-12 w-12 items-center justify-center rounded-full ${confirmToneIconClasses[confirmDialogContent.tone]}`}>
-                <AlertTriangle className="h-6 w-6" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900">{confirmDialogContent.title}</h3>
-                <p className="mt-2 text-sm text-gray-600">{confirmDialogContent.description}</p>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDialog(null)}
-                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmAction}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${confirmToneButtonClasses[confirmDialogContent.tone]}`}
-              >
-                {confirmDialogContent.confirmLabel}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {isValidationModalOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/40"
-            aria-hidden="true"
-            onClick={() => setValidationModalOpen(false)}
-          />
-          <div className="relative z-50 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-orange-500 font-semibold">
-                  {activeValidationIntent === 'publish' ? 'Publish blockers' : 'Draft validation'}
-                </p>
-                <h2 className="text-xl font-semibold text-gray-900 mt-1">Resolve the highlighted issues</h2>
-                <p className="text-sm text-gray-600 mt-1">
-                  Review each issue and jump directly to the module or lesson that needs attention.
-                </p>
-              </div>
-              <button
-                onClick={() => setValidationModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600"
-                aria-label="Close validation issues"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="mt-4 max-h-[60vh] overflow-y-auto space-y-3">
-              {validationIssues.map((issue, index) => (
-                <div
-                  key={`${issue.code}-${issue.moduleId ?? 'course'}-${issue.lessonId ?? index}`}
-                  className="flex items-start justify-between rounded-xl border border-red-200 bg-red-50 p-3"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-red-900">{issue.message}</p>
-                    {issue.path && <p className="text-xs text-red-600 mt-1">{issue.path}</p>}
-                  </div>
-                  <button
-                    onClick={() => focusValidationIssue(issue)}
-                    className="ml-4 rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
-                  >
-                    Fix
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => setValidationModalOpen(false)}
-                className="rounded-md border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 };

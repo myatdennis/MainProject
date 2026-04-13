@@ -115,6 +115,45 @@ const createMockSupabase = ({
       }
       return { data: payload, error: null };
     },
+    update: (payload: any) => {
+      const filters: Record<string, any> = {};
+      const applyFilters = (entry: any) =>
+        Object.entries(filters).every(([col, condition]) => {
+          if (condition?.type === 'eq') {
+            return entry?.[col] === condition.value;
+          }
+          if (condition?.type === 'neq') {
+            return entry?.[col] !== condition.value;
+          }
+          return true;
+        });
+
+      const query: any = {
+        eq: (col: string, value: any) => {
+          filters[col] = { type: 'eq', value };
+          return query;
+        },
+        neq: (col: string, value: any) => {
+          filters[col] = { type: 'neq', value };
+          return query;
+        },
+        then: async (resolve: any, reject: any) => {
+          try {
+            if (table === 'organization_memberships') {
+              for (const [key, entry] of store.memberships.entries()) {
+                if (applyFilters(entry)) {
+                  store.memberships.set(key, { ...entry, ...payload });
+                }
+              }
+            }
+            resolve({ data: null, error: null });
+          } catch (error) {
+            reject(error);
+          }
+        },
+      };
+      return query;
+    },
     select: () => {
       const filters: Record<string, any> = {};
       const query: any = {

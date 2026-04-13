@@ -24,6 +24,14 @@ const hasClientSession = (): boolean => {
   }
 };
 
+const unwrapApiData = <T>(payload: T | { data?: T } | null | undefined): T | null => {
+  if (payload == null) return null;
+  if (typeof payload === 'object' && 'data' in (payload as Record<string, unknown>)) {
+    return ((payload as { data?: T }).data ?? null) as T | null;
+  }
+  return payload as T;
+};
+
 export async function fetchPublishedCourses(
   options: FetchPublishedCoursesOptions = {}
 ): Promise<NormalizedCourse[]> {
@@ -48,8 +56,8 @@ export async function fetchPublishedCourses(
 
   const path = params.toString() ? `/api/client/courses?${params.toString()}` : '/api/client/courses';
   try {
-    const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(path, { noTransform: true });
-    return (json.data || []).map(mapCourseRecord);
+    const json = await apiRequest<SupabaseCourseRecord[] | { data?: SupabaseCourseRecord[] }>(path, { noTransform: true });
+    return (unwrapApiData(json) || []).map(mapCourseRecord);
   } catch (error) {
     console.error('[clientCourses.fetchPublishedCourses] Failed to fetch catalog:', error);
     return [];
@@ -71,23 +79,25 @@ export async function fetchCourse(
   const queryParam = includeDrafts ? '?includeDrafts=true' : '';
 
   try {
-    const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+    const json = await apiRequest<SupabaseCourseRecord | null | { data?: SupabaseCourseRecord | null }>(
       `/api/client/courses/${normalizedIdentifier}${queryParam}`,
       { noTransform: true }
     );
 
-    if (json.data) {
-      return mapCourseRecord(json.data);
+    const primaryRecord = unwrapApiData(json);
+    if (primaryRecord) {
+      return mapCourseRecord(primaryRecord);
     }
 
     const slugCandidate = slugify(normalizedIdentifier);
     if (slugCandidate && slugCandidate !== normalizedIdentifier) {
-      const slugJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+      const slugJson = await apiRequest<SupabaseCourseRecord | null | { data?: SupabaseCourseRecord | null }>(
         `/api/client/courses/${slugCandidate}${queryParam}`,
         { noTransform: true }
       );
-      if (slugJson.data) {
-        return mapCourseRecord(slugJson.data);
+      const slugRecord = unwrapApiData(slugJson);
+      if (slugRecord) {
+        return mapCourseRecord(slugRecord);
       }
     }
 

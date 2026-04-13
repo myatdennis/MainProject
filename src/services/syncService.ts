@@ -5,6 +5,15 @@ import type { CourseAssignment } from '../types/assignment';
 import { CourseValidationError } from '../dal/adminCourses';
 import { wsClient } from './wsClient';
 
+const logSyncDebug = (message: string, payload?: unknown) => {
+  if (!import.meta.env.DEV) return;
+  if (typeof payload === 'undefined') {
+    console.debug(message);
+    return;
+  }
+  console.debug(message, payload);
+};
+
 interface SyncEvent {
   type: 'course_updated' | 'course_created' | 'course_deleted' | 
     'user_progress' | 'user_enrolled' | 'user_completed' | 'course_completed' |
@@ -179,7 +188,7 @@ class SyncService {
     // Only set up real-time sync if Supabase is configured
     if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
       if (import.meta.env.DEV) {
-        console.log('[SyncService] Supabase not configured - using polling sync only');
+        logSyncDebug('[SyncService] Supabase not configured - using polling sync only');
       }
       this.cleanupRealtimeChannels();
       return;
@@ -189,15 +198,20 @@ class SyncService {
       const supabase = await getSupabase();
       if (!supabase) {
         if (import.meta.env.DEV) {
-          console.log('[SyncService] Supabase client not available for realtime sync');
+          logSyncDebug('[SyncService] Supabase client not available for realtime sync');
         }
         this.cleanupRealtimeChannels();
         return;
       }
-      const { data: sessionData } = await supabase.auth.getSession();
+      const sessionResponse =
+        typeof supabase.auth?.getSession === 'function' ? await supabase.auth.getSession() : null;
+      const sessionData =
+        sessionResponse && typeof sessionResponse === 'object' && 'data' in sessionResponse
+          ? (sessionResponse as { data?: { session?: { access_token?: string | null } | null } }).data
+          : undefined;
       if (!sessionData?.session?.access_token) {
         if (import.meta.env.DEV) {
-          console.info('[SyncService] Skipping realtime setup until Supabase session is available.');
+          logSyncDebug('[SyncService] Skipping realtime setup until Supabase session is available.');
         }
         this.cleanupRealtimeChannels();
         return;
@@ -248,7 +262,7 @@ class SyncService {
           },
           (payload: any) => {
             if (import.meta.env.DEV) {
-              console.log('[SyncService] Real-time course change detected:', payload);
+              logSyncDebug('[SyncService] Real-time course change detected:', payload);
             }
 
             const eventType =
@@ -279,7 +293,7 @@ class SyncService {
           },
           (payload: any) => {
             if (import.meta.env.DEV) {
-              console.log('[SyncService] Real-time module change detected:', payload);
+              logSyncDebug('[SyncService] Real-time module change detected:', payload);
             }
 
             this.emit('course_updated', {
@@ -303,7 +317,7 @@ class SyncService {
           },
           (payload: any) => {
             if (import.meta.env.DEV) {
-              console.log('[SyncService] Real-time lesson change detected:', payload);
+              logSyncDebug('[SyncService] Real-time lesson change detected:', payload);
             }
 
             // Get course ID from module
@@ -332,7 +346,7 @@ class SyncService {
           },
           (payload: any) => {
             if (import.meta.env.DEV) {
-              console.log('[SyncService] Real-time assignment change detected:', payload);
+              logSyncDebug('[SyncService] Real-time assignment change detected:', payload);
             }
             const record = payload.new || payload.old;
             if (!record) return;
@@ -361,7 +375,7 @@ class SyncService {
           },
           (payload: any) => {
             if (import.meta.env.DEV) {
-              console.log('[SyncService] Real-time progress change detected:', payload);
+              logSyncDebug('[SyncService] Real-time progress change detected:', payload);
             }
 
             const record = payload.new || payload.old;
@@ -384,7 +398,7 @@ class SyncService {
       );
 
       if (import.meta.env.DEV) {
-        console.log('[SyncService] Real-time sync initialized successfully');
+        logSyncDebug('[SyncService] Real-time sync initialized successfully');
       }
     } catch (error) {
       console.error('[SyncService] Failed to initialize real-time sync:', error);
@@ -435,9 +449,9 @@ class SyncService {
   // Manual refresh methods for immediate sync
   async refreshCourse(courseId: string): Promise<void> {
     try {
-      if (import.meta.env.DEV) {
-        console.log('[SyncService] Manual course refresh triggered:', courseId);
-      }
+    if (import.meta.env.DEV) {
+      logSyncDebug('[SyncService] Manual course refresh triggered:', courseId);
+    }
       
       // If Supabase is configured, fetch from database
       if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
@@ -492,7 +506,7 @@ class SyncService {
       }
       
       if (import.meta.env.DEV) {
-        console.log('[SyncService] Course refresh completed:', courseId);
+        logSyncDebug('[SyncService] Course refresh completed:', courseId);
       }
     } catch (error) {
       console.error('Error refreshing course:', courseId, error);
@@ -502,9 +516,9 @@ class SyncService {
 
   async refreshAll(): Promise<void> {
     try {
-      if (import.meta.env.DEV) {
-        console.log('[SyncService] Global refresh triggered');
-      }
+    if (import.meta.env.DEV) {
+      logSyncDebug('[SyncService] Global refresh triggered');
+    }
       
       // Skip if a catalog fetch is already in progress — courseStore.init()
       // deduplicates concurrent calls via initPromise, but sequential calls
@@ -537,7 +551,7 @@ class SyncService {
       });
       
       if (import.meta.env.DEV) {
-        console.log('[SyncService] Global refresh completed');
+        logSyncDebug('[SyncService] Global refresh completed');
       }
     } catch (error) {
       console.error('Error during global refresh:', error);

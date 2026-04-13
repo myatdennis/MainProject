@@ -1718,9 +1718,6 @@ const ensureAssignmentScopedCatalog = async (
       };
     });
 
-    if (import.meta.env.DEV) {
-      console.log('[courseStore] Assignment filter reduced catalog to', filteredEntries.length, 'course(s).');
-    }
     saveCachedCatalog(cacheKey, filtered);
     setLearnerCatalogState({
       status: 'ok',

@@ -5,6 +5,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
+import AsyncStatePanel from '../../components/system/AsyncStatePanel';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse, slugify } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress, buildLearnerProgressSnapshot } from '../../utils/courseProgress';
@@ -17,6 +18,7 @@ const ClientLessonView = () => {
   const { courseId } = useParams();
   const [remoteCourse, setRemoteCourse] = useState<any | null>(null);
   const [remoteCourseLoading, setRemoteCourseLoading] = useState(false);
+  const [remoteCourseError, setRemoteCourseError] = useState<string | null>(null);
 
   const resolvedCourse = useMemo(() => {
     if (!courseId) return null;
@@ -29,12 +31,14 @@ const ClientLessonView = () => {
     if (!courseId || resolvedCourse) {
       setRemoteCourse(null);
       setRemoteCourseLoading(false);
+      setRemoteCourseError(null);
       return () => {
         cancelled = true;
       };
     }
 
     setRemoteCourseLoading(true);
+    setRemoteCourseError(null);
     void loadCourse(courseId, { includeDrafts: false, preferRemote: true })
       .then((result) => {
         if (cancelled) return;
@@ -42,11 +46,13 @@ const ClientLessonView = () => {
       })
       .catch((error) => {
         if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
         console.warn('[ClientLessonView] failed to load course from remote source', {
           courseId,
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
         });
         setRemoteCourse(null);
+        setRemoteCourseError(message || 'Unable to load this course right now.');
       })
       .finally(() => {
         if (!cancelled) {
@@ -111,11 +117,24 @@ const ClientLessonView = () => {
 
   if (remoteCourseLoading && !normalizedCourse) {
     return (
+      <div className="mx-auto flex min-h-[60vh] max-w-3xl flex-col items-center justify-center px-6 py-12 lg:px-12">
+        <AsyncStatePanel state="loading" loadingLabel="Loading lesson..." className="w-full" />
+      </div>
+    );
+  }
+
+  if (remoteCourseError && !normalizedCourse) {
+    return (
       <div className="mx-auto flex min-h-[60vh] max-w-3xl flex-col justify-center px-6 py-12 lg:px-12">
-        <Card tone="muted" className="space-y-3">
-          <h1 className="font-heading text-2xl font-bold text-charcoal">Loading lesson</h1>
-          <p className="text-sm text-slate/80">We’re loading your course details.</p>
-        </Card>
+        <AsyncStatePanel
+          state="error"
+          title="Unable to load this lesson"
+          message="We couldn’t fetch the course details right now. Check your connection and try again."
+          retryLabel="Back to courses"
+          onRetry={() => navigate('/client/courses')}
+          secondaryActionLabel="Refresh page"
+          onSecondaryAction={() => window.location.reload()}
+        />
       </div>
     );
   }

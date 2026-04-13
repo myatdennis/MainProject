@@ -1056,6 +1056,9 @@ export async function buildAuthContext(req, { optional = false } = {}) {
  */
 export async function authenticate(req, res, next) {
   try {
+    if (req?.authBypassed) {
+      return next();
+    }
     const token = resolveAccessTokenFromRequest(req);
     const explicitE2EHeader =
       String(req?.headers?.['x-e2e-bypass'] || '').trim().toLowerCase() === 'true' ||

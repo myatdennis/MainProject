@@ -1,4 +1,4 @@
-// Mock profile service for managing user and organization profiles with resources
+// Profile service for managing user and organization profiles with resources.
 import { UserProfile, OrganizationProfile, BaseResource, ResourceFilter, ResourceSendRequest } from '../models/Profile';
 import {
   listOrgProfiles as listOrgProfilesApi,
@@ -16,141 +16,9 @@ import notificationService from './notificationService';
 let userProfilesCache: UserProfile[] | null = null;
 let orgProfilesCache: OrganizationProfile[] | null = null;
 
-// Seed data for user profiles
-const seedUserProfiles = (): UserProfile[] => [
-  {
-    id: 'user-1',
-    userId: '1',
-    name: 'Sarah Chen',
-    email: 'sarah.chen@pacificcoast.edu',
-    role: 'VP Student Affairs',
-    organization: 'Pacific Coast University',
-    organizationId: '1',
-    enrollmentDate: '2025-01-15',
-    lastActivity: '2025-03-10',
-    bio: 'Passionate about student success and inclusive leadership development.',
-    avatar: 'https://images.pexels.com/photos/3184416/pexels-photo-3184416.jpeg?auto=compress&cs=tinysrgb&w=100',
-    contactInfo: {
-      phone: '+1 (555) 123-4567',
-      department: 'Student Affairs',
-      title: 'Vice President'
-    },
-    learningProgress: {
-      completedModules: 3,
-      totalModules: 5,
-      completionRate: 85,
-      modules: { foundations: 100, bias: 100, empathy: 100, conversations: 75, planning: 50 }
-    },
-    preferences: {
-      notifications: true,
-      emailUpdates: true,
-      language: 'en'
-    },
-    resources: [
-      {
-        id: 'res-1',
-        type: 'document',
-        title: 'Leadership Best Practices',
-        description: 'Comprehensive guide for effective leadership',
-        documentId: 'doc-123',
-        createdAt: '2025-03-01T10:00:00Z',
-        createdBy: 'Admin',
-        tags: ['leadership', 'best-practices'],
-        category: 'Training',
-        priority: 'high',
-        status: 'read'
-      }
-    ],
-    createdAt: '2025-01-15T08:00:00Z',
-    updatedAt: '2025-03-10T14:30:00Z'
-  },
-  {
-    id: 'user-2',
-    userId: '5',
-    name: 'Lisa Park',
-    email: 'lpark@techforward.com',
-    role: 'Chief HR Officer',
-    organization: 'TechForward Solutions',
-    organizationId: '5',
-    enrollmentDate: '2025-02-01',
-    lastActivity: '2025-03-11',
-    bio: 'Driving inclusive culture transformation in tech organizations.',
-    avatar: 'https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=100',
-    contactInfo: {
-      phone: '+1 (555) 987-6543',
-      department: 'Human Resources',
-      title: 'Chief HR Officer'
-    },
-    learningProgress: {
-      completedModules: 4,
-      totalModules: 5,
-      completionRate: 96,
-      modules: { foundations: 100, bias: 100, empathy: 100, conversations: 100, planning: 80 }
-    },
-    preferences: {
-      notifications: true,
-      emailUpdates: true,
-      language: 'en'
-    },
-    resources: [],
-    createdAt: '2025-02-01T08:00:00Z',
-    updatedAt: '2025-03-11T16:45:00Z'
-  }
-];
+const seedUserProfiles = (): UserProfile[] => [];
 
-// Seed data for organization profiles - sync with existing org data
-const seedOrgProfiles = (): OrganizationProfile[] => {
-  return [
-    {
-      id: 'org-profile-1',
-      orgId: '1',
-      name: 'Pacific Coast University',
-      type: 'University',
-      contactPerson: 'Dr. Sarah Chen',
-      contactEmail: 'sarah.chen@pacificcoast.edu',
-      description: 'Leading public university committed to inclusive excellence and student success.',
-      website: 'https://pacificcoast.edu',
-      logo: 'https://via.placeholder.com/120x120?text=PCU',
-      address: {
-        street: '123 University Ave',
-        city: 'San Francisco',
-        state: 'CA',
-        zip: '94122',
-        country: 'USA'
-      },
-      enrollmentDate: '2025-01-15',
-      status: 'active',
-      subscription: 'Premium',
-      lastActivity: '2025-03-11',
-      metrics: {
-        totalLearners: 45,
-        activeLearners: 42,
-        completionRate: 94,
-        totalDownloads: 127
-      },
-      cohorts: ['Spring 2025 Leadership', 'Faculty Development 2025'],
-      modules: { foundations: 98, bias: 91, empathy: 87, conversations: 82, planning: 76 },
-      notes: 'Excellent engagement. Requested additional modules for faculty.',
-      resources: [
-        {
-          id: 'org-res-1',
-          type: 'document',
-          title: 'University Leadership Framework',
-          description: 'Customized leadership framework for university settings',
-          documentId: 'doc-456',
-          createdAt: '2025-02-15T09:00:00Z',
-          createdBy: 'Admin',
-          tags: ['university', 'framework', 'leadership'],
-          category: 'Framework',
-          priority: 'high',
-          status: 'unread'
-        }
-      ],
-      createdAt: '2025-01-15T08:00:00Z',
-      updatedAt: '2025-03-11T12:00:00Z'
-    }
-  ];
-};
+const seedOrgProfiles = (): OrganizationProfile[] => [];
 
 // Storage helpers
 const readUserProfiles = (): UserProfile[] => {

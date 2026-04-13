@@ -21,19 +21,18 @@ const forceFlag = String(process.env.FORCE_DEPLOY_ENV_CHECK || '').toLowerCase()
 
 // If explicitly false → never strict.
 // If explicitly true → always strict.
-// Otherwise → strict only in CI, but NOT when this is a Railway deploy pipeline
-// (server secrets live in Railway env, not in the CI build step).
+// Otherwise production-like builds fail hard by default. Local development can
+// still opt out when needed.
 const isRailwayDeployContext =
   Boolean(process.env.RAILWAY_TOKEN) ||
   Boolean(process.env.RAILWAY_PROJECT_ID) ||
   (process.env.RAILWAY_SERVICE_NAME || '').length > 0;
 const isProductionRuntime = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+const isCi = process.env.CI === 'true' || process.env.CI === '1';
+const isProtectedDeployContext = isProductionRuntime || isCi || isNetlifyFrontendBuild || isRailwayDeployContext;
 const shouldEnforceStrict =
   forceFlag === 'true' ||
-  (forceFlag !== 'false' && (
-    isProductionRuntime ||
-    ((process.env.CI === 'true' || process.env.CI === '1') && !isRailwayDeployContext)
-  ));
+  (forceFlag !== 'false' && isProtectedDeployContext);
 const invokingScript = process.env.npm_lifecycle_event || '';
 // Skip client-env validation only for server-only workflows or the Railway API service.
 const skipClientValidation =
@@ -110,7 +109,7 @@ if (shouldFailServer || shouldFailClient) {
 }
 
 if (hasMissing) {
-  console.warn('\nMissing env vars detected but strict enforcement disabled; continuing.');
+  console.warn('\nMissing env vars detected in a non-production local context; continuing because strict enforcement is disabled.');
 }
 
 process.exit(0);

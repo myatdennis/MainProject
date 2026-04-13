@@ -179,6 +179,7 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
   const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [modalFormData, setModalFormData] = useState<any>({});
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [draggedItem, setDraggedItem] = useState<LessonContent | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'video' | 'quiz' | 'interactive' | 'resource' | 'reflection'>('all');
@@ -202,6 +203,7 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
       setCurrentPrerequisite('');
       setActiveTab('basic');
       setSuccessMessage(null);
+      setErrorMessage(null);
       setAiSuggestions([]);
       setSearchFilter('');
       setTypeFilter('all');
@@ -289,8 +291,6 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
         try {
           onSave(updatedCourse);
           setAutosaveStatus('saved');
-          console.log('✅ Auto-saved course:', updatedCourse.title);
-          
           // Clear saved status after 2 seconds
           setTimeout(() => setAutosaveStatus('idle'), 2000);
         } catch (error) {
@@ -315,31 +315,15 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
         let videoUrl = formData.videoUrl;
         
         if (formData.videoSource === 'upload' && formData.videoFile) {
-          console.log('📹 Processing uploaded video file:', {
-            fileName: formData.videoFile.name,
-            fileSize: formData.videoFile.size,
-            fileType: formData.videoFile.type
-          });
-          
           // For now, store file metadata but use fallback video in LMS
           // This provides a clear indication that file upload functionality 
           // needs proper cloud storage implementation
           videoUrl = `uploaded:${formData.videoFile.name}`;
           
-          console.log('📹 Marked as uploaded video, will use fallback in LMS:', videoUrl);
-          
         } else if (!videoUrl || videoUrl.trim() === '') {
           // Don't set a default URL here - let the LMS handle fallback
           videoUrl = undefined;
         }
-        
-        console.log('🎥 Creating video content with:', {
-          videoSource: formData.videoSource,
-          videoFile: formData.videoFile?.name,
-          videoUrl: formData.videoUrl,
-          finalVideoUrl: videoUrl,
-          hasFile: !!formData.videoFile
-        });
         
         newContent = {
           id: `lesson-${Date.now()}`,
@@ -472,7 +456,6 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
     if (confirm('Are you sure you want to delete this content item?')) {
       setLessonContents(prev => prev.filter(item => item.id !== id));
       triggerAutosave();
-      console.log(`🗑️ Removed content item: ${id}`);
     }
   };
 
@@ -525,7 +508,8 @@ ${content.type === 'video' && 'url' in content.content ? `\nVideo URL: ${content
 ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${content.content.questions?.length || 0}` : ''}
     `.trim();
     
-    alert(`Content Preview:\n\n${contentInfo}`);
+    setErrorMessage(null);
+    setSuccessMessage(contentInfo);
   };
 
   // Drag and Drop handlers
@@ -604,14 +588,13 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     if (type === 'video') {
       const allowedVideoTypes = ['video/mp4', 'video/mov', 'video/avi', 'video/webm'];
       if (!allowedVideoTypes.includes(file.type)) {
-        alert('Please upload a valid video file (MP4, MOV, AVI, WebM)');
+        setErrorMessage('Please upload a valid video file (MP4, MOV, AVI, WebM).');
         return;
       }
     }
     
     // Create a URL for the file to show preview
-    const fileUrl = URL.createObjectURL(file);
-    console.log('File uploaded:', file.name, fileUrl);
+    URL.createObjectURL(file);
     // Here you would typically upload to your CDN/storage service
   };
 
@@ -630,27 +613,28 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
 
   const handleAddContent = () => {
     if (!modalFormData.title?.trim()) {
-      alert('Please enter a title');
+      setErrorMessage('Please enter a title.');
       return;
     }
     
     // Validate required fields based on content type
     if (contentType === 'video' && modalFormData.videoSource === 'url' && !modalFormData.videoUrl?.trim()) {
-      alert('Please enter a video URL');
+      setErrorMessage('Please enter a video URL.');
       return;
     }
     
     if (contentType === 'resource' && !modalFormData.url?.trim()) {
-      alert('Please enter a resource URL');
+      setErrorMessage('Please enter a resource URL.');
       return;
     }
     
     if (contentType === 'reflection' && !modalFormData.question?.trim()) {
-      alert('Please enter a reflection question');
+      setErrorMessage('Please enter a reflection question.');
       return;
     }
     
     // Create and add the content
+    setErrorMessage(null);
     createContentFromModal(modalFormData);
     
     // Update course metadata
@@ -668,7 +652,6 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     // Show success message
     const contentTypeName = contentType.charAt(0).toUpperCase() + contentType.slice(1);
     setSuccessMessage(`✅ ${contentTypeName} "${modalFormData.title}" added successfully!`);
-    console.log(`✅ Added ${contentType}:`, modalFormData.title);
     
     // Clear success message after 3 seconds
     setTimeout(() => setSuccessMessage(null), 3000);
@@ -731,10 +714,11 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
 
     if (!summary.isValid) {
       const message = formatValidationIssues(validationIssues);
-      alert(`Please fix the following issues:\n\n${message}`);
+      setErrorMessage(message ? `Please fix the following issues:\n\n${message}` : 'Please fix the validation issues before saving.');
       return;
     }
 
+    setErrorMessage(null);
     if (optimizationScore >= 80) {
       setSuccessMessage('🎉 Excellent! Your course meets all quality standards.');
     } else if (optimizationScore >= 60) {
@@ -742,12 +726,6 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     } else {
       setSuccessMessage('✅ Course saved. Check the Analytics tab for improvement suggestions.');
     }
-
-    console.log('💾 Saving course with enhanced data:', {
-      formData: coursePayload,
-      lessonContents,
-      convertedModules: coursePayload.modules,
-    });
 
     setTimeout(() => setSuccessMessage(null), 5000);
     onSave(coursePayload);
@@ -846,13 +824,6 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
 
   // Convert our LessonContent to courseStore Lesson format
   const convertLessonContentToLesson = (content: any) => {
-    console.log('🔧 Converting lesson content:', {
-      title: content.title,
-      type: content.type,
-      rawContent: content.content,
-      hasContentObject: typeof content.content === 'object' && content.content
-    });
-    
     const lesson: any = {
       id: content.id,
       title: content.title,
@@ -872,14 +843,6 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
           // Check for valid video URLs from various sources
           const videoUrl = videoContent.url || videoContent.videoUrl;
           const hasValidUrl = videoUrl && videoUrl.trim() !== '';
-          
-          console.log('🎬 Processing video content:', {
-            videoContent,
-            videoUrl,
-            hasValidUrl,
-            isBlobUrl: videoUrl?.startsWith('blob:'),
-            videoSourceType: videoContent.type
-          });
           
           lesson.content = {
             videoUrl: hasValidUrl ? videoUrl : undefined,
@@ -939,7 +902,7 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     const validationIssues = summary.issues ?? [];
     if (!summary.isValid) {
       const message = formatValidationIssues(validationIssues);
-      alert(`Cannot publish course. Please fix the following:\n\n${message}`);
+      setErrorMessage(message ? `Cannot publish course. Please fix the following:\n\n${message}` : 'Cannot publish course until the validation issues are resolved.');
       return;
     }
 
@@ -965,13 +928,14 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
 
         onSave(saved);
         setSuccessMessage('✅ Course published successfully');
+        setErrorMessage(null);
         setAutosaveStatus('saved');
         setTimeout(() => setAutosaveStatus('idle'), 2000);
         setTimeout(() => setSuccessMessage(null), 5000);
       } catch (err: any) {
         console.error('Publish error:', err);
         setAutosaveStatus('error');
-        alert(`Publish failed: ${err?.message || String(err)}`);
+        setErrorMessage(`Publish failed: ${err?.message || String(err)}`);
         setTimeout(() => setAutosaveStatus('idle'), 3000);
       }
     })();
@@ -1401,6 +1365,11 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
               {successMessage && (
                 <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
                   {successMessage}
+                </div>
+              )}
+              {errorMessage && (
+                <div className="mb-4 whitespace-pre-line p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+                  {errorMessage}
                 </div>
               )}
 

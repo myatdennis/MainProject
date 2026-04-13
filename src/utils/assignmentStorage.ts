@@ -520,8 +520,12 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
     const params = new URLSearchParams({
       include_completed: 'true',
     });
-    const response = await apiRequest<{ data?: any[] }>(`/api/client/assignments?${params.toString()}`);
-    const rows = Array.isArray(response?.data) ? response.data : [];
+    const response = await apiRequest<any[] | { data?: any[] }>(`/api/client/assignments?${params.toString()}`);
+    const rows = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.data)
+      ? response.data
+      : [];
     if (!rows.length) {
       return { rows: [], failed: false };
     }

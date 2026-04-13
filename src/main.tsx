@@ -34,6 +34,12 @@ const devConsole = {
   },
 };
 
+const debugBoot = (...args: unknown[]) => {
+  if (import.meta.env?.DEV) {
+    console.log(...args);
+  }
+};
+
 devConsole.log('🚀 MainProject App initializing...');
 devConsole.log('📍 Environment:', import.meta.env.MODE);
 devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
@@ -370,26 +376,18 @@ const serviceWorkerEnabled =
   !isAdminSurface;
 
 if (serviceWorkerEnabled) {
-  if (import.meta.env.DEV) {
-    console.log('📦 Production mode: Registering service worker...');
-  }
+  debugBoot('[app] registering service worker');
   serviceWorkerManager
     .register({
       onSuccess: () => {
-        if (import.meta.env.DEV) {
-          console.log('✅ Admin portal is ready for offline use');
-        }
+        debugBoot('[app] service worker ready for offline use');
       },
       onUpdate: (registration) => {
-        if (import.meta.env.DEV) {
-          console.log('🔄 New version available');
-        }
+        debugBoot('[app] updated service worker available');
         showServiceWorkerUpdateToast(registration);
       },
       onOfflineReady: () => {
-        if (import.meta.env.DEV) {
-          console.log('💾 Admin portal cached for offline use');
-        }
+        debugBoot('[app] service worker cached assets');
       },
       onError: () => {
         showServiceWorkerErrorToast();
@@ -403,15 +401,13 @@ if (serviceWorkerEnabled) {
       showServiceWorkerErrorToast();
     });
 } else {
-  if (import.meta.env.DEV) {
-    console.log('🛠️ Service worker disabled for this build', {
-      deployContext,
-      hostLooksLikePreview,
-      isAdminSurface,
-      swAllowed: supportsServiceWorker && import.meta.env.PROD,
-      reason: swFlag === 'true' ? (isAdminSurface ? 'admin_surface_guard' : 'preview_guard') : 'flag_disabled',
-    });
-  }
+  debugBoot('[app] service worker disabled for this build', {
+    deployContext,
+    hostLooksLikePreview,
+    isAdminSurface,
+    swAllowed: supportsServiceWorker && import.meta.env.PROD,
+    reason: swFlag === 'true' ? (isAdminSurface ? 'admin_surface_guard' : 'preview_guard') : 'flag_disabled',
+  });
   serviceWorkerManager.forceCleanup().catch((error) => {
     console.warn('[SW] Failed to perform cleanup:', error);
   });

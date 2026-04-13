@@ -1,6 +1,13 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useEnhancedCourseProgress } from './useEnhancedCourseProgress';
 
+const debugLearningAnalytics = (...args: unknown[]) => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+  console.log(...args);
+};
+
 interface PerformanceMetrics {
   sessionStart: number;
   timeSpent: number;
@@ -110,7 +117,7 @@ export const useLearningAnalytics = (options: UseLearningAnalyticsOptions = {}) 
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
     });
 
-    console.log('[LearningAnalytics] Session started:', sessionId);
+    debugLearningAnalytics('[LearningAnalytics] Session started:', sessionId);
   }, [userId, courseId]);
 
   // Track learning activity
@@ -136,7 +143,7 @@ export const useLearningAnalytics = (options: UseLearningAnalyticsOptions = {}) 
     // Update metrics based on activity type
     updateMetrics(type, data, duration);
 
-    console.log('[LearningAnalytics] Activity tracked:', type, data);
+    debugLearningAnalytics('[LearningAnalytics] Activity tracked:', type, data);
   }, [enabled]);
 
   // Update performance metrics
@@ -335,7 +342,7 @@ export const useLearningAnalytics = (options: UseLearningAnalyticsOptions = {}) 
 
       localStorage.setItem('learning_sessions', JSON.stringify(existingSessions));
       
-      console.log('[LearningAnalytics] Session data submitted:', sessionData.id);
+      debugLearningAnalytics('[LearningAnalytics] Session data submitted:', sessionData.id);
       
       // Clear submitted activities
       activitiesRef.current = [];
@@ -359,7 +366,7 @@ export const useLearningAnalytics = (options: UseLearningAnalyticsOptions = {}) 
     sessionRef.current.endTime = new Date();
     setCurrentSession(null);
 
-    console.log('[LearningAnalytics] Session ended:', sessionRef.current.id);
+    debugLearningAnalytics('[LearningAnalytics] Session ended:', sessionRef.current.id);
   }, [trackActivity, submitSessionData]);
 
   // Public methods for lesson-specific tracking

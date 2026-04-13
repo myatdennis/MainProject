@@ -164,7 +164,7 @@ describe('GuidedReflectionFlow', () => {
     await user.click(screen.getByRole('button', { name: /begin reflection/i }));
     await user.click(await screen.findByRole('button', { name: /take a moment to think/i }));
 
-    const input = await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...');
+  const input = await screen.findByPlaceholderText('Take a moment to reflect and write your thoughts here...');
     await user.type(input, 'Initial reflection');
     await waitFor(() => expect(mockSaveLearnerReflection).toHaveBeenCalledTimes(1), { timeout: 2500 });
 
@@ -250,7 +250,9 @@ describe('GuidedReflectionFlow', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /submit reflection/i }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Save failed. Your draft is still safe on this device.');
+    await waitFor(async () => {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Save failed. Your draft is still safe on this device.');
+    }, { timeout: 2000 });
     expect(onComplete).not.toHaveBeenCalled();
   }, 12000);
 });

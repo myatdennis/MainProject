@@ -147,6 +147,10 @@ export const ImageSkeleton: React.FC<ImageSkeletonProps> = ({
 // Performance monitoring hook
 export const usePerformanceMonitoring = () => {
   useEffect(() => {
+    if (!import.meta.env.DEV || typeof PerformanceObserver === 'undefined') {
+      return;
+    }
+
     // Web Vitals monitoring
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {

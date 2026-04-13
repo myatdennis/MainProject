@@ -16,7 +16,7 @@ import {
 import { supabase } from '../../lib/supabaseClient';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
-type AuthMode = 'admin' | 'lms';
+type AuthMode = 'admin' | 'lms' | 'client';
 
 interface RequireAuthProps {
   mode: AuthMode;
@@ -27,6 +27,7 @@ interface RequireAuthProps {
 const loginPathByMode: Record<AuthMode, string> = {
   admin: '/admin/login',
   lms: '/login',
+  client: '/login',
 };
 
 const ADMIN_GATE_TIMEOUT_MS = 15000;
@@ -630,7 +631,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         clearTimeout(adminGateTimeoutRef.current);
         adminGateTimeoutRef.current = null;
         if (import.meta.env.DEV) {
-          console.log('[RequireAuth][admin] gate_timeout cleared', {
+          console.debug('[RequireAuth][admin] gate_timeout cleared', {
             adminGateStatus,
             sessionStatus,
             orgResolutionStatus,
@@ -645,7 +646,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       clearTimeout(adminGateTimeoutRef.current);
     }
     if (import.meta.env.DEV) {
-      console.log('[RequireAuth][admin] gate_timeout started', {
+      console.debug('[RequireAuth][admin] gate_timeout started', {
         timeoutMs: ADMIN_GATE_TIMEOUT_MS,
         adminGateStatus,
         sessionStatus,
@@ -658,7 +659,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       const latest = adminGateStateRef.current;
       if (!latest.waiting) {
         if (import.meta.env.DEV) {
-          console.log('[RequireAuth][admin] gate_timeout ignored (state ready)', latest);
+          console.debug('[RequireAuth][admin] gate_timeout ignored (state ready)', latest);
         }
         return;
       }
@@ -667,7 +668,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       setAdminGateError('timeout');
       logGuardEvent('admin_gate_timeout', { timeoutMs: ADMIN_GATE_TIMEOUT_MS });
       if (import.meta.env.DEV) {
-        console.log('[RequireAuth][admin] gate_timeout fired', latest);
+        console.debug('[RequireAuth][admin] gate_timeout fired', latest);
       }
     }, ADMIN_GATE_TIMEOUT_MS);
 
@@ -676,7 +677,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         clearTimeout(adminGateTimeoutRef.current);
         adminGateTimeoutRef.current = null;
         if (import.meta.env.DEV) {
-          console.log('[RequireAuth][admin] gate_timeout cleanup');
+          console.debug('[RequireAuth][admin] gate_timeout cleanup');
         }
       }
     };
@@ -877,7 +878,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   if (mode === 'admin') {
     if (ROUTE_GUARD_DEBUG && typeof window !== 'undefined') {
-      console.log('[RequireAuth][admin] gate_state', {
+      console.debug('[RequireAuth][admin] gate_state', {
         sessionStatus,
         orgResolutionStatus,
         surfaceStatus: effectiveSurfaceState,
@@ -887,9 +888,19 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       });
     }
   } else {
-    if (!isAuthenticated.lms) {
-      const lmsTarget = loginPathByMode.lms;
-      if (!isOnModeLoginPath) {
+    const clientSurfaceAllowed = mode === 'client' ? Boolean(isAuthenticated.client) : Boolean(isAuthenticated.lms);
+    if (!clientSurfaceAllowed) {
+      const clientTarget = loginPathByMode[mode];
+        // If the current session is an admin-only account (no client surface),
+        // send the user to the admin portal instead of leaving the client page
+        // blank. This avoids a confusing empty render for platform admins.
+        if (isAuthenticated?.admin) {
+          // If already on admin login, let other logic handle it; otherwise redirect.
+          if (location.pathname !== '/admin') {
+            return <Navigate to="/admin" replace />;
+          }
+        }
+        if (!isOnModeLoginPath) {
         // Guard: same bootstrap-in-progress check — do not redirect while
         // auth is still initializing.  isAuthenticated.lms is false transiently
         // during bootstrap before the session payload is applied.
@@ -903,20 +914,24 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         if (authStatus !== 'unauthenticated') {
           return null;
         }
-        logRedirectOnce(lmsTarget, 'missing_lms_session');
-        logGuardEvent('redirect_login', { reason: 'missing_lms_session' });
+        const reason = mode === 'client' ? 'missing_client_session' : 'missing_lms_session';
+        logRedirectOnce(clientTarget, reason);
+        logGuardEvent('redirect_login', { reason });
         if (import.meta.env.DEV) {
           console.debug('[REQUIRE_AUTH_REDIRECT]', {
             pathname: location.pathname,
             authInitializing,
             authStatus,
             membershipStatus,
-            target: lmsTarget,
+            target: clientTarget,
           });
         }
-        return <Navigate to={lmsTarget} state={{ from: location, reason: 'missing_lms_session' }} replace />;
+        return <Navigate to={clientTarget} state={{ from: location, reason }} replace />;
       }
-      logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
+      logGuardEvent('render_login_route', {
+        reason: mode === 'client' ? 'missing_client_session' : 'missing_lms_session',
+        target: clientTarget,
+      });
       return null;
     }
     const hasMembershipContext = memberships.length > 0 || Boolean(activeOrgId);

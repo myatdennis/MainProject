@@ -1151,9 +1151,6 @@ export class CourseService {
       //      via /api/admin/me before any admin API call proceeds.
       //   2. The server enforces authenticate + requireAdmin on every /api/admin/* route.
       const endpoint = '/api/admin/courses?includeStructure=true&includeLessons=true';
-      if (import.meta.env.DEV) {
-        console.log('[CourseService.getAllCoursesFromDatabase] request_url', endpoint);
-      }
       const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(
         endpoint,
         { noTransform: true, skipAdminGateCheck: true },

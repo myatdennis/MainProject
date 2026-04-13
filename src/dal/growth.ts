@@ -60,20 +60,20 @@ export type GrowthProfileResponse = {
 
 export async function fetchGrowthProfile(): Promise<GrowthProfileResponse | null> {
   try {
-    const res = await apiRequest<{ data: GrowthProfileResponse }>('/api/client/growth', {
+    const res = await apiRequest<GrowthProfileResponse>('/api/client/growth', {
       credentials: 'include',
       headers: buildOrgHeaders(),
     });
-    return res?.data ?? null;
+    return res ?? null;
   } catch {
     return null;
   }
 }
 
 export async function fetchOrgGrowthMetrics(): Promise<OrgGrowthMetrics | null> {
-  const res = await apiRequest<{ data: OrgGrowthMetrics }>('/api/client/growth/org', {
+  const res = await apiRequest<OrgGrowthMetrics>('/api/client/growth/org', {
     credentials: 'include',
     headers: buildOrgHeaders(),
   });
-  return res?.data ?? null;
+  return res ?? null;
 }

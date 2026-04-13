@@ -38,6 +38,15 @@ const isIpv4Literal = (host) => /^\d+\.\d+\.\d+\.\d+$/.test(host || '')
 const shouldForceIpv4 = (host) => Boolean(host) && host !== 'localhost' && host !== '127.0.0.1' && !isIpv4Literal(host)
 
 const PG_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
+const CONNECTION_FAILOVER_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ETIMEDOUT',
+])
 
 const DB_CONNECTION_SOURCES = [
   { key: 'DATABASE_POOLER_URL', type: 'pooler' },
@@ -246,11 +255,67 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
   return metadata
 }
 
-const connectionMetadata = await initializeConnectionMetadata(connectionSource.value, connectionSource)
+const deriveProjectRefFromSupabaseUrl = (value = '') => {
+  try {
+    const host = new URL(value).hostname
+    const match = host.match(/^([a-z0-9]{15,})\.supabase\.(?:co|net)$/i)
+    return match ? match[1].toLowerCase() : null
+  } catch {
+    return null
+  }
+}
+
+const buildDirectConnectionFallback = (rawConnectionString, source = {}) => {
+  if (!rawConnectionString || source?.type !== 'pooler') {
+    return null
+  }
+  const explicitDirectUrl =
+    process.env.SUPABASE_DB_URL?.trim() ||
+    process.env.DATABASE_URL?.trim() ||
+    ''
+  if (explicitDirectUrl) {
+    return {
+      key: source.key === 'DATABASE_POOLER_URL' ? 'DATABASE_URL' : 'SUPABASE_DB_URL',
+      type: 'direct',
+      value: explicitDirectUrl,
+      derivedFrom: source.key,
+      synthesized: false,
+    }
+  }
+  try {
+    const parsed = new URL(rawConnectionString)
+    const projectRef =
+      deriveProjectRefFromSupabaseUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '') ||
+      (parsed.username.includes('.') ? parsed.username.split('.').slice(1).join('.') : null)
+    if (!projectRef) {
+      return null
+    }
+    parsed.hostname = `db.${projectRef}.supabase.co`
+    parsed.port = '5432'
+    parsed.username = 'postgres'
+    return {
+      key: 'DATABASE_URL',
+      type: 'direct',
+      value: parsed.toString(),
+      derivedFrom: source.key,
+      synthesized: true,
+      projectRef,
+    }
+  } catch {
+    return null
+  }
+}
+
+const initialConnectionMetadata = await initializeConnectionMetadata(connectionSource.value, connectionSource)
+const directConnectionFallback = buildDirectConnectionFallback(connectionSource.value, connectionSource)
+const directFallbackMetadata = directConnectionFallback
+  ? await initializeConnectionMetadata(directConnectionFallback.value, directConnectionFallback)
+  : null
+let activeConnectionMetadata = initialConnectionMetadata
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const createPool = () => {
-  const connectionString = connectionMetadata.connectionString || ''
+const createPool = (metadata) => {
+  const connectionString = metadata.connectionString || ''
   const shouldTrustSelfSigned =
     connectionString && !connectionString.includes('localhost') && ALLOW_DB_SELF_SIGNED
 
@@ -274,18 +339,63 @@ const createPool = () => {
   return pool
 }
 
-export const pool = createPool()
+const describeConnectionMetadata = (metadata) => ({
+  sourceEnv: metadata.source?.key ?? null,
+  sourceType: metadata.source?.type ?? null,
+  host: metadata.finalHostUsed ?? metadata.originalHost ?? null,
+  port: metadata.originalPort ?? null,
+  forcedIpv4: metadata.forcedIpv4,
+  ipv4RewriteEligible: metadata.ipv4RewriteEligible,
+  connectionStringDefined: Boolean(metadata.connectionString),
+  usingPooler: metadata.source?.type === 'pooler',
+  projectRef: metadata.projectRef ?? null,
+  allowSelfSigned: metadata.selfSignedAllowed,
+  tlsMode: metadata.selfSignedAllowed ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
+})
+
+const canFailOverToDirectConnection = (error, metadata) => {
+  if (!directFallbackMetadata || metadata.source?.type !== 'pooler') {
+    return false
+  }
+  const code = String(error?.code || '').trim().toUpperCase()
+  return CONNECTION_FAILOVER_ERROR_CODES.has(code)
+}
+
+const activateConnectionMetadata = (metadata, reason, error = null) => {
+  if (!metadata || metadata.connectionString === activeConnectionMetadata.connectionString) {
+    return false
+  }
+  const previousPool = pool
+  activeConnectionMetadata = metadata
+  pool = createPool(activeConnectionMetadata)
+  sqlClient = null
+  if (previousPool && typeof previousPool.end === 'function') {
+    previousPool.end().catch(() => {})
+  }
+  console.warn('[server/db] connection_failover_activated', {
+    reason,
+    from: describeConnectionMetadata(initialConnectionMetadata),
+    to: describeConnectionMetadata(activeConnectionMetadata),
+    errorCode: error?.code || null,
+    errorMessage: error?.message || null,
+    synthesized: Boolean(activeConnectionMetadata.source?.synthesized),
+    derivedFrom: activeConnectionMetadata.source?.derivedFrom ?? null,
+  })
+  return true
+}
+
+export let pool = createPool(activeConnectionMetadata)
 
 export const getDatabaseConnectionInfo = () => ({
-  sourceEnv: connectionMetadata.source?.key ?? null,
-  sourceType: connectionMetadata.source?.type ?? null,
-  host: connectionMetadata.finalHostUsed ?? connectionMetadata.originalHost ?? null,
-  port: connectionMetadata.originalPort ?? null,
-  forcedIpv4: connectionMetadata.forcedIpv4,
-  ipv4RewriteEligible: connectionMetadata.ipv4RewriteEligible,
-  connectionStringDefined: Boolean(connectionMetadata.connectionString),
-  usingPooler: connectionMetadata.source?.type === 'pooler',
-  projectRef: connectionMetadata.projectRef ?? null,
+  sourceEnv: activeConnectionMetadata.source?.key ?? null,
+  sourceType: activeConnectionMetadata.source?.type ?? null,
+  host: activeConnectionMetadata.finalHostUsed ?? activeConnectionMetadata.originalHost ?? null,
+  port: activeConnectionMetadata.originalPort ?? null,
+  forcedIpv4: activeConnectionMetadata.forcedIpv4,
+  ipv4RewriteEligible: activeConnectionMetadata.ipv4RewriteEligible,
+  connectionStringDefined: Boolean(activeConnectionMetadata.connectionString),
+  usingPooler: activeConnectionMetadata.source?.type === 'pooler',
+  projectRef: activeConnectionMetadata.projectRef ?? null,
   allowSelfSigned: ALLOW_DB_SELF_SIGNED,
   tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
 })
@@ -307,6 +417,12 @@ export async function testConnection (retries = 3) {
       })
       return true
     }
+    if (canFailOverToDirectConnection(error, activeConnectionMetadata)) {
+      const switched = activateConnectionMetadata(directFallbackMetadata, 'pooler_resolution_failed', error)
+      if (switched) {
+        return testConnection(retries)
+      }
+    }
     if (retries <= 0) {
       console.error('[server/db] connection_test_failed', {
         message: error?.message || String(error),
@@ -327,7 +443,7 @@ const ensureSqlClient = () => {
     return sqlClient
   }
 
-  const connectionString = connectionMetadata.connectionString
+  const connectionString = activeConnectionMetadata.connectionString
   if (!connectionString) {
     console.warn('[server/db] WARNING: database connection string is not set. Configure DATABASE_POOLER_URL or DATABASE_URL before starting the server.')
   }
@@ -354,7 +470,7 @@ const ensureSqlClient = () => {
     throw error
   }
 
-  if (!connectionMetadata.error) {
+  if (!activeConnectionMetadata.error) {
     try {
       const url = connectionString ? new URL(connectionString) : null
       if (url) {
@@ -368,11 +484,11 @@ const ensureSqlClient = () => {
             port,
             database,
             user,
-            connectionSource: connectionMetadata.source?.key ?? null,
-            usingPooler: connectionMetadata.source?.type === 'pooler',
-            forcedIpv4: connectionMetadata.forcedIpv4 || false,
-            originalHost: connectionMetadata.originalHost,
-            finalHostUsed: connectionMetadata.finalHostUsed,
+            connectionSource: activeConnectionMetadata.source?.key ?? null,
+            usingPooler: activeConnectionMetadata.source?.type === 'pooler',
+            forcedIpv4: activeConnectionMetadata.forcedIpv4 || false,
+            originalHost: activeConnectionMetadata.originalHost,
+            finalHostUsed: activeConnectionMetadata.finalHostUsed,
             allowSelfSigned: ALLOW_DB_SELF_SIGNED,
             tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify',
           })
@@ -384,8 +500,8 @@ const ensureSqlClient = () => {
   } else {
     if (shouldLogDbDiagnostics) {
       console.warn('[server/db] Connection metadata reported an error', {
-        message: connectionMetadata.error?.message || String(connectionMetadata.error),
-        originalHost: connectionMetadata.originalHost,
+        message: activeConnectionMetadata.error?.message || String(activeConnectionMetadata.error),
+        originalHost: activeConnectionMetadata.originalHost,
       })
     }
   }
@@ -407,7 +523,7 @@ const sql = new Proxy(function sqlProxy () {}, {
 export let dbStartupHealthy = false
 
 try {
-  if (connectionMetadata.connectionString) {
+  if (activeConnectionMetadata.connectionString) {
     await testConnection()
     dbStartupHealthy = true
     if (shouldLogDbDiagnostics) {

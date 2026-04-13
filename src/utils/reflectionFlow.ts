@@ -298,7 +298,7 @@ export const normalizeGuidedReflectionConfig = (content: Record<string, unknown>
     (typeof record.requiredResponseStepId === 'string' && record.requiredResponseStepId.trim()) ||
     null;
 
-  const normalizedSteps = (() => {
+  const normalizedSteps: GuidedReflectionStep[] = (() => {
     const rawSteps = guided && Array.isArray(guided.steps) ? guided.steps : null;
     if (rawSteps) {
       return rawSteps
@@ -383,7 +383,7 @@ export const normalizeGuidedReflectionConfig = (content: Record<string, unknown>
         responseType: 'textarea',
       },
     ];
-  })();
+  })() as GuidedReflectionStep[];
 
   const firstResponseStepId =
     normalizedSteps.find((step) => step.responseType && step.responseType !== 'none')?.id ?? null;

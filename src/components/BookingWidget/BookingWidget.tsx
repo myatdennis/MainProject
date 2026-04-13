@@ -133,13 +133,32 @@ const BookingWidget: React.FC<BookingWidgetProps> = ({ isOpen, onClose }) => {
   const submitBooking = async () => {
     setLoading(true);
     try {
-      // Mock API call - replace with actual booking service
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
+      const subject = `${form.sessionType} request from ${form.firstName} ${form.lastName}`.trim();
+      const bodyLines = [
+        `Name: ${form.firstName} ${form.lastName}`.trim(),
+        `Email: ${form.email}`,
+        `Phone: ${form.phone || 'Not provided'}`,
+        `Company: ${form.company}`,
+        `Role: ${form.role || 'Not provided'}`,
+        `Timezone: ${form.timeZone}`,
+        `Preferred date: ${form.preferredDate}`,
+        `Preferred time: ${form.preferredTime}`,
+        `Session type: ${form.sessionType}`,
+        '',
+        'Notes:',
+        form.message || 'No additional notes provided.',
+      ];
+      const mailtoUrl = `mailto:support@thehuddleco.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+        bodyLines.join('\n'),
+      )}`;
+
+      if (typeof window !== 'undefined') {
+        window.location.href = mailtoUrl;
+      }
       setStep('confirmation');
-      showToast('Your discovery call has been scheduled!', 'success');
+      showToast('Your booking request draft is ready to send.', 'success');
     } catch (error) {
-      showToast('Failed to schedule call. Please try again.', 'error');
+      showToast('Unable to prepare the booking request right now. Please try again.', 'error');
     } finally {
       setLoading(false);
     }

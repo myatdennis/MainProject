@@ -1,5 +1,5 @@
  
-name: CI Build & Test
+name: Launch Gate
 
 on:
   push:
@@ -89,6 +89,38 @@ jobs:
           else
             echo 'dist directory missing; skipping scan';
           fi
+
+  supabase_rls:
+    name: Supabase RLS Gate
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      SUPABASE_TEST_SERVICE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+      SUPABASE_TEST_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+      REQUIRE_SUPABASE_RLS_TESTS: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies (ci)
+        run: npm ci
+
+      - name: Assert Supabase RLS secrets are configured
+        run: |
+          if [ -z "${SUPABASE_TEST_URL}" ] || [ -z "${SUPABASE_TEST_SERVICE_KEY}" ] || [ -z "${SUPABASE_TEST_ANON_KEY}" ]; then
+            echo "Supabase RLS CI secrets are missing."
+            echo "Configure SUPABASE_TEST_URL, SUPABASE_TEST_SERVICE_KEY, and SUPABASE_TEST_ANON_KEY for launch-gating branches."
+            exit 1
+          fi
+
+      - name: Run Supabase RLS policy tests
+        run: npx vitest run tests/integration/rls.policies.spec.ts --config tests/vitest.integration.config.ts
 
       # Final cleanup: no duplicate steps
 

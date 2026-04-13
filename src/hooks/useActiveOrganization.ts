@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useSecureAuth } from '../context/SecureAuthContext';
 import type { UserMembership } from '../lib/secureStorage';
 
-type SessionSurface = 'admin' | 'lms';
+type SessionSurface = 'admin' | 'lms' | 'client';
 
 export interface ActiveOrganizationOption {
   id: string;

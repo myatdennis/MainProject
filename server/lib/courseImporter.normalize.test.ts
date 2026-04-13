@@ -308,4 +308,21 @@ describe('course importer normalization', () => {
     expect(entries[0]?.course?.title).toBe('Array Course');
     expect(entries[0]?.modules?.length).toBe(1);
   });
+
+  it('copies nested course slug and title to the normalized import entry root', () => {
+    const payload = {
+      items: [
+        {
+          course: { title: 'Nested Course', slug: 'nested-course' },
+          modules: [{ title: 'Module A', lessons: [] }],
+        },
+      ],
+    };
+    const { entries } = normalizeImportEntries(payload);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.course?.slug).toBe('nested-course');
+    expect(entries[0]?.slug).toBe('nested-course');
+    expect(entries[0]?.course?.title).toBe('Nested Course');
+    expect(entries[0]?.title).toBe('Nested Course');
+  });
 });

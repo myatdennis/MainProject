@@ -137,8 +137,7 @@ export class ErrorBoundary extends React.Component<
     // Log to external service in production (if needed)
     if (import.meta.env.PROD) {
       try {
-        // Could send to error tracking service here
-        console.log('Production error logged');
+        // Reserved for external error tracking integration.
       } catch (e) {
         // Ignore logging errors
       }

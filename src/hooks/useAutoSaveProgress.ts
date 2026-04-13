@@ -2,6 +2,13 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import toast from 'react-hot-toast';
 
+const debugAutoSave = (...args: unknown[]) => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+  console.log(...args);
+};
+
 interface ProgressData {
   courseId: string;
   lessonId: string;
@@ -83,7 +90,7 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
         lastAccessed: data.lastAccessed.toISOString()
       };
       localStorage.setItem(key, JSON.stringify(saveData));
-      console.log('[AutoSave] Saved to local storage:', key);
+      debugAutoSave('[AutoSave] Saved to local storage:', key);
     } catch (error) {
       console.error('[AutoSave] Failed to save to local storage:', error);
     }
@@ -110,7 +117,7 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
     try {
       const key = `autosave_${userId}_${courseId}_${moduleId}_${lessonId}`;
       localStorage.removeItem(key);
-      console.log('[AutoSave] Cleared stored progress:', key);
+      debugAutoSave('[AutoSave] Cleared stored progress:', key);
     } catch (error) {
       console.error('[AutoSave] Failed to clear stored progress:', error);
     }
@@ -152,7 +159,7 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
         return false;
       }
 
-      console.log('[AutoSave] Successfully saved to database:', generateSaveId(data));
+      debugAutoSave('[AutoSave] Successfully saved to database:', generateSaveId(data));
       return true;
     } catch (error) {
       console.error('[AutoSave] Database save exception:', error);

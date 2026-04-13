@@ -1,432 +1,217 @@
-import { useState } from 'react';
-import { BarChart3, TrendingUp, Download, Calendar, Filter, RefreshCw, Eye, Share } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import {
+  Activity,
+  ArrowUpRight,
+  BarChart3,
+  ClipboardList,
+  FileText,
+  ShieldCheck,
+  Users,
+} from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
+import Badge from '../../components/ui/Badge';
 import { useToast } from '../../context/ToastContext';
 
+type ReportRouteCard = {
+  id: string;
+  title: string;
+  description: string;
+  to: string;
+  cta: string;
+  status: 'live' | 'review';
+  icon: typeof BarChart3;
+  notes: string[];
+};
+
+const REPORT_ROUTES: ReportRouteCard[] = [
+  {
+    id: 'platform-analytics',
+    title: 'Platform Analytics',
+    description: 'Use the live analytics dashboard for completion, engagement, and adoption metrics.',
+    to: '/admin/analytics',
+    cta: 'Open analytics',
+    status: 'live',
+    icon: BarChart3,
+    notes: [
+      'Backed by live course, learner, and completion data.',
+      'Best entry point for launch reviews and operational checks.',
+    ],
+  },
+  {
+    id: 'survey-results',
+    title: 'Survey Results',
+    description: 'Review survey response data, completion trends, and HDI analytics from the survey surfaces.',
+    to: '/admin/surveys',
+    cta: 'Open surveys',
+    status: 'live',
+    icon: ClipboardList,
+    notes: [
+      'Use individual survey analytics for cohort, participant, and pre/post comparisons.',
+      'No synthetic numbers are shown here.',
+    ],
+  },
+  {
+    id: 'learner-operations',
+    title: 'Learner Operations',
+    description: 'Monitor user access, onboarding, and assignment coverage from the admin users surface.',
+    to: '/admin/users',
+    cta: 'Open users',
+    status: 'live',
+    icon: Users,
+    notes: [
+      'Useful for assignment verification and org-level access audits.',
+      'Pairs with analytics when completion issues need user-level inspection.',
+    ],
+  },
+  {
+    id: 'documents-resources',
+    title: 'Documents & Resources',
+    description: 'Audit distributed resources, documents, and supporting materials from the admin documents area.',
+    to: '/admin/documents',
+    cta: 'Open documents',
+    status: 'live',
+    icon: FileText,
+    notes: [
+      'Use this to verify learner-facing collateral before launch.',
+      'Supports org-scoped resource checks.',
+    ],
+  },
+  {
+    id: 'system-health',
+    title: 'System Health',
+    description: 'Validate deploy readiness, integrations, and operational checks from the health dashboard.',
+    to: '/admin/health',
+    cta: 'Open health',
+    status: 'review',
+    icon: ShieldCheck,
+    notes: [
+      'Use before launch or after deploys.',
+      'Covers service readiness better than synthetic report summaries ever could.',
+    ],
+  },
+  {
+    id: 'workspace-review',
+    title: 'Org Workspace Review',
+    description: 'Inspect org-level execution details, planning artifacts, and action tracking in the workspace.',
+    to: '/admin/org-workspace',
+    cta: 'Open workspace',
+    status: 'review',
+    icon: Activity,
+    notes: [
+      'Useful for delivery reviews and client success follow-up.',
+      'Use alongside survey and learner analytics for account-level reviews.',
+    ],
+  },
+];
+
+const STATUS_TONE: Record<ReportRouteCard['status'], 'positive' | 'info'> = {
+  live: 'positive',
+  review: 'info',
+};
+
+const STATUS_LABEL: Record<ReportRouteCard['status'], string> = {
+  live: 'Live data',
+  review: 'Operational review',
+};
+
 const AdminReports = () => {
-  const [dateRange, setDateRange] = useState('last-30-days');
-  const [reportType, setReportType] = useState('overview');
   const { showToast } = useToast();
 
-  const refreshReports = () => {
-    console.log('Refreshing reports...');
-    showToast('Reports refreshed', 'success');
-  };
+  const copyReportChecklist = async () => {
+    const checklist = [
+      '1. Review Platform Analytics for completion and engagement trends.',
+      '2. Verify survey completion and response health in Admin Surveys.',
+      '3. Audit user access and assignments in Admin Users.',
+      '4. Confirm supporting resources in Admin Documents.',
+      '5. Run launch checks in Admin Health.',
+    ].join('\n');
 
-  const exportReport = () => {
-    const data = { exportedAt: new Date().toISOString(), reportType };
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
-    const a = document.createElement('a');
-    a.setAttribute('href', dataStr);
-    a.setAttribute('download', `report-${reportType}-${Date.now()}.json`);
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  };
-
-  const generateNewReport = () => {
-    showToast('Generating report…', 'info');
-  };
-
-  const viewReport = (name: string) => {
-    window.open(`/admin/report-preview?name=${encodeURIComponent(name)}`, '_blank');
-  };
-
-  const downloadReport = (name: string) => {
-    const text = `Report: ${name}\nGenerated: ${new Date().toLocaleString()}`;
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name.replace(/\s+/g, '_').toLowerCase()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const shareReport = (name: string) => {
-    const link = `${window.location.origin}/admin/reports?shared=${encodeURIComponent(name)}`;
-    navigator.clipboard?.writeText(link)
-      .then(() => showToast('Report link copied to clipboard', 'success'))
-      .catch(() => showToast('Copy not supported', 'error'));
-  };
-
-  const overviewStats = [
-    { label: 'Total Learners', value: '247', change: '+12%', changeType: 'positive' },
-    { label: 'Course Completions', value: '1,234', change: '+8%', changeType: 'positive' },
-    { label: 'Avg. Completion Time', value: '3.2 days', change: '-15%', changeType: 'positive' },
-    { label: 'Satisfaction Score', value: '4.8/5', change: '+0.2', changeType: 'positive' }
-  ];
-
-  const modulePerformance = [
-    { name: 'Foundations of Inclusive Leadership', enrollments: 247, completions: 198, rate: 80, avgTime: '45 min', rating: 4.9 },
-    { name: 'Empathy in Action', enrollments: 156, completions: 124, rate: 79, avgTime: '38 min', rating: 4.9 },
-    { name: 'Recognizing and Mitigating Bias', enrollments: 189, completions: 142, rate: 75, avgTime: '58 min', rating: 4.8 },
-    { name: 'Personal & Team Action Planning', enrollments: 98, completions: 67, rate: 68, avgTime: '35 min', rating: 4.7 },
-    { name: 'Courageous Conversations at Work', enrollments: 45, completions: 23, rate: 51, avgTime: '52 min', rating: 4.6 }
-  ];
-
-  const organizationPerformance = [
-    { name: 'Pacific Coast University', learners: 45, completion: 94, engagement: 'High', lastActivity: '2025-03-11' },
-    { name: 'Community Impact Network', learners: 28, completion: 91, engagement: 'High', lastActivity: '2025-03-10' },
-    { name: 'Regional Medical Center', learners: 67, completion: 89, engagement: 'Medium', lastActivity: '2025-03-11' },
-    { name: 'Mountain View High School', learners: 23, completion: 87, engagement: 'High', lastActivity: '2025-03-09' },
-    { name: 'TechForward Solutions', learners: 34, completion: 85, engagement: 'High', lastActivity: '2025-03-11' }
-  ];
-
-  const engagementData = [
-    { day: 'Mon', logins: 45, completions: 12, feedback: 8 },
-    { day: 'Tue', logins: 52, completions: 18, feedback: 11 },
-    { day: 'Wed', logins: 38, completions: 15, feedback: 9 },
-    { day: 'Thu', logins: 61, completions: 22, feedback: 14 },
-    { day: 'Fri', logins: 43, completions: 16, feedback: 7 },
-    { day: 'Sat', logins: 28, completions: 8, feedback: 3 },
-    { day: 'Sun', logins: 31, completions: 9, feedback: 4 }
-  ];
-
-  const feedbackSummary = [
-    { category: 'Content Quality', score: 4.8, responses: 156, trend: '+0.2' },
-    { category: 'Ease of Use', score: 4.6, responses: 142, trend: '+0.1' },
-    { category: 'Relevance', score: 4.9, responses: 168, trend: '+0.3' },
-    { category: 'Support Quality', score: 4.7, responses: 89, trend: '+0.1' }
-  ];
-
-  const reports = [
-    {
-      name: 'Monthly Progress Report',
-      description: 'Comprehensive overview of learner progress and completion rates',
-      lastGenerated: '2025-03-01',
-      format: 'PDF',
-      size: '2.3 MB'
-    },
-    {
-      name: 'Organization Performance',
-      description: 'Detailed breakdown by organization with engagement metrics',
-      lastGenerated: '2025-03-01',
-      format: 'Excel',
-      size: '1.8 MB'
-    },
-    {
-      name: 'Course Analytics',
-      description: 'Module-by-module analysis with completion and feedback data',
-      lastGenerated: '2025-02-28',
-      format: 'PDF',
-      size: '3.1 MB'
-    },
-    {
-      name: 'Learner Engagement',
-      description: 'Daily and weekly engagement patterns and trends',
-      lastGenerated: '2025-02-28',
-      format: 'Excel',
-      size: '1.2 MB'
-    }
-  ];
-
-  const getEngagementColor = (engagement: string) => {
-    switch (engagement) {
-      case 'High':
-        return 'bg-green-100 text-green-800';
-      case 'Medium':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'Low':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+    try {
+      await navigator.clipboard.writeText(checklist);
+      showToast('Launch reporting checklist copied', 'success');
+    } catch {
+      showToast('Copy not supported on this device', 'error');
     }
   };
 
   return (
-    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-      {/* Header */}
-      <div className="mb-6">
-        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Reports', to: '/admin/reports' }]} />
-      </div>
-      <div className="mb-8 space-y-2">
-        <h1 className="text-3xl font-bold text-gray-900">Reports & Analytics</h1>
-        <p className="text-sm text-gray-600 sm:text-base">Comprehensive insights into learner progress, engagement, and course effectiveness</p>
-      </div>
+    <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+      <Breadcrumbs
+        items={[
+          { label: 'Admin', to: '/admin' },
+          { label: 'Reports', to: '/admin/reports' },
+        ]}
+      />
 
-      {/* Filters */}
-      <div className="card-lg card-hover mb-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Date Range</label>
-              <div className="flex items-center space-x-2">
-              <Calendar className="h-5 w-5 text-gray-400" />
-              <select
-                value={dateRange}
-                onChange={(e) => setDateRange(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
-              >
-                <option value="last-7-days">Last 7 Days</option>
-                <option value="last-30-days">Last 30 Days</option>
-                <option value="last-90-days">Last 90 Days</option>
-                <option value="last-year">Last Year</option>
-                <option value="custom">Custom Range</option>
-              </select>
-            </div>
-            </div>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Report Type</label>
-              <div className="flex items-center space-x-2">
-              <Filter className="h-5 w-5 text-gray-400" />
-              <select
-                value={reportType}
-                onChange={(e) => setReportType(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
-              >
-                <option value="overview">Overview</option>
-                <option value="learners">Learner Progress</option>
-                <option value="courses">Course Performance</option>
-                <option value="organizations">Organizations</option>
-                <option value="engagement">Engagement</option>
-              </select>
-            </div>
-            </div>
+      <Card tone="gradient" withBorder={false}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-skyblue">Reporting hub</p>
+            <h1 className="mt-2 font-heading text-3xl font-bold text-charcoal">Operational reporting without synthetic data</h1>
+            <p className="mt-3 text-sm text-slate/80">
+              This page now acts as a real reporting index. Use the live admin analytics, survey, user, document,
+              workspace, and health surfaces below instead of relying on fabricated summary cards.
+            </p>
           </div>
-          
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={refreshReports} variant="ghost" size="sm" leadingIcon={<RefreshCw className="h-4 w-4" />}>
-              Refresh
+          <div className="flex flex-wrap gap-3">
+            <Button asChild size="sm">
+              <Link to="/admin/analytics">Open Analytics</Link>
             </Button>
-            <Button onClick={exportReport} size="sm" leadingIcon={<Download className="h-4 w-4" />}>
-              Export Report
+            <Button size="sm" variant="secondary" onClick={copyReportChecklist}>
+              Copy review checklist
             </Button>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {overviewStats.map((stat, index) => (
-          <div key={index} className="card-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">{stat.label}</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
-                <div className="flex items-center mt-2">
-                  <span className={`text-sm font-medium ${
-                    stat.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {stat.change}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {REPORT_ROUTES.map((card) => {
+          const Icon = card.icon;
+          return (
+            <Card key={card.id} className="space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-skyblue/10 text-skyblue">
+                    <Icon className="h-5 w-5" />
                   </span>
-                  <span className="text-sm text-gray-500 ml-1">vs last period</span>
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-orange-50">
-                <TrendingUp className="h-6 w-6 text-orange-500" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        {/* Module Performance */}
-        <div className="card-lg">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Module Performance</h2>
-          <div className="space-y-4">
-            {modulePerformance.map((module, index) => (
-              <div key={index} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-gray-900 text-sm">{module.name}</h3>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm font-bold text-gray-900">{module.rate}%</span>
-                    <div className="flex items-center space-x-1">
-                      <span className="text-sm text-gray-600">{module.rating}</span>
-                      <div className="text-yellow-400 text-sm">★</div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-heading text-lg font-semibold text-charcoal">{card.title}</h2>
+                      <Badge tone={STATUS_TONE[card.status]}>{STATUS_LABEL[card.status]}</Badge>
                     </div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
-                  <span>{module.completions}/{module.enrollments} completed</span>
-                  <span>Avg: {module.avgTime}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="h-2 rounded-full"
-                    style={{ width: `${module.rate}%`, background: 'var(--gradient-blue-green)'}}
-                  ></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Weekly Engagement */}
-        <div className="card-lg">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Weekly Engagement</h2>
-          <div className="space-y-4">
-            {engagementData.map((day, index) => (
-              <div key={index} className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 text-sm font-medium text-gray-900">{day.day}</div>
-                  <div className="flex items-center space-x-6">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                      <span className="text-sm text-gray-600">{day.logins} logins</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                      <span className="text-sm text-gray-600">{day.completions} completions</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
-                      <span className="text-sm text-gray-600">{day.feedback} feedback</span>
-                    </div>
+                    <p className="mt-2 text-sm text-slate/75">{card.description}</p>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
 
-      {/* Organization Performance */}
-      <div className="card-lg mb-8">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Organization Performance</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Organization</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Learners</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Completion Rate</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Engagement</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Last Activity</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold uppercase tracking-wide text-gray-700">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {organizationPerformance.map((org, index) => (
-                <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-4 px-4">
-                    <div className="font-medium text-gray-900">{org.name}</div>
-                  </td>
-                  <td className="py-4 px-4 text-center">
-                    <div className="font-medium text-gray-900">{org.learners}</div>
-                  </td>
-                  <td className="py-4 px-4 text-center">
-                    <div className="flex flex-col items-center">
-                      <div className="font-bold text-gray-900">{org.completion}%</div>
-                      <div className="w-16 bg-gray-200 rounded-full h-1 mt-1">
-                        <div 
-                          className="h-1 rounded-full"
-                          style={{ width: `${org.completion}%`, background: 'var(--gradient-blue-green)'}}
-                        ></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-4 px-4 text-center">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getEngagementColor(org.engagement)}`}>
-                      {org.engagement}
-                    </span>
-                  </td>
-                  <td className="py-4 px-4 text-center text-sm text-gray-600">
-                    {new Date(org.lastActivity).toLocaleDateString()}
-                  </td>
-                  <td className="py-4 px-4 text-center">
-                    <button 
-                      className="rounded-md p-1 text-blue-600 hover:bg-blue-50 hover:text-blue-800" 
-                      title="View Details"
-                      aria-label="View organization details"
-                      tabIndex={0}
-                      role="button"
-                      data-tooltip-id={`tooltip-view-org-${org.name}`}
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
-                    <span id={`tooltip-view-org-${org.name}`} className="sr-only">View organization details</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              <ul className="space-y-2 text-sm text-slate/80">
+                {card.notes.map((note) => (
+                  <li key={note} className="rounded-xl bg-cloud/60 px-3 py-2">
+                    {note}
+                  </li>
+                ))}
+              </ul>
 
-      {/* Feedback Summary */}
-      <div className="card-lg mb-8">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Feedback Summary</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {feedbackSummary.map((feedback, index) => (
-            <div key={index} className="text-center">
-              <div className="text-2xl font-bold text-gray-900 mb-1">{feedback.score}</div>
-              <div className="text-sm font-medium text-gray-700 mb-1">{feedback.category}</div>
-              <div className="text-xs text-gray-500 mb-2">{feedback.responses} responses</div>
-              <div className="text-xs text-green-600 font-medium">{feedback.trend} vs last month</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Generated Reports */}
-      <div className="card-lg">
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-xl font-bold text-gray-900">Generated Reports</h2>
-          <Button onClick={generateNewReport} size="sm" leadingIcon={<BarChart3 className="h-4 w-4" />}>
-            Generate New Report
-          </Button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {reports.map((report, index) => (
-            <div key={index} className="card-lg hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="font-medium text-gray-900">{report.name}</h3>
-                  <p className="text-sm text-gray-600 mt-1">{report.description}</p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <button 
-                    onClick={() => viewReport(report.name)} 
-                    className="p-1 text-blue-600 hover:text-blue-800" 
-                    title="View"
-                    aria-label={`View report: ${report.name}`}
-                    tabIndex={0}
-                    role="button"
-                    data-tooltip-id={`tooltip-view-report-${report.name}`}
-                  >
-                    <Eye className="h-4 w-4" />
-                  </button>
-                  <button 
-                    onClick={() => downloadReport(report.name)} 
-                    className="p-1 text-gray-600 hover:text-gray-800" 
-                    title="Download"
-                    aria-label={`Download report: ${report.name}`}
-                    tabIndex={0}
-                    role="button"
-                    data-tooltip-id={`tooltip-download-report-${report.name}`}
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-                  <button 
-                    onClick={() => shareReport(report.name)} 
-                    className="p-1 text-gray-600 hover:text-gray-800" 
-                    title="Share"
-                    aria-label={`Share report: ${report.name}`}
-                    tabIndex={0}
-                    role="button"
-                    data-tooltip-id={`tooltip-share-report-${report.name}`}
-                  >
-                    <Share className="h-4 w-4" />
-                  </button>
-                  {/* Tooltips for icon-only actions */}
-                  <span id={`tooltip-view-report-${report.name}`} className="sr-only">View report</span>
-                  <span id={`tooltip-download-report-${report.name}`} className="sr-only">Download report</span>
-                  <span id={`tooltip-share-report-${report.name}`} className="sr-only">Share report</span>
-                </div>
+              <div className="flex flex-wrap gap-3">
+                <Button asChild size="sm" trailingIcon={<ArrowUpRight className="h-4 w-4" />}>
+                  <Link to={card.to}>{card.cta}</Link>
+                </Button>
               </div>
-              <div className="flex items-center justify-between text-sm text-gray-500">
-                <span>Generated: {new Date(report.lastGenerated).toLocaleDateString()}</span>
-                <span>{report.format} • {report.size}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+            </Card>
+          );
+        })}
       </div>
+
+      <Card tone="muted" className="space-y-3">
+        <h2 className="font-heading text-lg font-semibold text-charcoal">Why this changed</h2>
+        <p className="text-sm text-slate/80">
+          The previous reports page displayed hardcoded totals, synthetic organizations, and fabricated engagement
+          trends. That is unacceptable for production reporting. This replacement keeps the route useful while ensuring
+          every reporting action takes you to a live data surface.
+        </p>
+      </Card>
     </div>
   );
 };

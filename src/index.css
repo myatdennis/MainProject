@@ -1,10 +1,17 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Lato:wght@400&family=Quicksand:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@700&family=Lato:wght@400&family=Quicksand:wght@400&display=swap');
 /* Import unified design tokens to ensure brand variables are available */
 @import './styles/design-tokens.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html {
+  font-family: 'Inter', system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
 body {
 	@apply text-charcoal font-body;
@@ -16,16 +23,6 @@ body {
 	color: var(--color-charcoal);
 	font-size: 16px;
 	line-height: 1.6;
-}
-
-/* Global link styling using tokens for contrast/hover */
-a {
-  color: var(--link);
-  text-decoration: none;
-}
-a:hover {
-  color: var(--link-hover);
-  text-decoration: underline;
 }
 
 h1, .h1 {

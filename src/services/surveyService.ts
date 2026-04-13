@@ -1,6 +1,7 @@
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import type { Survey } from '../types/survey';
 import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+import { getAnalytics as getSurveyAnalyticsFromDal } from '../dal/surveys';
 
 const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
   apiRequest<T>(path, options);
@@ -95,26 +96,8 @@ export const saveAssignments = async (surveyId: string, organizationIds: string[
   }
 };
 
-// Mock analytics; later replace with real aggregation queries
-export const getAnalytics = async (surveyId: string) => {
-  // If supabase is configured, you would query response tables and aggregate.
-  // For now, return a mocked analytics object.
-  return {
-    surveyId,
-    title: 'Mock Survey Analytics',
-    totalResponses: 180,
-    completionRate: 78,
-    avgCompletionTime: 13,
-    questionSummaries: [
-      { questionId: 'belonging-1', avgScore: 3.8 },
-      { questionId: 'safety-1', avgScore: 3.6 }
-    ],
-    insights: [
-      'Belonging scores above average in Engineering',
-      'New hires report lower psychological safety'
-    ]
-  };
-};
+export const getAnalytics = async (surveyId: string, options: { organizationId?: string } = {}) =>
+  getSurveyAnalyticsFromDal(surveyId, options);
 
 export const saveSurvey = async (survey: Survey) => {
   const payload = {
