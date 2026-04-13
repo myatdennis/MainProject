@@ -398,6 +398,18 @@ const deriveProjectRefFromHost = (host) => {
 };
 const supabaseProjectRef = deriveProjectRefFromHost(supabaseUrlHost);
 const databaseProjectRef = databaseConnectionInfo.projectRef ?? null;
+// Hoisted placeholders for runtime-initialized Supabase clients.
+// Declared early to avoid TDZ/reference errors when routers or helpers
+// capture these variables at module-eval time. They will be assigned
+// by the lazy initializer later during startup.
+let supabase = null;
+let supabaseAuthClient = null;
+// In-memory E2E/demo store placeholders. These are assigned later when demo/E2E
+// mode is initialized, but we declare them early so code that wires app.locals
+// or routes at module-eval time doesn't hit TDZ ReferenceErrors in production
+// or containerized environments where initialization may be delayed.
+let e2eStore = null;
+let persistE2EStore = async () => {};
 const supabaseProjectAlignment =
   supabaseProjectRef && databaseProjectRef
     ? supabaseProjectRef === databaseProjectRef
@@ -2351,8 +2363,6 @@ console.log('[supabase] startup', {
 });
 
 // Initialize supabase clients lazily with retries to avoid crashing on transient DNS/network issues.
-let supabase = null;
-let supabaseAuthClient = null;
 
 async function initializeSupabaseWithRetry({ maxAttempts = 5, initialDelayMs = 500 } = {}) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
@@ -2758,7 +2768,7 @@ if (supabaseServerConfigured && !_loadCoursesFromDisk && (persistedData.courses 
   });
 }
 
-const e2eStore = {
+e2eStore = {
   // isDemoMode/E2E always boot the in-memory demo catalog from disk so admin
   // and learner flows have stable content even when Supabase is configured but
   // intentionally bypassed.
@@ -5551,7 +5561,7 @@ const e2eFindLesson = (lessonId) => {
 };
 
 // Helper to persist data after any modification
-const persistE2EStore = () => {
+persistE2EStore = () => {
   if (isDemoOrTestMode) {
     savePersistedData(e2eStore);
   }
