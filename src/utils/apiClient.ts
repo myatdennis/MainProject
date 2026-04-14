@@ -855,6 +855,12 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
   if (options?.skipAdminGateCheck || options?.allowAnonymous) {
     return;
   }
+  if (isAuthBootstrapping()) {
+    if (import.meta.env?.DEV) {
+      console.debug('[apiClient] Skipping admin access gate while auth bootstrap is in progress', { path });
+    }
+    return;
+  }
   const pathname = extractPathname(path);
   if (!ADMIN_PATH_PATTERN.test(pathname) || pathname === '/api/admin/me') {
     return;
@@ -882,11 +888,19 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
     try {
       const supabase = await getSupabase();
       if (!supabase) {
-        throw new Error('Not authenticated');
+        if (import.meta.env?.DEV) {
+          console.debug('[apiClient] Skipping admin access gate because Supabase client is unavailable');
+        }
+        return null;
       }
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session) {
-        throw new Error('Not authenticated');
+        if (import.meta.env?.DEV) {
+          console.debug('[apiClient] Skipping admin access gate because Supabase session is unavailable', {
+            error: error?.message ?? null,
+          });
+        }
+        return null;
       }
       const accessToken = data.session.access_token;
 

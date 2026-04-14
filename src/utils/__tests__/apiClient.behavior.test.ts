@@ -3,6 +3,7 @@ import { __setApiBaseUrlOverride } from '../../config/apiBase';
 import * as sessionGate from '../../lib/sessionGate';
 import { supabase } from '../../lib/supabaseClient';
 import { __setTestOrgContext } from '../../lib/orgContext';
+import * as authBootstrapState from '../../lib/authBootstrapState';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
 const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
@@ -19,6 +20,7 @@ const getActiveSessionSpy = vi.spyOn(sessionGate, 'getActiveSession');
 const supabaseGetSessionSpy = vi.spyOn(supabase.auth, 'getSession');
 const supabaseRefreshSessionSpy = vi.spyOn(supabase.auth, 'refreshSession');
 const supabaseSignOutSpy = vi.spyOn(supabase.auth, 'signOut');
+const authBootstrapSpy = vi.spyOn(authBootstrapState, 'isAuthBootstrapping');
 
 const originalFetch = globalThis.fetch;
 const fetchSpy = vi.fn();
@@ -126,6 +128,7 @@ describe('apiClient', () => {
     } as any);
     supabaseSignOutSpy.mockResolvedValue({ error: null } as any);
     debugSpy.mockClear();
+    authBootstrapSpy.mockReturnValue(false);
     vi.unstubAllEnvs();
     __setApiBaseUrlOverride();
     setPathname('/admin/dashboard');
@@ -134,6 +137,7 @@ describe('apiClient', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    authBootstrapSpy.mockReset();
     if ((window as any).__API_DEBUG__) {
       delete (window as any).__API_DEBUG__;
     }
@@ -440,5 +444,19 @@ describe('apiClient', () => {
     expect(getHeaderValue(headers, 'Authorization')).toBeUndefined();
     expect(getHeaderValue(headers, 'X-User-Role')).toBeUndefined();
     expect(getHeaderValue(headers, 'X-Org-Id')).toBeUndefined();
+  });
+
+  it('skips admin access gate when auth bootstrap is in progress', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    shouldRequireSessionSpy.mockReturnValue(true);
+    authBootstrapSpy.mockReturnValue(true);
+    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+    const { apiRequest } = await loadApiClient();
+
+    await apiRequest('/api/admin/courses');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]?.[0] ?? '')).toContain('/api/admin/courses');
   });
 });

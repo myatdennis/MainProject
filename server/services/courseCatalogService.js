@@ -46,11 +46,16 @@ export const createCourseCatalogService = ({
       };
     }
 
+    const resolveMembershipOrgId = (membership) =>
+      normalizeOrgIdValue(
+        membership?.orgId ?? membership?.organizationId ?? membership?.organization_id ?? membership?.org_id ?? null,
+      );
+
     const isPlatformAdmin = Boolean(context.isPlatformAdmin);
     let adminOrgIds = Array.isArray(context.memberships)
       ? context.memberships
-          .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
-          .map((membership) => normalizeOrgIdValue(membership.orgId))
+          .filter((membership) => hasOrgAdminRole(membership.role) && resolveMembershipOrgId(membership))
+          .map(resolveMembershipOrgId)
           .filter(Boolean)
       : [];
     let allowedOrgIdSet = new Set(adminOrgIds);
@@ -66,7 +71,7 @@ export const createCourseCatalogService = ({
 
         adminOrgIds = (adminMemberships || [])
           .filter((membership) => hasOrgAdminRole(membership.role))
-          .map((membership) => membership.organization_id)
+          .map((membership) => normalizeOrgIdValue(membership.organization_id))
           .filter(Boolean);
         allowedOrgIdSet = new Set(adminOrgIds);
       } catch (membershipLookupError) {
