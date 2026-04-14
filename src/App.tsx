@@ -101,6 +101,9 @@ const AdminIntegrations = lazy(() => import('./pages/Admin/AdminIntegrations'));
 const AdminIntegrationConfig = lazy(() => import('./pages/Admin/AdminIntegrationConfig'));
 const AdminCertificates = lazy(() => import('./pages/Admin/AdminCertificates'));
 const AdminTeamHuddleModeration = lazy(() => import('./pages/Admin/AdminTeamHuddleModeration'));
+const OrgWorkspaceStrategicPlans = lazy(() => import('./components/OrgWorkspace/StrategicPlansPage'));
+const OrgWorkspaceSessionNotes = lazy(() => import('./components/OrgWorkspace/SessionNotesPage'));
+const OrgWorkspaceActionTracker = lazy(() => import('./components/OrgWorkspace/ActionTrackerPage'));
 
 const AdminProtectedLayout = () => {
   const loc = useLocation();
@@ -425,7 +428,22 @@ function AppContent() {
               </Suspense>
             }
           />
-          <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
+          <Route
+            path="/client-portal/org/:orgId/*"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading workspace..." />}>
+                <ErrorBoundary>
+                  <OrgWorkspaceProtectedLayout />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          >
+            <Route index element={<Navigate to="strategic-plans" replace />} />
+            <Route path="strategic-plans" element={<OrgWorkspaceStrategicPlans />} />
+            <Route path="session-notes" element={<OrgWorkspaceSessionNotes />} />
+            <Route path="action-tracker" element={<OrgWorkspaceActionTracker />} />
+            <Route path="documents" element={<ClientDocuments />} />
+          </Route>
 
           {/* ── Client portal ──────────────────────────────────────────── */}
           <Route

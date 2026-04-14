@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Button from '../ui/Button';
@@ -63,6 +63,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     logout,
   } = useSecureAuth();
   const location = useLocation();
+  const params = useParams<Record<string, string | undefined>>();
   // Once authentication succeeds once, this ref stays true for the lifetime of
   // the component.  After this point the spinner is NEVER shown for route
   // transitions — only the initial cold-start boot needs the loading screen.
@@ -221,17 +222,20 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   void activeMembership;
 
   const requestedOrgParam = useMemo(() => {
-    if (!location.search) {
-      return null;
+    let param: string | null = null;
+    if (location.search) {
+      try {
+        const query = new URLSearchParams(location.search);
+        param = query.get('orgId') ?? query.get('organizationId');
+      } catch (error) {
+        console.warn('[RequireAuth] Failed to parse orgId from search params', error);
+      }
     }
-    try {
-      const params = new URLSearchParams(location.search);
-      return params.get('orgId') ?? params.get('organizationId');
-    } catch (error) {
-      console.warn('[RequireAuth] Failed to parse orgId from search params', error);
-      return null;
+    if (param) {
+      return param;
     }
-  }, [location.search]);
+    return params.orgId ?? params.organizationId ?? null;
+  }, [location.search, params.orgId, params.organizationId]);
 
   useEffect(() => {
     setRequestedOrgHint(requestedOrgParam ?? null);

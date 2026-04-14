@@ -81,7 +81,16 @@ let warnedMissingConfig = false;
 export const SUPABASE_MISSING_CONFIG_MESSAGE =
   'Supabase configuration missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.';
 
-export const hasSupabaseConfig = () => Boolean(supabaseUrl && supabaseAnonKey);
+const hasE2ESupabaseOverride = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return Boolean((window as any).__E2E_SUPABASE_CLIENT);
+  } catch {
+    return false;
+  }
+};
+
+export const hasSupabaseConfig = () => Boolean(hasE2ESupabaseOverride() || (supabaseUrl && supabaseAnonKey));
 
 export function getSupabase(): SupabaseClient | null {
   // Allow E2E tests to provide an in-browser override client. Tests can set
