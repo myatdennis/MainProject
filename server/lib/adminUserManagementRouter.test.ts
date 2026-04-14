@@ -2,10 +2,10 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAdminUserManagementRouter } from '../routes/adminUserManagement.js';
 
-const createApp = () => {
+const createApp = (): { app: express.Application; e2eStore: any } => {
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => {
+  app.use((req: any, _res: any, next: any) => {
     req.requestId = 'admin-users-req-1';
     req.user = {
       userId: '00000000-0000-0000-0000-000000000001',
@@ -15,7 +15,7 @@ const createApp = () => {
     next();
   });
 
-  const e2eStore = {
+  const e2eStore: any = {
     users: [
       {
         id: 'member-1',
@@ -30,12 +30,12 @@ const createApp = () => {
   app.use(
     '/api/admin/users',
     createAdminUserManagementRouter({
-      authenticate: vi.fn((_req, _res, next) => next()),
-      requireAdmin: vi.fn((_req, _res, next) => next()),
+      authenticate: vi.fn((_req: any, _res: any, next: any) => next()),
+      requireAdmin: vi.fn((_req: any, _res: any, next: any) => next()),
       isDemoOrTestMode: true,
       e2eStore,
-      normalizeOrgIdValue: (value) => (typeof value === 'string' && value.trim() ? value.trim() : null),
-      pickOrgId: (...values) => values.find((value) => typeof value === 'string' && value.trim()) ?? null,
+      normalizeOrgIdValue: (value: any) => (typeof value === 'string' && value.trim() ? value.trim() : null),
+      pickOrgId: (...values: any[]) => values.find((value) => typeof value === 'string' && value.trim()) ?? null,
       ensureSupabase: vi.fn(() => true),
       requireUserContext: vi.fn(() => ({
         userId: 'admin-1',
@@ -47,7 +47,7 @@ const createApp = () => {
       runSupabaseTransientRetry: vi.fn(),
       fetchAllOrgMembersWithProfiles: vi.fn(),
       fetchOrgMembersWithProfiles: vi.fn(),
-      logUsersStageError: vi.fn((stage, error) => ({
+      logUsersStageError: vi.fn((stage: any, error: any) => ({
         code: error?.code ?? stage,
         message: error?.message ?? 'unexpected error',
         details: null,
@@ -60,9 +60,9 @@ const createApp = () => {
       getOrganizationMembershipsOrgColumnName: vi.fn(async () => 'organization_id'),
       invalidateMembershipCache: vi.fn(),
       assignPublishedOrganizationContentToUser: vi.fn(),
-      archiveOrganizationUserAccount: vi.fn(async ({ userId, orgId }) => ({ userId, orgId, archived: true })),
+      archiveOrganizationUserAccount: vi.fn(async ({ userId, orgId }: any) => ({ userId, orgId, archived: true })),
       permanentlyDeleteUserAccount: vi.fn(async () => undefined),
-      normalizeOrgRole: (value) => (typeof value === 'string' && value.trim() ? value.trim() : 'member'),
+      normalizeOrgRole: (value: any) => (typeof value === 'string' && value.trim() ? value.trim() : 'member'),
       INVITE_PASSWORD_MIN_CHARS: 8,
       randomUUID: vi.fn(() => 'generated-id'),
     }),
@@ -72,19 +72,50 @@ const createApp = () => {
 };
 
 describe('admin user management router', () => {
-  let server = null;
+  let server: any = null;
   let baseUrl = '';
 
   beforeEach(async () => {
     const context = createApp();
     server = context.app.listen(0);
-    await new Promise((resolve) => server.once('listening', resolve));
-    baseUrl = `http://127.0.0.1:${server.address().port}`;
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to get server address');
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
   });
 
   afterEach(async () => {
     if (server) {
-      await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      await new Promise<void>((resolve, reject) => server.close((error: any) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('returns seeded fallback users when no demo users exist', async () => {
+    const context = createApp();
+    context.e2eStore.users = [];
+    const { app } = context;
+    const serverInstance: any = app.listen(0);
+    await new Promise<void>((resolve) => serverInstance.once('listening', resolve));
+    const address = serverInstance.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to get server address');
+    }
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const response = await fetch(`${baseUrl}/api/admin/users?orgId=pacific-coast-university`, {
+        headers: { 'x-user-role': 'admin', host: 'localhost' },
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(payload.data).toHaveLength(1);
+      expect(payload.data[0].organization_id).toBe('pacific-coast-university');
+    } finally {
+      await new Promise<void>((resolve, reject) => serverInstance.close((error: any) => (error ? reject(error) : resolve())));
     }
   });
 

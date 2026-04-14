@@ -43,12 +43,65 @@ export const createAdminUserManagementRouter = (deps) => {
 
   router.use(authenticate, requireAdmin);
 
+  const DEMO_FALLBACK_USER_SEED = [
+    {
+      userId: 'demo-user-pacific-coast-1',
+      email: 'faculty@pacificcoast.edu',
+      organizationId: 'pacific-coast-university',
+      firstName: 'Pacific',
+      lastName: 'Faculty',
+      role: 'member',
+    },
+    {
+      userId: 'demo-user-mountain-view-1',
+      email: 'teacher@mountainviewhs.edu',
+      organizationId: 'mountain-view-high-school',
+      firstName: 'Mountain',
+      lastName: 'Teacher',
+      role: 'member',
+    },
+  ];
+
+  const buildDemoFallbackUsers = () => {
+    const now = new Date().toISOString();
+    return DEMO_FALLBACK_USER_SEED.map((entry) => ({
+      id: entry.userId,
+      user_id: entry.userId,
+      organization_id: entry.organizationId,
+      org_id: entry.organizationId,
+      email: entry.email,
+      role: entry.role,
+      status: 'active',
+      created_at: now,
+      updated_at: now,
+      profile: {
+        id: entry.userId,
+        email: entry.email,
+        first_name: entry.firstName,
+        last_name: entry.lastName,
+        role: entry.role,
+        organization_id: entry.organizationId,
+        status: 'active',
+        created_at: now,
+        updated_at: now,
+      },
+      user: {
+        id: entry.userId,
+        email: entry.email,
+        first_name: entry.firstName,
+        last_name: entry.lastName,
+        role: entry.role,
+        status: 'active',
+      },
+    }));
+  };
+
   router.get('/', async (req, res) => {
     const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
 
     if (shouldUseAdminUsersFallback(req)) {
       const normalizedOrgId = normalizeOrgIdValue(orgId);
-      const allMembers = Array.isArray(e2eStore.users) ? e2eStore.users : [];
+      const allMembers = Array.isArray(e2eStore.users) && e2eStore.users.length > 0 ? e2eStore.users : buildDemoFallbackUsers();
 
       if (!normalizedOrgId && req.user?.isPlatformAdmin) {
         return sendOk(res, allMembers);

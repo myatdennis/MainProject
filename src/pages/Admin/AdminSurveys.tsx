@@ -381,6 +381,23 @@ const AdminSurveys = () => {
             <p className="text-xs text-red-600">
               Verify the admin API is running (or DEV_FALLBACK is enabled) and then refresh the surveys list.
             </p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => fetchSurveys()}
+                className="btn-outline px-4 py-2 rounded-lg"
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? 'Refreshing…' : 'Refresh surveys'}
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="btn-ghost px-4 py-2 rounded-lg"
+              >
+                Reload page
+              </button>
+            </div>
           </div>
         </div>
       )}

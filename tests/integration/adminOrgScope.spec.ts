@@ -26,6 +26,20 @@ describe('Admin organization scoping', () => {
     return { res, body };
   };
 
+  it('allows listing organizations without orgId for platform admin', async () => {
+    const { res, body } = await fetchJson('/api/admin/organizations');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBeGreaterThan(0);
+  });
+
+  it('allows listing all admin users without orgId for platform admin', async () => {
+    const { res, body } = await fetchJson('/api/admin/users');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBeGreaterThan(0);
+  });
+
   it('allows listing organizations when scoped to a known admin org', async () => {
     const { res, body } = await fetchJson(`/api/admin/organizations?orgId=${DEMO_ORG_ID}`);
     expect(res.status).toBe(200);
