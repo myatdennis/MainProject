@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-13T23:10:01.658Z",
+        "published_at": "2026-04-14T13:33:26.810Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -160,5 +160,6 @@
   "huddlePosts": [],
   "huddleComments": [],
   "huddleReactions": [],
-  "huddleReports": []
+  "huddleReports": [],
+  "organizations": []
 }

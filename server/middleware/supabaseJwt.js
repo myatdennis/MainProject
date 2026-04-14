@@ -3,6 +3,7 @@ import { LRUCache } from 'lru-cache';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { syncUserProfileFlags } from './auth.js';
+import { isAllowlistedAdminEmail } from './auth.js';
 import { isProduction } from '../config/runtimeFlags.js';
 
 const JWT_AUTH_BYPASS_PATHS = ['/health', '/auth/login', '/auth/refresh', '/audit-log', '/analytics', '/client/courses'];
@@ -164,14 +165,20 @@ const resolveTokenFromRequest = (req) => {
 const mapClaimsToUser = (claims) => {
   const appMetadata = claims.app_metadata || {};
   const userMetadata = claims.user_metadata || {};
+  const email = claims.email || claims.user_email || null;
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const allowlistedAdmin = isAllowlistedAdminEmail(normalizedEmail);
   const derivedRole =
     claims.role ||
     appMetadata.role ||
     userMetadata.role ||
     appMetadata.platform_role ||
     userMetadata.platform_role ||
-    null;
-  const platformRole = appMetadata.platform_role || userMetadata.platform_role || null;
+    (allowlistedAdmin ? 'admin' : null);
+  const platformRole =
+    appMetadata.platform_role ||
+    userMetadata.platform_role ||
+    (allowlistedAdmin ? 'platform_admin' : null);
   const organizationIds = Array.isArray(appMetadata.organization_ids)
     ? appMetadata.organization_ids
     : Array.isArray(claims.organization_ids)
@@ -185,9 +192,8 @@ const mapClaimsToUser = (claims) => {
     email: claims.email || claims.user_email || null,
     role: derivedRole ? String(derivedRole).toLowerCase() : null,
     platformRole: platformRole ? String(platformRole).toLowerCase() : null,
-    // IMPORTANT: app-level "admin" users are not automatically platform admins.
-    // Platform-admin privileges must come from an explicit platform role signal.
-    isPlatformAdmin: String(platformRole || derivedRole || '').toLowerCase() === 'platform_admin',
+    isPlatformAdmin:
+      String(platformRole || derivedRole || '').toLowerCase() === 'platform_admin' || allowlistedAdmin,
     organizationIds,
     memberships,
     permissions,

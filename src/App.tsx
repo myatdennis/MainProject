@@ -131,9 +131,9 @@ const ClientProtectedLayout = () => (
 );
 
 const OrgWorkspaceProtectedLayout = () => (
-  <RequireAuth mode="lms" loginPathOverride="/login">
+  <ClientRequireAuth>
     <OrgWorkspaceLayout />
-  </RequireAuth>
+  </ClientRequireAuth>
 );
 
 const LegacyCourseRedirect = () => {

@@ -16,6 +16,7 @@ import {
   TestServerHandle,
   createAdminAuthHeaders,
   createMemberAuthHeaders,
+  buildAuthHeaders,
 } from './utils/server.ts';
 
 const DEMO_ORG_ID = 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8';
@@ -216,7 +217,7 @@ describe('Auth Security — Phase 1–4 fixes', () => {
   });
 
   // ─── Regression — existing org scoping still works for admin ────────────────
-  describe('Regression — existing org scope access still works', () => {
+  describe('Regression — existing org scoping still works for admin', () => {
     it('Platform admin can still list organizations', async () => {
       const res = await server!.fetch(`/api/admin/organizations?orgId=${DEMO_ORG_ID}`, {
         headers: { ...JSON_CT, ...adminHeaders },
@@ -229,6 +230,24 @@ describe('Auth Security — Phase 1–4 fixes', () => {
     it('Platform admin can still list courses for known org', async () => {
       const res = await server!.fetch(`/api/admin/courses?orgId=${DEMO_ORG_ID}`, {
         headers: { ...JSON_CT, ...adminHeaders },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it('Allowlisted admin email without explicit platformRole can still list organizations', async () => {
+      const emailOnlyHeaders = await buildAuthHeaders({ email: 'mya@the-huddle.co' });
+      const res = await server!.fetch(`/api/admin/organizations?orgId=${DEMO_ORG_ID}`, {
+        headers: { ...JSON_CT, ...emailOnlyHeaders },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty('data');
+    });
+
+    it('Allowlisted admin email without explicit platformRole can still list courses', async () => {
+      const emailOnlyHeaders = await buildAuthHeaders({ email: 'mya@the-huddle.co' });
+      const res = await server!.fetch(`/api/admin/courses?orgId=${DEMO_ORG_ID}`, {
+        headers: { ...JSON_CT, ...emailOnlyHeaders },
       });
       expect(res.status).toBe(200);
     });
