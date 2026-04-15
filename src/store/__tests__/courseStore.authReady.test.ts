@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { getAllCoursesFromDatabase } from '../../dal/adminCourses';
+import { courseStore } from '../courseStore';
 
 vi.mock('../../dal/adminCourses', () => ({
   getAllCoursesFromDatabase: vi.fn().mockResolvedValue([]),
@@ -57,8 +59,6 @@ vi.mock('../courseStoreOrgBridge', () => ({
   clearBridgeSnapshot: vi.fn(),
   isOrgResolverRegistered: vi.fn(() => true),
 }));
-
-import { courseStore } from '../courseStore';
 
 /** Re-apply all stub implementations after vi.clearAllMocks() resets counts. */
 const resetMockImpls = () => {
@@ -200,6 +200,75 @@ describe('courseStore bridge snapshot synchronization', () => {
     expect(fetchPublishedCoursesMock).toHaveBeenCalled();
     expect(courseStore.getLearnerCatalogState().status).toBe('ok');
     expect(courseStore.getAllCourses()).toHaveLength(1);
+  });
+
+  it('loads all courses for admin-capable users', async () => {
+    window.history.replaceState(null, '', '/admin/dashboard');
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-admin',
+      orgId: 'org-admin',
+      role: 'admin',
+      userId: 'user-admin',
+    };
+
+    await courseStore.init({ reason: 'test_admin_load' });
+
+    expect(getAllCoursesFromDatabase).toHaveBeenCalled();
+    expect(courseStore.getAllCourses()).toHaveLength(0);
+  });
+
+  it('admin capability on LMS surface', async () => {
+    window.history.replaceState(null, '', '/lms/dashboard');
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-admin',
+      orgId: 'org-admin',
+      role: 'admin',
+      userId: 'user-admin',
+    };
+
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-1',
+        courseId: 'course-1',
+        userId: 'user-admin',
+        status: 'assigned',
+        progress: 0,
+      } as any,
+    ]);
+    fetchPublishedCoursesMock.mockResolvedValueOnce([
+      {
+        id: 'course-1',
+        title: 'LMS Course',
+        status: 'published',
+        modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1' }] }],
+      },
+    ]);
+
+    await courseStore.init({ reason: 'test_admin_lms_surface' });
+
+    expect(getAllCoursesFromDatabase).not.toHaveBeenCalled();
+    expect(fetchPublishedCoursesMock).toHaveBeenCalled();
+    expect(courseStore.getAllCourses()).toHaveLength(1);
+  });
+
+  it('admin role regression test', async () => {
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-admin',
+      orgId: 'org-admin',
+      role: 'admin',
+      userId: 'user-admin',
+    };
+
+    await courseStore.init({ reason: 'test_admin_role_regression' });
+
+    expect(fetchPublishedCoursesMock).toHaveBeenCalled();
+    expect(courseStore.getAllCourses()).toHaveLength(0);
   });
 });
 

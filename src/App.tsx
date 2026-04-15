@@ -1,5 +1,6 @@
 import { useEffect, Suspense, lazy, useRef, useContext, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
+import { isAdminSurface } from './utils/surface';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
 import { ErrorBoundary } from './components/ErrorHandling';
@@ -172,6 +173,11 @@ const LmsLessonCanonicalRedirect = () => {
   );
 };
 
+export const buildCourseInitTargetKey = (
+  userId: string | null | undefined,
+  activeOrgId: string | null | undefined,
+  surface: 'admin' | 'client',
+) => `${userId ?? 'guest'}:${activeOrgId ?? 'none'}:${surface}`;
 
 function App() {
   return (
@@ -233,8 +239,10 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
   return <>{children}</>;
 };
 
-function AppContent() {
+export function AppContent() {
   useViewportHeight();
+  const location = useLocation();
+  const surface = isAdminSurface(location.pathname) ? 'admin' : 'client';
   const { sessionStatus, user, activeOrgId, orgResolutionStatus } = useSecureAuth();
   const toastContext = useContext(ToastContext);
   const showCatalogToast = toastContext?.showToast;
@@ -277,7 +285,7 @@ function AppContent() {
     if (user && orgResolutionStatus !== 'ready') {
       return;
     }
-    const targetKey = user ? `${user.id}:${activeOrgId ?? 'none'}` : 'guest';
+    const targetKey = buildCourseInitTargetKey(user?.id, activeOrgId, surface);
     if (courseInitKeyRef.current === targetKey) {
       return;
     }
@@ -288,7 +296,7 @@ function AppContent() {
           console.debug('[COURSE INIT CALLER]', {
             source: 'App.tsx',
             targetKey,
-            pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+            pathname: location.pathname,
             ts: Date.now(),
           });
         }
@@ -304,7 +312,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId]);
+  }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId, surface]);
 
   // ── Catalog warning toast handler ─────────────────────────────────────────
   // Declared here (before useLocation / any conditional) so hook call count
@@ -332,7 +340,6 @@ function AppContent() {
     };
   }, [showCatalogToast]);
 
-  const location = useLocation();
   const hideMarketingChrome = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
 
   return (

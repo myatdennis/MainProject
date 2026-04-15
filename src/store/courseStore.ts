@@ -1909,9 +1909,11 @@ export const courseStore = {
           console.warn('[courseStore.init] Role context unavailable after waiting; proceeding with admin surface fallback.');
         }
       }
-      const roleResolved = typeof orgContext.role === 'string' && orgContext.role.length > 0;
-      const hasAdminRole = roleResolved && (orgContext.role ?? '').toLowerCase().includes('admin');
-      const treatAsAdmin = adminSurfaceDetected || hasAdminRole;
+      // Only treat the current request as an admin-mode catalog load when the
+      // surface is explicitly admin. A user with an admin-capable role may still
+      // browse the LMS surface, and that must not trigger /api/admin/* course
+      // fetches or auth fallout during bootstrap.
+      const treatAsAdmin = adminSurfaceDetected;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
       // Org scoping is determined directly from the resolved context — no deferred bootstrap needed.
@@ -1928,7 +1930,7 @@ export const courseStore = {
       // supabaseOperational is checked implicitly through apiReachable/supabaseHealthy downstream
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
-      // HEALTH PROBE DECOUPLED FROM ADMIN API GATE:
+      // HEALTH PROBE DECOUPLED FROM ADMIN API GATE: 
       // The /api/health probe is purely informational for UI status indicators.
       // A transient health failure (net::ERR_NETWORK_CHANGED, timeout, network
       // switch) must NOT abort the admin catalog fetch — the actual
@@ -1975,6 +1977,7 @@ export const courseStore = {
         // reference, achieving the same single-source guarantee without the flash.
         try {
           console.debug('[COURSE FETCH]', {
+
             source: 'getAllCoursesFromDatabase',
             url: '/api/admin/courses',
             params: { includeStructure: true, includeLessons: true },
