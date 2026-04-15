@@ -459,4 +459,35 @@ describe('apiClient', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String(fetchSpy.mock.calls[0]?.[0] ?? '')).toContain('/api/admin/courses');
   });
+
+  it('falls back to assign/href when window.location.replace is missing', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    shouldRequireSessionSpy.mockReturnValue(true);
+    authBootstrapSpy.mockReturnValue(false);
+
+    const locationWithAssignOnly = {
+      ...window.location,
+      replace: undefined,
+      assign: vi.fn(),
+      href: `${window.location.origin}/admin/dashboard`,
+    } as unknown as Location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: locationWithAssignOnly,
+    });
+
+    try {
+      fetchSpy.mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
+      const { apiRequest } = await loadApiClient();
+
+      await expect(apiRequest('/api/client/data')).rejects.toMatchObject({ status: 401 });
+      expect(locationWithAssignOnly.assign).toHaveBeenCalledWith(expect.stringContaining('/login'));
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: originalLocation,
+      });
+    }
+  });
 });

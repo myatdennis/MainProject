@@ -231,7 +231,14 @@ const handleAuthFailure = async () => {
       pathname: window.location.pathname,
       reason: 'api_auth_failure',
     });
-    window.location.replace(resolveLoginPath());
+    const target = resolveLoginPath();
+    if (typeof window.location.replace === 'function') {
+      window.location.replace(target);
+    } else if (typeof window.location.assign === 'function') {
+      window.location.assign(target);
+    } else {
+      window.location.href = target;
+    }
   }
 };
 
