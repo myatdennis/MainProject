@@ -30,7 +30,6 @@ import {
   clearCatalogCacheEntry,
   clearAllCatalogCache,
   clearCatalogCacheForOrg,
-  isTestOrE2ECourse,
 } from '../utils/catalogPersistence';
 
 // Run stale key eviction immediately at module load — before any cache reads.
@@ -1987,6 +1986,14 @@ export const courseStore = {
             });
           }
           dbCourses = await getAllCoursesFromDatabase();
+          const rawApiCount = dbCourses.length;
+          console.info('[courseStore.init] admin_courses_raw_response', {
+            rawCount: rawApiCount,
+            endpoint: '/api/admin/courses?includeStructure=true&includeLessons=true',
+            userId: orgContext.userId,
+            orgId: orgContext.orgId,
+            adminSurfaceDetected,
+          });
           if (import.meta.env.DEV) {
             console.debug('[RAW API RESPONSE]', {
               ts: Date.now(),
@@ -1998,10 +2005,6 @@ export const courseStore = {
             });
           }
           console.debug('[COURSE STORE INPUT]', dbCourses);
-          // The server list endpoint now pre-filters to complete courses only.
-          // This client-side check is a belt-and-suspenders guard: if a course
-          // somehow arrives without modules it is rejected here with a clear log.
-          // Under normal operation this filter should be a no-op.
           const beforeFilter = dbCourses.length;
           dbCourses = dbCourses.filter((c) => {
             const hasModules = Array.isArray(c.modules) && c.modules.length > 0;
@@ -2010,12 +2013,6 @@ export const courseStore = {
                 console.warn('[COURSE GRAPH REJECTED] no_modules — server should have excluded this row', {
                   courseId: c.id, title: c.title, status: c.status, source: 'server',
                 });
-              }
-              return false;
-            }
-            if (typeof c.version === 'number' && c.version <= 0) {
-              if (import.meta.env.DEV) {
-                console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version, source: 'server' });
               }
               return false;
             }
@@ -2030,54 +2027,15 @@ export const courseStore = {
               }
               return false;
             }
-            if (import.meta.env.DEV) {
-              const mods = c.modules ?? [];
-              console.debug('[COURSE GRAPH VALID]', c.id, c.title, {
-                modules: mods.length,
-                lessons: mods.reduce((acc, m) => acc + (m.lessons?.length ?? 0), 0),
-              });
-            }
             return true;
           });
-          if (import.meta.env?.DEV) {
-            const rejected = beforeFilter - dbCourses.length;
-            if (rejected > 0) {
-              console.warn('[courseStore.init] courses_rejected_missing_structure', {
-                rejected, remaining: dbCourses.length, source: 'server',
-                note: 'server-side filtering should prevent this — check /api/admin/courses handler',
-              });
-            }
-            console.info('[courseStore.init] admin_courses_loaded', { count: dbCourses.length });
-          }
-          // Production safety: strip E2E/test-like courses from server responses
-          // only in production (or when explicitly enabled).  Applying this in
-          // all environments can hide legitimate assigned courses whose titles
-          // happen to include words like "integration test".
-          const shouldStripTestCourses =
-            import.meta.env.PROD || import.meta.env.VITE_STRIP_TEST_COURSES === 'true';
-          if (shouldStripTestCourses) {
-            const beforeTestFilter = dbCourses.length;
-            dbCourses = dbCourses.filter((c) => {
-              if (isTestOrE2ECourse(c)) {
-                console.warn('[courseStore.init] server_course_rejected_test_data', {
-                  courseId: c.id,
-                  title: c.title,
-                  source: 'server',
-                  mode: import.meta.env.PROD ? 'prod' : 'explicit',
-                });
-                return false;
-              }
-              return true;
-            });
-            if (beforeTestFilter !== dbCourses.length) {
-              console.warn('[courseStore.init] test_courses_stripped_from_server_response', {
-                before: beforeTestFilter,
-                after: dbCourses.length,
-                source: 'server',
-                mode: import.meta.env.PROD ? 'prod' : 'explicit',
-              });
-            }
-          }
+          console.info('[courseStore.init] admin_courses_filtered', {
+            rawCount: rawApiCount,
+            afterStructureFilter: dbCourses.length,
+            rejected: beforeFilter - dbCourses.length,
+            orgId: orgContext.orgId,
+            adminSurfaceDetected,
+          });
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
           if (adminLoadStatus === 'empty') {
             console.info('[courseStore.init] admin_courses_empty (0 results from /api/admin/courses).');

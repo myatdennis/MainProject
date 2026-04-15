@@ -6357,9 +6357,10 @@ const getRequestContext = (req) => {
   return {
     userId: req.user.userId || req.user.id || null,
     userRole: (req.user.role || req.user.platformRole || '').toLowerCase(),
+    platformRole: req.user.platformRole || null,
     memberships: req.user.memberships || [],
     organizationIds: Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [],
-    isPlatformAdmin: Boolean(req.user.isPlatformAdmin),
+    isPlatformAdmin: Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin'),
     requestedOrgId: normalizedActiveOrg,
     activeOrganizationId: normalizedActiveOrg,
   };

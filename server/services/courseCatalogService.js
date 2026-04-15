@@ -51,7 +51,7 @@ export const createCourseCatalogService = ({
         membership?.orgId ?? membership?.organizationId ?? membership?.organization_id ?? membership?.org_id ?? null,
       );
 
-    const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+    const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.platformRole === 'platform_admin');
     let adminOrgIds = Array.isArray(context.memberships)
       ? context.memberships
           .filter((membership) => hasOrgAdminRole(membership.role) && resolveMembershipOrgId(membership))

@@ -3,39 +3,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCourseCatalogRouter } from '../routes/courseCatalog.js';
 import { AddressInfo } from 'net';
 
-const createApp = () => {
-  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-  const e2eStore = {
-    courses: new Map([
-      [
-        'course-1',
-        {
-          id: 'course-1',
-          slug: 'course-1',
-          title: 'Belonging 101',
-          status: 'published',
-          organization_id: 'org-1',
-          modules: [
-            {
-              id: 'module-1',
-              title: 'Intro',
-              lessons: [{ id: 'lesson-1', title: 'Welcome', type: 'video', content_json: { videoUrl: 'https://example.com/video.mp4' } }],
-            },
-          ],
-        },
-      ],
-    ]),
-    assignments: [
+const createE2eStore = () => ({
+  courses: new Map([
+    [
+      'course-1',
       {
-        id: 'assignment-1',
-        course_id: 'course-1',
+        id: 'course-1',
+        slug: 'course-1',
+        title: 'Belonging 101',
+        status: 'published',
         organization_id: 'org-1',
-        user_id: 'user-1',
-        assignment_type: 'course',
-        active: true,
+        modules: [
+          {
+            id: 'module-1',
+            title: 'Intro',
+            lessons: [{ id: 'lesson-1', title: 'Welcome', type: 'video', content_json: { videoUrl: 'https://example.com/video.mp4' } }],
+          },
+        ],
       },
     ],
-  };
+  ]),
+  assignments: [
+    {
+      id: 'assignment-1',
+      course_id: 'course-1',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      assignment_type: 'course',
+      active: true,
+    },
+  ],
+});
+
+const createApp = () => {
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const e2eStore = createE2eStore();
 
   const app = express();
   app.use(express.json());
@@ -392,6 +394,89 @@ describe('course catalog router', () => {
 
     const server = app.listen(0) as any;
     await new Promise<void>((resolve) => server.once('listening', resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const response = await fetch(`${baseUrl}/api/admin/courses`);
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.data).toHaveLength(1);
+    await new Promise<void>((resolve, reject) => server.close((error: any) => (error ? reject(error) : resolve())));
+  });
+
+  it('lists admin courses when platformRole is platform_admin but isPlatformAdmin is false', async () => {
+    const app = express();
+    const e2eStore = createE2eStore();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      const anyReq = req as any;
+      anyReq.requestId = 'course-catalog-req-3';
+      anyReq.user = { id: 'user-3', userId: 'user-3', platformRole: 'platform_admin' };
+      next();
+    });
+
+    app.use(
+      '/api',
+      createCourseCatalogRouter({
+        authenticate: (_req: any, _res: any, next: any) => next(),
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        supabase: null,
+        e2eStore,
+        nodeEnv: 'test',
+        isDemoMode: false,
+        isDemoOrTestMode: true,
+        isTestMode: true,
+        defaultSandboxOrgId: 'org-1',
+        ensureSupabase: () => true,
+        requireUserContext: vi.fn(() => ({
+          userId: 'user-3',
+          userRole: 'platform_admin',
+          memberships: [],
+          organizationIds: [],
+          requestedOrgId: null,
+          activeOrganizationId: null,
+          platformRole: 'platform_admin',
+          isPlatformAdmin: false,
+        })),
+        pickOrgId: (...values: any[]) => values.find((value) => typeof value === 'string' && value.trim()) ?? null,
+        coerceOrgIdentifierToUuid: vi.fn(async (_req: any, value: any) => value),
+        isUuid: (value: any) => typeof value === 'string' && value.length > 0,
+        hasOrgAdminRole: () => true,
+        normalizeOrgIdValue: (value: any) => (typeof value === 'string' ? value.trim() : null),
+        requireOrgAccess: vi.fn(async () => true),
+        parseBooleanParam: (value: any, fallback: any) =>
+          typeof value === 'string' ? value.trim().toLowerCase() === 'true' : Boolean(fallback),
+        parsePaginationParams: () => ({ page: 1, pageSize: 20, from: 0, to: 19 }),
+        sanitizeIlike: (value: any) => value,
+        runSupabaseReadQueryWithRetry: vi.fn(),
+        runSupabaseTransientRetry: vi.fn(async (_label: any, fn: any) => fn()),
+        resolveOrgScopeForRequest: vi.fn(async () => ({
+          resolvedOrgId: 'org-1',
+          scopedOrgIds: ['org-1'],
+          membershipSet: new Set(['org-1']),
+          primaryOrgId: 'org-1',
+          requiresExplicitSelection: false,
+        })),
+        detectAssignmentsUserIdUuidColumnAvailability: vi.fn(async () => false),
+        getAssignmentsOrgColumnName: vi.fn(async () => 'organization_id'),
+        ensureOrgFieldCompatibility: (record: any) => record,
+        ensureCourseStructureLoaded: vi.fn(async (course: any) => course),
+        normalizeModuleGraph: (modules: any) => modules,
+        attachCompletionRuleForResponse: vi.fn(),
+        e2eFindCourse: (identifier: any) => {
+          return Array.from(e2eStore.courses.values()).find(
+            (course) => course.id === identifier || course.slug === identifier,
+          ) ?? null;
+        },
+        logAdminCoursesError: vi.fn(),
+        logStructuredError: vi.fn(),
+        courseModulesWithLessonFields: ',modules(*)',
+        courseModulesNoLessonsFields: ',modules(*)',
+        courseWithModulesLessonsSelect: '*',
+        moduleLessonsForeignTable: 'lessons',
+      }),
+    );
+
+    const server = app.listen(0) as any;
+    await new Promise((resolve) => server.once('listening', resolve));
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const response = await fetch(`${baseUrl}/api/admin/courses`);
     const payload = await response.json();
