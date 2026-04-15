@@ -12,8 +12,9 @@ vi.mock('../../dal/clientCourses', () => ({
   fetchCourse: vi.fn(),
 }));
 
+const getAssignmentsForUserMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock('../../utils/assignmentStorage', () => ({
-  getAssignmentsForUser: vi.fn().mockResolvedValue([]),
+  getAssignmentsForUser: getAssignmentsForUserMock,
 }));
 
 // Use vi.hoisted so the mock refs are available at module evaluation time.
@@ -62,6 +63,7 @@ import { courseStore } from '../courseStore';
 /** Re-apply all stub implementations after vi.clearAllMocks() resets counts. */
 const resetMockImpls = () => {
   fetchPublishedCoursesMock.mockResolvedValue([]);
+  getAssignmentsForUserMock.mockResolvedValue([]);
   runtimeStatusMock.getRuntimeStatus.mockReturnValue({
     supabaseConfigured: true,
     supabaseHealthy: true,
@@ -132,6 +134,72 @@ describe('courseStore bridge snapshot synchronization', () => {
     await courseStore.init({ reason: 'test_error' }).catch(() => {/* swallow */});
 
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch published courses when org context is ready but no active org is selected', async () => {
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: null,
+      orgId: null,
+      role: 'member',
+      userId: 'user-123',
+    };
+
+    await courseStore.init({ reason: 'test_no_org_selected' });
+
+    expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
+    const learnerState = courseStore.getLearnerCatalogState();
+    expect(learnerState.status).toBe('error');
+    expect(learnerState.detail).toBe('org_selection_required');
+  });
+
+  it('resumes published learner catalog loading once active org selection is restored', async () => {
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: null,
+      orgId: null,
+      role: 'member',
+      userId: 'user-123',
+    };
+
+    await courseStore.init({ reason: 'test_restore_org_selection' });
+    expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
+    expect(courseStore.getLearnerCatalogState().status).toBe('error');
+
+    fetchPublishedCoursesMock.mockResolvedValueOnce([
+      {
+        id: 'course-1',
+        title: 'Restored Course',
+        status: 'published',
+        modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1' }] }],
+      },
+    ]);
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-1',
+        courseId: 'course-1',
+        userId: 'user-123',
+        status: 'assigned',
+        progress: 0,
+      },
+    ] as any);
+
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-restored',
+      orgId: 'org-restored',
+      role: 'member',
+      userId: 'user-123',
+    };
+
+    await courseStore.forceInit({ newOrgId: 'org-restored', flushCache: true });
+
+    expect(fetchPublishedCoursesMock).toHaveBeenCalled();
+    expect(courseStore.getLearnerCatalogState().status).toBe('ok');
+    expect(courseStore.getAllCourses()).toHaveLength(1);
   });
 });
 

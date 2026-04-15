@@ -57,7 +57,7 @@ if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
 export const resolvedCorsOrigins = Array.from(resolved);
 
 const isLocalDevOrigin = (origin) =>
-  typeof origin === 'string' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+  typeof origin === 'string' && /^http:\/\/(localhost|127\.)/i.test(origin);
 
 if (!envOrigins.length) {
   console.warn(
@@ -106,7 +106,12 @@ const resolveCorsOriginDecision = (origin) => {
     return { allowed: true, reason: 'allowlist', resolvedOrigin: originWithoutDefaultPort || normalizedOrigin };
   }
 
-  // Always allow any subdomain of the-huddle.co (admin, app, www, etc.)
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (!isProduction && isLocalDevOrigin(normalizedOrigin)) {
+    return { allowed: true, reason: 'local_dev', resolvedOrigin: normalizedOrigin };
+  }
+
+  // Always allow any subdomain of the-huddle.co (e.g. admin, app, www, etc.)
   if (THE_HUDDLE_SUBDOMAIN_REGEX.test(normalizedOrigin)) {
     return { allowed: true, reason: 'huddle_subdomain', resolvedOrigin: normalizedOrigin };
   }
@@ -262,7 +267,6 @@ const corsMiddleware = (req, res, next) => {
   const decision = appendCorsResponseHeaders(req, res);
 
   if (decision.allowed === false && req.headers?.origin) {
-    // For disallowed origins send consistent response (preflight handled separately)
     if (req.method === 'OPTIONS') {
       if (handlePreflight(req, res, decision)) {
         return;

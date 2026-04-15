@@ -61,6 +61,7 @@ const createApp = () => {
       isTestMode: true,
       defaultSandboxOrgId: 'org-1',
       ensureSupabase: () => true,
+      requireAdminAccess: (_req: any, _res: any, next: any) => next(),
       requireUserContext: vi.fn(() => ({
         userId: 'user-1',
         userRole: 'learner',
@@ -216,6 +217,7 @@ describe('course catalog router', () => {
         isTestMode: true,
         defaultSandboxOrgId: 'org-1',
         ensureSupabase: () => true,
+        requireAdminAccess: (_req: any, _res: any, next: any) => next(),
         requireUserContext: vi.fn(() => ({
           userId: 'user-2',
           userRole: 'admin',
@@ -344,6 +346,7 @@ describe('course catalog router', () => {
         isTestMode: true,
         defaultSandboxOrgId: 'org-1',
         ensureSupabase: () => true,
+        requireAdminAccess: (_req: any, _res: any, next: any) => next(),
         requireUserContext: vi.fn(() => ({
           userId: 'user-2',
           userRole: 'admin',
@@ -426,6 +429,7 @@ describe('course catalog router', () => {
         isTestMode: true,
         defaultSandboxOrgId: 'org-1',
         ensureSupabase: () => true,
+        requireAdminAccess: (_req: any, _res: any, next: any) => next(),
         requireUserContext: vi.fn(() => ({
           userId: 'user-3',
           userRole: 'platform_admin',

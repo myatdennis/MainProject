@@ -1791,7 +1791,8 @@ if (import.meta.env.PROD && import.meta.env.VITE_ALLOW_DEFAULT_COURSES === 'true
 type CatalogDiagnosticEvent =
   | 'default_catalog_loaded'
   | 'assignment_scope_empty'
-  | 'assignment_scope_failed';
+  | 'assignment_scope_failed'
+  | 'org_selection_required';
 
 const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<string, unknown> = {}) => {
   const payload = {
@@ -1806,7 +1807,7 @@ const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<str
       console.warn('[courseStore] catalog warning dispatch failed', error);
     }
   }
-  const logMethod = event === 'assignment_scope_failed' ? console.error : console.warn;
+  const logMethod = event === 'assignment_scope_failed' || event === 'org_selection_required' ? console.error : console.warn;
   logMethod('[courseStore] catalog_diagnostic', payload);
 };
 
@@ -1853,7 +1854,7 @@ export const courseStore = {
       }
     }
 
-  initPromise = (async () => {
+  const promise = (async () => {
     let restrictToOrg = true;
     let canUseAdminApi = false;
     let adminLoadStatus: AdminLoadStatus = 'skipped';
@@ -1978,7 +1979,7 @@ export const courseStore = {
             url: '/api/admin/courses',
             params: { includeStructure: true, includeLessons: true },
           });
-          if (import.meta.env.DEV) {
+                                                                                                                                                 if (import.meta.env.DEV) {
             console.debug('[FETCH START]', {
               ts: Date.now(),
               pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
@@ -2150,6 +2151,27 @@ export const courseStore = {
       const publishedFallbackAllowed = !adminSurfaceDetected;
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
+        if (restrictToOrg && orgContext.status === 'ready' && !orgContext.orgId) {
+          console.warn('[courseStore.init] org_selection_required — learner org context resolved but no organization selected', {
+            userId: orgContext.userId,
+            membershipStatus: orgContext.membershipStatus,
+            status: orgContext.status,
+          });
+          emitCatalogDiagnostic('org_selection_required', {
+            userId: orgContext.userId,
+            membershipStatus: orgContext.membershipStatus,
+            status: orgContext.status,
+          });
+          setLearnerCatalogState({
+            status: 'error',
+            lastUpdatedAt: Date.now(),
+            lastError: 'org_selection_required',
+            detail: 'org_selection_required',
+          });
+          courses = {};
+          return;
+        }
+
         if (!publishedFallbackAllowed) {
           console.info('[courseStore.init] admin_surface_detected_blocking_fallback', {
             adminSurfaceDetected,
@@ -2188,9 +2210,9 @@ export const courseStore = {
               dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId });
             } else {
               console.warn(
-                '[courseStore.init] Missing organizationId; loading full published catalog for learner context.',
+                '[courseStore.init] Missing organizationId; published fallback blocked for learner context.',
               );
-              dbCourses = await fetchPublishedCourses();
+              dbCourses = [];
             }
           } else {
             dbCourses = await fetchPublishedCourses();
@@ -2439,11 +2461,12 @@ export const courseStore = {
     }
     })();
 
-    initPromise.finally(() => {
+    initPromise = promise;
+    promise.finally(() => {
       initPromise = null;
     });
 
-    return initPromise;
+    return promise;
   },
 
   // Force a fresh catalog fetch, bypassing the ready-guard.

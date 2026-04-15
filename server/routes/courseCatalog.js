@@ -39,6 +39,7 @@ export const createCourseCatalogRouter = ({
   courseModulesNoLessonsFields,
   courseWithModulesLessonsSelect,
   moduleLessonsForeignTable,
+  requireAdminAccess,
 }) => {
   const router = express.Router({ mergeParams: true });
 
@@ -81,8 +82,8 @@ export const createCourseCatalogRouter = ({
   });
   const controller = createCourseCatalogController({ logger, service });
 
-  router.get('/admin/courses', authenticate, controller.adminList);
-  router.get('/admin/courses/:identifier', authenticate, controller.adminDetail);
+  router.get('/admin/courses', requireAdminAccess || authenticate, controller.adminList);
+  router.get('/admin/courses/:identifier', requireAdminAccess || authenticate, controller.adminDetail);
   router.get('/client/courses', controller.clientList);
   router.get('/client/courses/:courseIdentifier', controller.clientDetail);
 

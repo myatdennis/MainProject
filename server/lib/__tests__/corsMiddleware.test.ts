@@ -60,4 +60,22 @@ describe('cors middleware', () => {
     expect(headers.get('Access-Control-Allow-Credentials')).toBe('true');
     expect(headers.get('Vary')).toMatch(/Origin/);
   });
+
+  it('allows local development origins when not in production', () => {
+    const decision = resolveCorsOriginDecision('http://127.0.0.1:3000');
+    expect(decision.allowed).toBe(true);
+    expect(decision.reason).toBe('local_dev');
+  });
+
+  it('attaches credentials and origin headers for local dev origin', async () => {
+    const headers = await runMiddleware({
+      method: 'GET',
+      headers: { origin: 'http://127.0.0.1:3000' },
+      path: '/api/test',
+    });
+
+    expect(headers.get('Access-Control-Allow-Origin')).toBe('http://127.0.0.1:3000');
+    expect(headers.get('Access-Control-Allow-Credentials')).toBe('true');
+    expect(headers.get('Vary')).toMatch(/Origin/);
+  });
 });

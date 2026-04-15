@@ -36,11 +36,19 @@ export const pathRequiresOrgHeader = (inputPath: string): boolean => {
 };
 
 export const resolveOrgHeaderForRequest = (inputPath: string): string | null => {
+  const normalizedPath = normalizePathForOrgCheck(inputPath);
   if (!pathRequiresOrgHeader(inputPath)) {
     return null;
   }
   if (globalActiveOrgId) {
     return globalActiveOrgId;
+  }
+  if (normalizedPath.startsWith('/api/admin')) {
+    // Admin routes are permitted to execute without an explicit org header
+    // because platform admins and server-side org resolution can still
+    // determine the correct scope. Do not block the request in this case.
+    console.warn('[client] admin_request_without_org_header', { path: inputPath });
+    return null;
   }
   console.warn('[client] missing_org_context', { path: inputPath });
   throw new Error('[client] missing_org_context');

@@ -67,6 +67,14 @@ const grantAdminAccess = (req, reason, meta = {}) => {
   if (meta.allowlistEntry) {
     req.adminAllowlistEntry = meta.allowlistEntry;
   }
+  req.user = req.user || {};
+  req.user.isPlatformAdmin = true;
+  if (!req.user.platformRole) {
+    req.user.platformRole = 'platform_admin';
+  }
+  if (!req.user.role) {
+    req.user.role = 'admin';
+  }
   return true;
 };
 

@@ -36,6 +36,7 @@ import { parsePublishRequestBody, parseUpsertRequestBody } from './validators/co
 import { normalizeImportEntries, normalizeModuleForImport } from './lib/courseImporter.js';
 import { logger } from './lib/logger.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
+import { isValidGrowthOrgId } from './lib/growthOrgHelpers.js';
 
 const logRouteError = (route, error) => {
   logger.error('route_error', {
@@ -12147,6 +12148,7 @@ app.use(
     courseModulesNoLessonsFields: COURSE_MODULES_NO_LESSONS_FIELDS,
     courseWithModulesLessonsSelect: COURSE_WITH_MODULES_LESSONS_SELECT,
     moduleLessonsForeignTable: MODULE_LESSONS_FOREIGN_TABLE,
+    requireAdminAccess,
   }),
 );
 

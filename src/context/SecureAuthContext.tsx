@@ -19,6 +19,7 @@ import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
+import { writeBridgeSnapshot, clearBridgeSnapshot } from '../store/courseStoreOrgBridge';
 // admin access snapshot helper intentionally unused in some builds
 // import { clearAdminAccessSnapshot } from '../lib/adminAccess';
 import { setAuthBootstrapping } from '../lib/authBootstrapState';
@@ -384,6 +385,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           clearAuth(tokenReason);
           setSessionMetaVersion((value) => value + 1);
         }
+        clearBridgeSnapshot();
         return;
       }
 
@@ -426,6 +428,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = resolvedState.activeOrgSource;
       clearMembershipRetryBackoff();
+      writeBridgeSnapshot({
+        status:
+          resolvedState.membershipState === 'ready' || resolvedState.membershipState === 'degraded'
+            ? 'ready'
+            : resolvedState.membershipState === 'error'
+            ? 'error'
+            : 'loading',
+        membershipStatus: resolvedState.membershipState,
+        activeOrgId: resolvedState.activeOrgId,
+        orgId: resolvedState.activeOrgId,
+        role: session.role ?? null,
+        userId: session.id ?? null,
+      });
       if (import.meta.env?.DEV) {
         console.debug('[AUTH SESSION RESTORED]', {
           userId: session.id,
