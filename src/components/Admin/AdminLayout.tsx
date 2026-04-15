@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useTransition, Suspense, type ChangeEvent, type FC, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition, Suspense, type ChangeEvent, type FC, type ReactNode, useSyncExternalStore } from 'react';
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
@@ -89,7 +89,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   // new chunk resolves.  isPending can be used to show a subtle loading indicator
   // in the sidebar without blanking the content area.
   const [navPending, startNavTransition] = useTransition();
-  const { isAuthenticated, user: authUser, authInitializing, authStatus, logout, sessionStatus, user, membershipStatus } = useSecureAuth();
+  const { isAuthenticated, user: authUser, authInitializing, authStatus, logout, sessionStatus, user, membershipStatus, orgResolutionStatus } = useSecureAuth();
   const {
     adminPortalAllowed: adminPortalAllowedRaw,
     hasSession,
@@ -124,6 +124,66 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const apiAuthRequired = Boolean(runtimeStatus.apiAuthRequired);
   const isOrgSelectionRequired = Boolean(isMultiOrg && !activeOrgId);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
+
+  const catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const lastAdminCatalogRetryKeyRef = useRef<string | null>(null);
+  const prevAdminReadyRef = useRef(false);
+
+  const adminReady =
+    !normalizedAuthInitializing &&
+    authStatus === 'authenticated' &&
+    normalizedSessionStatus === 'authenticated' &&
+    hasSession &&
+    Boolean(isAuthenticated?.admin) &&
+    orgResolutionStatus === 'ready';
+
+  useEffect(() => {
+    if (adminReady && !prevAdminReadyRef.current) {
+      console.info('[AdminLayout] admin_ready', {
+        path: location.pathname,
+        userId: user?.id ?? authUser?.id ?? null,
+        activeOrgId,
+        membershipStatus,
+        apiReachable,
+      });
+    }
+    prevAdminReadyRef.current = adminReady;
+  }, [adminReady, activeOrgId, membershipStatus, apiReachable, authUser?.id, user?.id, location.pathname]);
+
+  useEffect(() => {
+    if (!adminReady) {
+      lastAdminCatalogRetryKeyRef.current = null;
+      return;
+    }
+
+    if (catalogState.phase === 'loading' || catalogState.adminLoadStatus === 'success') {
+      return;
+    }
+
+    const retryKey = `${user?.id ?? authUser?.id ?? 'anon'}:${activeOrgId ?? 'none'}:${catalogState.phase}:${catalogState.adminLoadStatus}`;
+    if (lastAdminCatalogRetryKeyRef.current === retryKey) {
+      return;
+    }
+    lastAdminCatalogRetryKeyRef.current = retryKey;
+
+    console.info('[AdminLayout] admin_catalog_recovery', {
+      path: location.pathname,
+      phase: catalogState.phase,
+      status: catalogState.adminLoadStatus,
+      activeOrgId,
+      userId: user?.id ?? authUser?.id ?? null,
+      membershipStatus,
+      reason: 'admin_ready_retry',
+    });
+
+    void courseStore.init({ reason: 'admin_layout_admin_ready_retry' }).catch((error) => {
+      console.warn('[AdminLayout] admin_catalog_recovery_failed', {
+        error: error instanceof Error ? error.message : String(error),
+        phase: catalogState.phase,
+        status: catalogState.adminLoadStatus,
+      });
+    });
+  }, [adminReady, catalogState.phase, catalogState.adminLoadStatus, activeOrgId, membershipStatus, authStatus, normalizedSessionStatus, normalizedAuthInitializing, hasSession, user?.id, authUser?.id, location.pathname]);
 
   const handleRuntimeRetry = useCallback(() => {
     refreshRuntimeStatus().catch((error) => {
