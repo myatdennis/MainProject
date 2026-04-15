@@ -33,8 +33,10 @@ vi.mock('../../lib/secureStorage', () => ({
   secureRemove: secureRemoveMock,
 }));
 
+const mockGetSupabase = vi.fn(async () => null);
+
 vi.mock('../../lib/supabaseClient', () => ({
-  getSupabase: vi.fn(async () => null),
+  getSupabase: mockGetSupabase,
   hasSupabaseConfig: () => false,
 }));
 
@@ -253,5 +255,47 @@ describe('assignmentStorage session enforcement', () => {
 
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
     expect(result).toEqual([cachedAssignment]);
+  });
+
+  it('fetches remote assignments when the requested user is email-based but the session is id-based', async () => {
+    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetSupabase.mockResolvedValue({
+      auth: {
+        getSession: vi.fn(async () => ({
+          data: {
+            session: {
+              user: { id: 'user-123', email: 'learner@example.com' },
+            },
+          },
+        })),
+      },
+    } as any);
+
+    const now = new Date().toISOString();
+    mockApiRequest.mockResolvedValue({
+      data: [
+        {
+          id: 'assign-1',
+          course_id: 'course-1',
+          user_id: 'user-123',
+          status: 'assigned',
+          progress: 0,
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    });
+
+    const { getAssignmentsForUser } = await importModule();
+    const result = await getAssignmentsForUser('learner@example.com');
+
+    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'assign-1',
+        courseId: 'course-1',
+        userId: 'user-123',
+      }),
+    ]);
   });
 });

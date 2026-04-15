@@ -23,8 +23,8 @@ const ClientProfile = () => {
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
     if (user?.email) return user.email.toLowerCase();
-    return null;
-  }, [user?.email, user?.id]);
+    return 'local-user';
+  }, [user]);
 
   useEffect(() => {
     let isMounted = true;

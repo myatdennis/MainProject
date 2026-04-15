@@ -136,6 +136,31 @@ const getSessionUserId = (): string | null => {
   }
 };
 
+const getSessionUserEmail = (): string | null => {
+  try {
+    const session = getUserSession();
+    return session?.email ? session.email.toLowerCase() : null;
+  } catch (error) {
+    console.warn('[assignmentStorage] Unable to resolve authenticated session email:', error);
+    return null;
+  }
+};
+
+const resolveLiveSessionContext = async (): Promise<{ id: string | null; email: string | null }> => {
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return { id: null, email: null };
+    const { data } = await supabase.auth.getSession();
+    return {
+      id: data?.session?.user?.id?.toLowerCase() ?? null,
+      email: typeof data?.session?.user?.email === 'string' ? data.session.user.email.toLowerCase() : null,
+    };
+  } catch (error) {
+    console.warn('[assignmentStorage] Unable to resolve live Supabase session:', error);
+    return { id: null, email: null };
+  }
+};
+
 const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => {
   const normalizedUserId = normalizeUserId(row.user_id);
   if (!normalizedUserId) {
@@ -511,11 +536,6 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
 };
 
 const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
-  const sessionUserId = getSessionUserId();
-  if (!sessionUserId) {
-    console.info('[assignmentStorage] Cannot fetch assignments via API without an authenticated session.');
-    return { rows: [], failed: true };
-  }
   try {
     const params = new URLSearchParams({
       include_completed: 'true',
@@ -548,52 +568,71 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
   }
 
   const sessionUserId = getSessionUserId();
-  const loadLocalForUser = () => loadLocalAssignments().filter((record) => record.userId === normalized);
+  const sessionUserEmail = getSessionUserEmail();
+  let liveSessionId: string | null = null;
+  let liveSessionEmail: string | null = null;
+  let sessionUserIdResolved = sessionUserId;
 
-  if (!sessionUserId) {
+  const loadLocalForUser = (): CourseAssignment[] =>
+    loadLocalAssignments().filter((record) => record.userId === normalized);
+
+  const ensureLiveSessionChecked = async () => {
+    if (liveSessionId !== null || liveSessionEmail !== null) {
+      return;
+    }
+    const liveContext = await resolveLiveSessionContext();
+    liveSessionId = liveContext.id;
+    liveSessionEmail = liveContext.email;
+    if (!sessionUserIdResolved && liveSessionId) {
+      sessionUserIdResolved = liveSessionId;
+    }
+  };
+
+  const currentSessionMatchesRequestedUser = () =>
+    sessionUserIdResolved === normalized ||
+    sessionUserEmail === normalized ||
+    liveSessionId === normalized ||
+    liveSessionEmail === normalized;
+
+  if (!currentSessionMatchesRequestedUser()) {
+    await ensureLiveSessionChecked();
+  }
+
+  if (!currentSessionMatchesRequestedUser()) {
+    console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
+    return loadLocalForUser();
+  }
+
+  const sessionJoiningKeys = new Set<string>([normalized]);
+  if (sessionUserIdResolved) sessionJoiningKeys.add(sessionUserIdResolved);
+  if (sessionUserEmail) sessionJoiningKeys.add(sessionUserEmail);
+  if (liveSessionId) sessionJoiningKeys.add(liveSessionId);
+  if (liveSessionEmail) sessionJoiningKeys.add(liveSessionEmail);
+
+  const loadRemoteAssignments = async () => {
+    const { rows, failed } = await fetchAssignmentsViaApi();
+    if (!failed) {
+      const filtered = rows.filter((record) => {
+        const assignmentType = (record.assignmentType ?? 'course') as AssignmentKind;
+        if (assignmentType !== 'course') return false;
+        return sessionJoiningKeys.has(record.userId);
+      });
+      if (filtered.length) {
+        persistLocalAssignments(filtered);
+        filtered.forEach((assignment) => emitLocalEvent('assignment_updated', assignment));
+      }
+      return filtered;
+    }
+
+    return loadLocalForUser();
+  };
+
+  if (!sessionUserIdResolved && !sessionUserEmail && !liveSessionId && !liveSessionEmail) {
     console.info('[assignmentStorage] Skipping remote assignment fetch (no authenticated session).');
     return loadLocalForUser();
   }
 
-  if (sessionUserId !== normalized) {
-    // The secureStorage session can momentarily lag behind the live React auth
-    // state (e.g. right after login when setUserSession hasn't flushed yet).
-    // Before assuming a genuine mismatch, check if the Supabase live session
-    // confirms the requested user — if so, treat it as a match.
-    try {
-      const supabase = await getSupabase();
-      if (supabase) {
-        const { data } = await supabase.auth.getSession();
-        const liveId = data?.session?.user?.id
-          ? data.session.user.id.toLowerCase()
-          : null;
-        if (liveId && liveId === normalized) {
-          // Live session confirms this is the correct user — proceed normally.
-        } else {
-          console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
-          return loadLocalForUser();
-        }
-      } else {
-        console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
-        return loadLocalForUser();
-      }
-    } catch {
-      console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
-      return loadLocalForUser();
-    }
-  }
-
-  const { rows, failed } = await fetchAssignmentsViaApi();
-  if (!failed) {
-    const filtered = rows.filter((record) => (record.assignmentType ?? 'course') === 'course');
-    if (filtered.length) {
-      persistLocalAssignments(filtered);
-      filtered.forEach((assignment) => emitLocalEvent('assignment_updated', assignment));
-    }
-    return filtered.filter((record) => record.userId === normalized);
-  }
-
-  return loadLocalForUser();
+  return await loadRemoteAssignments();
 };
 
 export const getAssignment = async (

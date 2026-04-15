@@ -84,7 +84,7 @@ const LMSCertificates: React.FC = () => {
           grade: cert.metadata.finalScore !== undefined ? `${cert.metadata.finalScore}%` : undefined,
           status: cert.status === 'expired' ? 'expired' : 'active',
           validUntil: cert.validUntil,
-          shareableUrl: `${window.location.origin}/verify/${cert.verificationCode}`
+          shareableUrl: `${window.location.origin}/verify/${cert.verificationCode}`,
         } as Certificate;
       });
 
