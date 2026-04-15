@@ -288,7 +288,7 @@ const ProgressSyncStatus = ({
                   className="rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold capitalize">{item.action.replace('_', ' ')}</span>
+                    <span className="font-semibold capitalize">{String(item.action ?? 'sync').replace('_', ' ')}</span>
                     <span className="text-[11px] text-blue-700">
                       {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>

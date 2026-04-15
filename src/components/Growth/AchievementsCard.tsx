@@ -3,8 +3,13 @@ import { Link } from 'react-router-dom';
 import cn from '../../utils/cn';
 import type { GrowthAchievement } from '../../dal/growth';
 
-const titleForAchievement = (type: string) => {
-  switch (type) {
+const titleForAchievement = (type?: string | null) => {
+  const safeType = String(type ?? '').trim();
+  if (!safeType) {
+    return 'Achievement';
+  }
+
+  switch (safeType) {
     case 'learning:first_lesson':
       return 'First Lesson Completed';
     case 'learning:first_course':
@@ -22,7 +27,7 @@ const titleForAchievement = (type: string) => {
     case 'leadership:inclusive_thinker':
       return 'Inclusive Thinker';
     default:
-      return type.replace(/[:_]/g, ' ');
+      return safeType.replace(/[:_]/g, ' ');
   }
 };
 
@@ -70,17 +75,20 @@ export default function AchievementsCard({
             Your first milestone will appear here after you complete a lesson, scenario, or reflection.
           </div>
         ) : (
-          items.map((item) => (
-            <div key={`${item.achievement_type}:${item.achieved_at}`} className="flex items-start justify-between gap-3 rounded-2xl border border-mist bg-white p-4">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-charcoal">{titleForAchievement(item.achievement_type)}</p>
-                <p className="mt-1 text-xs text-slate/60">{formatWhen(item.achieved_at)}</p>
+          items.map((item) => {
+            const key = `${item.achievement_type ?? 'achievement'}:${item.achieved_at ?? ''}`;
+            return (
+              <div key={key} className="flex items-start justify-between gap-3 rounded-2xl border border-mist bg-white p-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-charcoal">{titleForAchievement(item.achievement_type)}</p>
+                  <p className="mt-1 text-xs text-slate/60">{formatWhen(item.achieved_at)}</p>
+                </div>
+                <span className="rounded-full border border-mist bg-softwhite px-3 py-1 text-xs font-medium text-slate/70">
+                  Unlocked
+                </span>
               </div>
-              <span className="rounded-full border border-mist bg-softwhite px-3 py-1 text-xs font-medium text-slate/70">
-                Unlocked
-              </span>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
