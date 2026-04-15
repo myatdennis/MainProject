@@ -70,13 +70,13 @@ describe('courseDataLoader', () => {
   });
 
   it('loads a course by slug when ids do not match', async () => {
-    const slugCourse: Course = {
+    const slugCourse = {
       ...baseCourse,
       id: 'course-xyz',
-      slug: undefined,
       title: 'Courageous Conversations',
-      modules: baseCourse.modules
-    };
+      modules: baseCourse.modules,
+      slug: undefined,
+    } as Course;
 
     vi.spyOn(courseStore, 'getAllCourses').mockReturnValue([slugCourse]);
 
@@ -97,14 +97,14 @@ describe('normalizeCourse', () => {
           id: 'module-a',
           title: 'Module A',
           description: '',
-          duration: undefined,
+          duration: undefined as any,
           order: undefined as any,
           lessons: [
             {
               id: 'lesson-x',
               title: 'Malformed Lesson',
               type: 'video',
-              duration: undefined,
+              duration: undefined as any,
               order: undefined as any,
               content: null as any
             }
@@ -117,5 +117,18 @@ describe('normalizeCourse', () => {
 
     expect(normalized.chapters[0].lessons[0].order).toBe(1);
     expect(normalized.chapters[0].lessons[0].content).toBeTypeOf('object');
+  });
+
+  it('normalizes non-string slug and title values safely', () => {
+    const malformedCourse = {
+      ...baseCourse,
+      slug: 123,
+      title: undefined,
+    } as unknown as Course;
+
+    const normalized = normalizeCourse(malformedCourse);
+
+    expect(normalized.slug).toBe('course-123');
+    expect(normalized.title).toBeUndefined();
   });
 });

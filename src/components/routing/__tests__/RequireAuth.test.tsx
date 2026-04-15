@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import RequireAuth from '../RequireAuth';
@@ -99,5 +99,34 @@ describe('RequireAuth guard', () => {
     expect(screen.getByText(/Trouble loading your account/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /retry now/i }));
     expect(reloadSession).toHaveBeenCalledWith({ surface: 'lms', force: true });
+  });
+
+  it('refreshes session for new surface auth when landing on a new surface', async () => {
+    const loadSession = vi.fn().mockResolvedValue(true);
+    renderGuard({
+      authStatus: 'authenticated',
+      sessionStatus: 'authenticated',
+      isAuthenticated: { admin: true, lms: false, client: false },
+      surfaceAuthStatus: { admin: 'ready', lms: 'idle', client: 'ready' },
+      loadSession,
+      user: { id: 'user-1', role: 'admin', email: 'admin@example.com' },
+      memberships: [],
+      hasActiveMembership: false,
+    });
+
+    await waitFor(() => expect(loadSession).toHaveBeenCalledWith({ surface: 'lms' }));
+  });
+
+  it('does not request session load while auth bootstrap is still in progress', async () => {
+    const loadSession = vi.fn().mockResolvedValue(true);
+    renderGuard({
+      authInitializing: true,
+      authStatus: 'booting',
+      sessionStatus: 'loading',
+      loadSession,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loadSession).not.toHaveBeenCalled();
   });
 });

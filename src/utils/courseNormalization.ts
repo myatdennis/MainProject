@@ -15,11 +15,8 @@ export interface NormalizedCourse extends Course {
 }
 
 export const slugify = (value: string): string => {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)+/g, '');
+  const normalized = String(value ?? '').toLowerCase().trim();
+  return normalized.replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 };
 
 export const parseDurationToMinutes = (duration?: string | number | null): number | undefined => {
@@ -187,11 +184,14 @@ const computeCourseDuration = (modules: Module[], fallback?: string): string => 
 };
 
 export const normalizeCourse = (course: Course): NormalizedCourse => {
-  const slugSource = course.slug && course.slug.trim().length > 0
-    ? course.slug
-    : course.title && course.title.trim().length > 0
-      ? course.title
-      : course.id || 'course';
+  const slugSource =
+    typeof course.slug === 'string' && course.slug.trim().length > 0
+      ? course.slug
+      : typeof course.title === 'string' && course.title.trim().length > 0
+        ? course.title
+        : course.id
+          ? String(course.id)
+          : 'course';
 
   const slug = slugify(slugSource);
 

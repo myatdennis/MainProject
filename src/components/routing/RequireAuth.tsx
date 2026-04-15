@@ -242,7 +242,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }, [requestedOrgParam, setRequestedOrgHint]);
 
   const requestSessionLoad = useCallback(
-    (reason: 'initial' | 'retry', options?: { force?: boolean }) => {
+    (reason: 'initial' | 'retry' | 'surface_transition', options?: { force?: boolean }) => {
       if (!options?.force && sessionStatus === 'authenticated') {
         return;
       }
@@ -277,12 +277,15 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }, []);
 
   useEffect(() => {
-    if (sessionLoading) {
-      requestSessionLoad('initial');
-    } else {
-      sessionRequestRef.current = false;
+    if (sessionLoading || authInitializing || authStatus === 'booting') {
+      if (!sessionLoading) {
+        sessionRequestRef.current = false;
+      }
+      return;
     }
-  }, [sessionLoading, requestSessionLoad]);
+
+    requestSessionLoad('initial');
+  }, [sessionLoading, requestSessionLoad, authInitializing, authStatus]);
 
   useEffect(() => {
     if (sessionStatus !== 'authenticated' || hasSession || retryRef.current) {
@@ -619,10 +622,16 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   useEffect(() => {
     if (mode !== 'admin') {
-      if (adminGateTimeoutRef.current) {
-        clearTimeout(adminGateTimeoutRef.current);
-        adminGateTimeoutRef.current = null;
-      }
+      return;
+    }
+    if (adminGateTimeoutRef.current) {
+      clearTimeout(adminGateTimeoutRef.current);
+      adminGateTimeoutRef.current = null;
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== 'admin') {
       return;
     }
 
@@ -696,6 +705,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     logGuardEvent,
   ]);
 
+  const surfaceCheckPending = sessionAuthenticated && hasSession && surfaceState === 'idle';
+
+  useEffect(() => {
+    if (!surfaceCheckPending) {
+      return;
+    }
+    requestSessionLoad('surface_transition', { force: true });
+  }, [requestSessionLoad, surfaceCheckPending]);
 
   const statusesReady =
     sessionAuthenticated && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
@@ -893,18 +910,28 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     }
   } else {
     const clientSurfaceAllowed = mode === 'client' ? Boolean(isAuthenticated.client) : Boolean(isAuthenticated.lms);
+    const clientTarget = loginPathByMode[mode];
+    const surfaceWaitingForAuth = sessionAuthenticated && hasSession && surfaceState !== 'ready' && surfaceState !== 'error';
+
     if (!clientSurfaceAllowed) {
-      const clientTarget = loginPathByMode[mode];
-        // If the current session is an admin-only account (no client surface),
-        // send the user to the admin portal instead of leaving the client page
-        // blank. This avoids a confusing empty render for platform admins.
-        if (isAuthenticated?.admin) {
-          // If already on admin login, let other logic handle it; otherwise redirect.
-          if (location.pathname !== '/admin') {
-            return <Navigate to="/admin" replace />;
-          }
+      if (surfaceWaitingForAuth) {
+        return (
+          <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
+            <LoadingSpinner size="lg" />
+          </div>
+        );
+      }
+
+      const surfaceReady = surfaceState === 'ready';
+      // If the current session is an admin-only account (no client surface),
+      // send the user to the admin portal instead of leaving the client page
+      // blank. Only do this after the current surface has been resolved.
+      if (isAuthenticated?.admin && surfaceReady) {
+        if (location.pathname !== '/admin') {
+          return <Navigate to="/admin" replace />;
         }
-        if (!isOnModeLoginPath) {
+      }
+      if (!isOnModeLoginPath) {
         // Guard: same bootstrap-in-progress check — do not redirect while
         // auth is still initializing.  isAuthenticated.lms is false transiently
         // during bootstrap before the session payload is applied.

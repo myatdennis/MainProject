@@ -64,14 +64,18 @@ export const createCourseCatalogService = ({
       try {
         const { data: adminMemberships, error: adminMembershipsError } = await supabase
           .from('organization_memberships')
-          .select('organization_id, role, status')
+          .select('organization_id, org_id, role, status')
           .eq('user_id', context.userId)
           .eq('status', 'active');
         if (adminMembershipsError) throw adminMembershipsError;
 
         adminOrgIds = (adminMemberships || [])
           .filter((membership) => hasOrgAdminRole(membership.role))
-          .map((membership) => normalizeOrgIdValue(membership.organization_id))
+          .map((membership) =>
+            normalizeOrgIdValue(
+              membership.organization_id ?? membership.org_id ?? null,
+            ),
+          )
           .filter(Boolean);
         allowedOrgIdSet = new Set(adminOrgIds);
       } catch (membershipLookupError) {
