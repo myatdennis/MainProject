@@ -16,7 +16,7 @@ let _coursesCatalogEverSucceeded = false;
 import { Course } from '../../types/courseTypes';
 import type { CourseAssignment } from '../../types/assignment';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
-import { 
+import {
   BookOpen, 
   Plus, 
   Search, 
@@ -30,8 +30,10 @@ import {
   Upload,
   Download,
   AlertTriangle,
-  ShieldCheck
+  ShieldCheck,
+  Trash2
 } from 'lucide-react';
+import Modal from '../../components/Modal';
 import LoadingButton from '../../components/LoadingButton';
 import CourseEditModal from '../../components/CourseEditModal';
 import { useToast } from '../../context/ToastContext';
@@ -71,6 +73,8 @@ const AdminCourses = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [courseForAssignment, setCourseForAssignment] = useState<Course | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
   // useSyncExternalStore gives tear-free reads from the module-scope courseStore singleton.
@@ -228,6 +232,31 @@ const AdminCourses = () => {
       setRetrying(false);
     }
   }, [catalogState.phase, retrying]);
+
+  const handleBulkDelete = useCallback(async () => {
+    setDeleteLoading(true);
+    try {
+      const resp = await fetch('/api/admin/courses/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ courseIds: selectedCourses }),
+        credentials: 'include',
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) {
+        showToast(result.error || 'Bulk delete failed', 'error');
+        return;
+      }
+      showToast(`Deleted ${selectedCourses.length} course(s)`, 'success');
+      setSelectedCourses([]);
+      await courseStore.forceInit();
+    } catch {
+      showToast('Bulk delete failed', 'error');
+    } finally {
+      setDeleteLoading(false);
+      setShowDeleteConfirm(false);
+    }
+  }, [selectedCourses, showToast]);
 
   const publishCourse = async (course: Course) => {
     setLoading(true);
@@ -655,10 +684,48 @@ const AdminCourses = () => {
 
                 <div className="flex flex-wrap items-center gap-3 justify-end">
                   {selectedCourses.length > 0 && (
-                    <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
-                      Publish selected
-                    </Button>
+                    <>
+                      <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
+                        Publish selected
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        leadingIcon={<Trash2 className="h-4 w-4" />}
+                        onClick={() => setShowDeleteConfirm(true)}
+                        disabled={loading || deleteLoading}
+                        data-test="admin-delete-selected"
+                      >
+                        Delete selected
+                      </Button>
+                    </>
                   )}
+      {/* Bulk Delete Confirmation Modal */}
+      <Modal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete selected courses?"
+      >
+        <div className="mb-6">
+          Are you sure you want to permanently delete {selectedCourses.length} selected course(s)? This action cannot be undone.
+        </div>
+        <div className="flex gap-3 justify-end">
+          <Button
+            variant="secondary"
+            onClick={() => setShowDeleteConfirm(false)}
+            disabled={deleteLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            onClick={handleBulkDelete}
+            disabled={deleteLoading}
+          >
+            {deleteLoading ? 'Deleting...' : 'Delete'}
+          </Button>
+        </div>
+      </Modal>
                   <LoadingButton
                     onClick={handleExportCourses}
                     variant="secondary"

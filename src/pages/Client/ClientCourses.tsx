@@ -23,6 +23,7 @@ import { useUserProfile } from '../../hooks/useUserProfile';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
 import { shouldIncludeCourseForLearner } from './clientCoursesUtils';
 import { getUserSession } from '../../lib/secureStorage';
+import { loadCourse } from '../../dal/courseData';
 
 const ClientCourses = () => {
   // Prefetch critical user flows for fast navigation
@@ -265,6 +266,26 @@ const ClientCourses = () => {
     return true;
   });
 
+  const handleLaunchCourse = async (courseSlug: string, fallbackLessonId?: string | null) => {
+    if (fallbackLessonId) {
+      navigate(`/client/courses/${courseSlug}/lessons/${fallbackLessonId}`);
+      return;
+    }
+
+    try {
+      const detail = await loadCourse(courseSlug, { includeDrafts: false, preferRemote: true });
+      const resolvedLessonId = detail ? getFirstLessonId(detail.course) : null;
+      if (resolvedLessonId) {
+        navigate(`/client/courses/${courseSlug}/lessons/${resolvedLessonId}`);
+        return;
+      }
+    } catch (error) {
+      console.warn('[ClientCourses] Failed to resolve launch lesson id', { courseSlug, error });
+    }
+
+    navigate(`/client/courses/${courseSlug}`);
+  };
+
   const coursesLoading =
     adminCatalogState.phase === 'loading' ||
     (learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0);
@@ -383,11 +404,7 @@ const ClientCourses = () => {
                           <Button
                             size="sm"
                             onClick={() => {
-                              if (preferredLessonId) {
-                                navigate(`/client/courses/${course.slug}/lessons/${preferredLessonId}`);
-                              } else {
-                                navigate(`/client/courses/${course.slug}`);
-                              }
+                              void handleLaunchCourse(course.slug, preferredLessonId);
                             }}
                             data-test="client-course-primary"
                           >

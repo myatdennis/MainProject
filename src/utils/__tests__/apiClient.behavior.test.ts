@@ -501,4 +501,23 @@ describe('apiClient', () => {
       });
     }
   });
+
+  it('does not redirect on a 401 when a live session snapshot still exists', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    shouldRequireSessionSpy.mockReturnValue(true);
+    authBootstrapSpy.mockReturnValue(false);
+    getActiveSessionSpy.mockReturnValue({
+      id: 'user-live',
+      email: 'live@test.local',
+      role: 'learner',
+    } as any);
+
+    fetchSpy.mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
+    const { apiRequest } = await loadApiClient();
+
+    await expect(apiRequest('/api/client/data')).rejects.toMatchObject({ status: 401 });
+    expect(supabaseSignOutSpy).not.toHaveBeenCalled();
+    expect(mockClearSupabaseAuthSnapshot).not.toHaveBeenCalled();
+  });
 });

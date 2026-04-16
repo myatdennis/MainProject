@@ -62,14 +62,17 @@ const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
 };
 
 const grantAdminAccess = (req, reason, meta = {}) => {
+  const { elevatePlatformAdmin = true } = meta;
   req.adminPortalAllowed = true;
   req.adminAccessReason = reason;
   if (meta.allowlistEntry) {
     req.adminAllowlistEntry = meta.allowlistEntry;
   }
   req.user = req.user || {};
-  req.user.isPlatformAdmin = true;
-  if (!req.user.platformRole) {
+  if (elevatePlatformAdmin) {
+    req.user.isPlatformAdmin = true;
+  }
+  if (elevatePlatformAdmin && !req.user.platformRole) {
     req.user.platformRole = 'platform_admin';
   }
   if (!req.user.role) {
@@ -119,7 +122,7 @@ const ensureAdminAccess = async (req, res) => {
     }
 
     console.log('[requireAdminAccess] granted e2e_fallback', { userId: req.user?.id });
-    return grantAdminAccess(req, 'e2e_fallback');
+    return grantAdminAccess(req, 'e2e_fallback', { elevatePlatformAdmin: false });
   }
 
   const user = req.supabaseJwtUser;

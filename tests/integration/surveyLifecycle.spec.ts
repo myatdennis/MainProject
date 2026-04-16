@@ -144,7 +144,9 @@ describe('Survey lifecycle contract', () => {
       const ambiguousBody = await parseJson(ambiguousRes as any);
       expect(ambiguousRes.status).toBe(400);
       expect(ambiguousBody).toMatchObject({
-        error: 'explicit_org_selection_required',
+        ok: false,
+        code: 'explicit_org_selection_required',
+        message: 'Select an organization to load assigned surveys.',
       });
 
       const forbiddenRes = await server!.fetch(`/api/admin/surveys/${encodeURIComponent(surveyId)}/assign`, {
@@ -161,7 +163,8 @@ describe('Survey lifecycle contract', () => {
       const forbiddenBody = await parseJson(forbiddenRes as any);
       expect(forbiddenRes.status).toBe(403);
       expect(forbiddenBody).toMatchObject({
-        error: 'org_access_denied',
+        ok: false,
+        code: 'org_access_denied',
       });
     } finally {
       await deleteSurvey(surveyId);

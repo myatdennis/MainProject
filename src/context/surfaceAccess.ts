@@ -22,11 +22,10 @@ export const computeAuthState = (user: UserSession | null, surface?: SessionSurf
     return { admin: isRoleAdmin, lms: false, client: false };
   }
   if (surface === 'lms') {
-    return { admin: false, lms: true, client: false };
+    return { admin: false, lms: true, client: true };
   }
   if (surface === 'client') {
-    return { admin: false, lms: false, client: true };
+    return { admin: false, lms: true, client: true };
   }
   return { admin: isRoleAdmin, lms: !isRoleAdmin, client: !isRoleAdmin };
 };
-

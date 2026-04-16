@@ -208,6 +208,19 @@ const handleAuthFailure = async () => {
     console.warn('[apiClient] E2E bypass active — suppressing auth failure redirect (401 received but session is a synthetic mock)');
     return;
   }
+  // If the app still has a locally-restored session snapshot, do not let an
+  // arbitrary API 401 immediately destroy auth state. SecureAuthContext owns
+  // session reconciliation and can decide whether the user is truly logged out.
+  // This prevents protected client routes from snapping back to /login because
+  // one page-level request races the broader auth bootstrap / surface checks.
+  const activeSession = getActiveSession();
+  if (activeSession?.id) {
+    console.warn('[apiClient] Active session snapshot present — deferring auth failure handling to SecureAuthContext', {
+      userId: activeSession.id,
+      pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+    });
+    return;
+  }
   // Suppress the hard redirect while auth bootstrap is still running.
   // A 401 during bootstrap (e.g. from courseStore.init() firing before the
   // session cookie is confirmed) must NOT destroy the session — the bootstrap

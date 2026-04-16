@@ -767,7 +767,13 @@ const AdminLogin: React.FC = () => {
                     aria-invalid={!!validationErrors.password}
                     aria-describedby={validationErrors.password ? 'password-error' : undefined}
                   />
-                  <button type="button" className="absolute inset-y-0 right-0 pr-3 flex items-center" onClick={() => setShowPassword(!showPassword)}>
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide characters' : 'Show characters'}
+                    aria-pressed={showPassword}
+                  >
                     {showPassword ? <EyeOff className="h-5 w-5 text-gray hover:text-charcoal" /> : <Eye className="h-5 w-5 text-gray hover:text-charcoal" />}
                   </button>
                 </div>

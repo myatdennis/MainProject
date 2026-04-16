@@ -909,7 +909,10 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       });
     }
   } else {
-    const clientSurfaceAllowed = mode === 'client' ? Boolean(isAuthenticated.client) : Boolean(isAuthenticated.lms);
+    const clientSurfaceAllowed =
+      mode === 'client'
+        ? Boolean(isAuthenticated.client || isAuthenticated.lms)
+        : Boolean(isAuthenticated.lms || isAuthenticated.client);
     const clientTarget = loginPathByMode[mode];
     const surfaceWaitingForAuth = sessionAuthenticated && hasSession && surfaceState !== 'ready' && surfaceState !== 'error';
 

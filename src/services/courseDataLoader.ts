@@ -69,6 +69,9 @@ const buildCacheKeys = (course: NormalizedCourse): string[] => {
   return Array.from(keys);
 };
 
+const hasStructuredLessons = (result: LoadCourseResult | null | undefined): boolean =>
+  Boolean(result && Array.isArray(result.lessons) && result.lessons.length > 0);
+
 const findLocalCourse = async (identifier: string): Promise<LoadCourseResult | null> => {
   await ensureCourseStoreReady();
 
@@ -137,6 +140,18 @@ export const loadCourse = async (
           lessons: flattenLessons(normalizedCourse),
           source: 'supabase'
         };
+        if (!hasStructuredLessons(result)) {
+          const localFallback = await findLocalCourse(normalizedIdentifier);
+          if (hasStructuredLessons(localFallback)) {
+            return localFallback;
+          }
+          if (normalizedIdentifier !== slugCandidate) {
+            const slugFallback = await findLocalCourse(slugCandidate);
+            if (hasStructuredLessons(slugFallback)) {
+              return slugFallback;
+            }
+          }
+        }
         cacheResult(buildCacheKeys(normalizedCourse), result);
         return result;
       }

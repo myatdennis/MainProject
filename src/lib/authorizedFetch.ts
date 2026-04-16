@@ -64,44 +64,72 @@ const inferE2EBypassRole = (): 'admin' | 'learner' => {
   return pathname.startsWith('/admin') ? 'admin' : 'learner';
 };
 
+// --- Durable refresh deduplication and request queue ---
+let refreshInFlight: Promise<boolean> | null = null;
+let lastRefreshToken: string | null = null;
+let lastRefreshResult: boolean | null = null;
+const refreshWaiters: Array<() => void> = [];
+
 const refreshAuthToken = async (): Promise<boolean> => {
-  try {
-    const refreshToken = getRefreshToken();
-    const hasRefreshToken = Boolean(refreshToken);
-    if (!hasRefreshToken && devMode) {
-      console.warn('[authorizedFetch] no refresh token in secureStorage; attempting cookie-based refresh fallback');
-    }
-
-    const refreshResponse = await fetch(normalizeUrl('/api/auth/refresh'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: hasRefreshToken ? JSON.stringify({ refreshToken }) : JSON.stringify({}),
-      credentials: 'include',
-    });
-
-    if (!refreshResponse.ok) {
-      if (devMode) {
-        console.warn('[authorizedFetch] refresh request failed', { status: refreshResponse.status });
-      }
-      return false;
-    }
-
-    const json = await refreshResponse.json();
-    if (!json || !json.accessToken) {
-      return false;
-    }
-
-    setAccessToken(json.accessToken, 'authorizedFetch:refresh');
-    if (json.refreshToken) {
-      setRefreshToken(json.refreshToken, 'authorizedFetch:refresh');
-    }
-    return true;
-  } catch (error) {
-    console.warn('[authorizedFetch] token refresh failed', error);
-    return false;
+  // Only allow one refresh in flight at a time
+  if (refreshInFlight) {
+    await refreshInFlight;
+    return lastRefreshResult === true;
   }
+  refreshInFlight = (async () => {
+    try {
+      const refreshToken = getRefreshToken();
+      if (refreshToken && refreshToken === lastRefreshToken && lastRefreshResult !== null) {
+        // Prevent using a stale/used refresh token again
+        return lastRefreshResult;
+      }
+      lastRefreshToken = refreshToken;
+      const hasRefreshToken = Boolean(refreshToken);
+      if (!hasRefreshToken && devMode) {
+        console.warn('[authorizedFetch] no refresh token in secureStorage; attempting cookie-based refresh fallback');
+      }
+      const refreshResponse = await fetch(normalizeUrl('/api/auth/refresh'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: hasRefreshToken ? JSON.stringify({ refreshToken }) : JSON.stringify({}),
+        credentials: 'include',
+      });
+      if (!refreshResponse.ok) {
+        if (devMode) {
+          console.warn('[authorizedFetch] refresh request failed', { status: refreshResponse.status });
+        }
+        lastRefreshResult = false;
+        return false;
+      }
+      const json = await refreshResponse.json();
+      if (!json || !json.accessToken) {
+        lastRefreshResult = false;
+        return false;
+      }
+      setAccessToken(json.accessToken, 'authorizedFetch:refresh');
+      if (json.refreshToken) {
+        setRefreshToken(json.refreshToken, 'authorizedFetch:refresh');
+      }
+      lastRefreshResult = true;
+      return true;
+    } catch (error) {
+      console.warn('[authorizedFetch] token refresh failed', error);
+      lastRefreshResult = false;
+      return false;
+    } finally {
+      refreshInFlight = null;
+      while (refreshWaiters.length) refreshWaiters.pop()?.();
+    }
+  })();
+  return refreshInFlight;
+};
+
+// Queue requests during refresh
+const waitForRefresh = async () => {
+  if (!refreshInFlight) return;
+  await new Promise<void>((resolve) => refreshWaiters.push(resolve));
 };
 
 const DEFAULT_TIMEOUT_MS = 12_000;
@@ -186,6 +214,8 @@ export default async function authorizedFetch(
     }
 
     if (requireAuth && !e2eBypass) {
+      // Wait for any in-flight refresh to finish before using token
+      await waitForRefresh();
       token = getStoredAccessToken();
       if (!token) {
         const supabase = getSupabase();

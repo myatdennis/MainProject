@@ -14,6 +14,12 @@ if (process.env.NODE_ENV === 'production') {
   console.log = () => {};
   console.debug = () => {};
 }
+
+// GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
+// (must be after app is created, before any other middleware/routes)
+// This will help pinpoint where requests are stalling
+// (app is declared below, so we patch after its declaration)
+
 import fs from 'fs';
 import multer from 'multer';
 import { randomUUID, createHash } from 'crypto';
@@ -35,6 +41,14 @@ import { validateCoursePayload } from './validators/coursePayload.js';
 import { parsePublishRequestBody, parseUpsertRequestBody } from './validators/courseWriteContract.js';
 import { normalizeImportEntries, normalizeModuleForImport } from './lib/courseImporter.js';
 import { logger } from './lib/logger.js';
+
+// GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
+// (must be after app is created, before any other middleware/routes)
+// This will help pinpoint where requests are stalling
+// Only add a single global-entry middleware
+
+// ...app is declared below, so after that:
+// (Find the first occurrence of 'const app = express();' and add this right after)
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
 import { isValidGrowthOrgId } from './lib/growthOrgHelpers.js';
 
@@ -1063,6 +1077,11 @@ function savePersistedData(data) {
 }
 
 const app = express();
+// GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
+app.use((req, res, next) => {
+  logger.info('[global-entry] request', { method: req.method, url: req.url, requestId: req.requestId || null });
+  next();
+});
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
 // CORS must run first — before any route handler — so that 401/403 responses
@@ -1679,33 +1698,29 @@ const probeDatabaseHealth = async ({ requireWritable = true } = {}) => {
 };
 
 const respondWithHealthPayload = async (_req, res) => {
+  logger.info('[health] request start', { path: _req.path, requestId: _req.requestId || null });
   try {
     const dbHealth = await probeDatabaseHealth();
+    logger.info('[health] dbHealth', { dbHealth });
     const overrides = { database: dbHealth };
     if (!dbHealth.ok || dbHealth.writable === false) {
       const dbStatus = normalizeHealthStatus(dbHealth.status);
       overrides.status = dbStatus === 'error' || dbStatus === 'disabled' ? 'error' : 'degraded';
     }
     const payload = await buildHealthPayload(overrides);
-    // In local/dev/e2e modes we prefer the health endpoint to remain HTTP 200
-    // so test harnesses and UI connectivity checks can still inspect the
-    // payload even when the database probe reports degraded. The payload
-    // will still contain the real database status under `database`.
-  const isDevEnv = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
-  const forceHealthyForDev = Boolean(isDevEnv || isDemoMode || isTestMode);
-  const probeStatus = normalizeHealthStatus(payload.status);
-  const isCriticalProbe = probeStatus === 'error';
-  const statusCode = isCriticalProbe && !forceHealthyForDev ? 503 : 200;
-  const returnedOk = Boolean(!isCriticalProbe || forceHealthyForDev);
-  const healthSignal = buildHealthSignal({
-    payload,
-    dbHealth,
-    forceHealthyForDev,
-    requestId: _req?.requestId ?? null,
-  });
-    // If we're forcing healthy for dev/E2E, surface the real DB details but
-    // report overall ok=true to avoid blocking test harnesses. Keep database
-    // payload intact so callers can still inspect the real condition.
+    logger.info('[health] buildHealthPayload', { payload });
+    const isDevEnv = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
+    const forceHealthyForDev = Boolean(isDevEnv || isDemoMode || isTestMode);
+    const probeStatus = normalizeHealthStatus(payload.status);
+    const isCriticalProbe = probeStatus === 'error';
+    const statusCode = isCriticalProbe && !forceHealthyForDev ? 503 : 200;
+    const returnedOk = Boolean(!isCriticalProbe || forceHealthyForDev);
+    const healthSignal = buildHealthSignal({
+      payload,
+      dbHealth,
+      forceHealthyForDev,
+      requestId: _req?.requestId ?? null,
+    });
     const legacyPayload = {
       timestamp: new Date().toISOString(),
       version: resolveAppVersion(),
@@ -1719,6 +1734,7 @@ const respondWithHealthPayload = async (_req, res) => {
       featureFlags: payload.featureFlags,
       healthSignal,
     };
+    logger.info('[health] response', { statusCode, returnedOk, legacyPayload });
     res.status(statusCode).json({
       ok: returnedOk,
       data: legacyPayload,
@@ -1729,7 +1745,9 @@ const respondWithHealthPayload = async (_req, res) => {
       },
       ...legacyPayload,
     });
+    logger.info('[health] request end', { path: _req.path, requestId: _req.requestId || null });
   } catch (error) {
+    logger.error('[health] request error', { path: _req.path, requestId: _req.requestId || null, error: error?.message });
     logger.warn('health_check_failed', { message: error?.message || String(error), code: error?.code || null });
     res.status(500).json({
       ok: false,
@@ -2208,6 +2226,41 @@ app.get(
     }
   }),
 );
+
+// Bulk delete courses endpoint
+app.post('/api/admin/courses/bulk-delete', authenticate, requireAdmin, async (req, res) => {
+  if (!supabase) {
+    logger.error('bulk_delete_courses_failed', { reason: 'Supabase not configured' });
+    return res.status(500).json({ error: 'Supabase not configured' });
+  }
+  const { courseIds } = req.body || {};
+  if (!Array.isArray(courseIds) || courseIds.length === 0) {
+    logger.warn('bulk_delete_courses_invalid_payload', { courseIds });
+    return res.status(400).json({ error: 'courseIds array is required' });
+  }
+  logger.info('bulk_delete_courses_requested', {
+    userId: req.user?.userId ?? null,
+    courseIds,
+    requestId: req.requestId ?? null,
+  });
+  try {
+    // Delete from courses table
+    const { error } = await supabase.from('courses').delete().in('id', courseIds);
+    if (error) {
+      logger.error('bulk_delete_courses_failed', { error: error.message, courseIds });
+      return res.status(500).json({ error: error.message });
+    }
+    logger.info('bulk_delete_courses_success', {
+      userId: req.user?.userId ?? null,
+      courseIds,
+      requestId: req.requestId ?? null,
+    });
+    return res.status(200).json({ success: true, deleted: courseIds });
+  } catch (err) {
+    logger.error('bulk_delete_courses_exception', { error: err?.message || String(err), courseIds });
+    return res.status(500).json({ error: err?.message || 'Bulk delete failed' });
+  }
+});
 
 app.get('/api/admin/diagnostics/memberships', requireAdminAccess, asyncHandler(async (req, res) => {
   const context = requireUserContext(req, res);
@@ -6063,7 +6116,11 @@ const buildOrgProgressPayload = async (orgIds, { includeProgress, requestId }) =
 };
 
 const ensureTablesReady = async (label, definitions = []) => {
-  if (!supabase) return { ok: true };
+  if (!supabase) {
+    logger.warn('[ensureTablesReady] Skipped: supabase not initialized', { label });
+    return { ok: true };
+  }
+  logger.info('[ensureTablesReady] Checking tables', { label, tables: definitions.map(d => d.table) });
   for (const definition of definitions) {
     const table = definition.table;
     if (!table) continue;
@@ -6075,13 +6132,16 @@ const ensureTablesReady = async (label, definitions = []) => {
       continue;
     }
     try {
+      logger.debug('[ensureTablesReady] Verifying table', { label, table, columns, schema });
       await executeWithSchemaRetry(`${label}.${table}.verify`, async () => {
         const selectList = columns.length ? columns.join(',') : 'id';
         const result = await supabase.from(table).select(selectList, { head: true }).limit(1);
         if (result.error) throw result.error;
       });
       tableVerificationCache.set(cacheKey, Date.now());
+      logger.info('[ensureTablesReady] Table verified', { label, table, columns, schema });
     } catch (error) {
+      logger.error('[ensureTablesReady] Table verification failed', { label, table, columns, schema, error: error?.message, code: error?.code });
       if (isSchemaMismatchError(error)) {
         const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error)) || null;
         logger.error('supabase_table_verification_failed', {
@@ -6115,11 +6175,13 @@ const respondSchemaUnavailable = (res, label, status) => {
 
 const ensureSupabase = (res) => {
   if (!supabase) {
+    logger.warn('[ensureSupabase] Supabase not initialized');
     // Allow tests to run with an in-memory fallback when explicitly enabled
     if (isDemoOrTestMode) return true;
     const missingEnv = missingSupabaseEnvVars.length > 0 ? missingSupabaseEnvVars : ['Unknown Supabase configuration'];
     if (!loggedMissingSupabaseConfig) {
       console.error('[Supabase] Missing required environment variables:', missingEnv.join(', '));
+      logger.error('[ensureSupabase] Missing required environment variables', { missingEnv });
       loggedMissingSupabaseConfig = true;
     }
     res.status(503).json({
@@ -6129,6 +6191,7 @@ const ensureSupabase = (res) => {
     });
     return false;
   }
+  logger.debug('[ensureSupabase] Supabase is initialized');
   return true;
 };
 
@@ -15974,8 +16037,10 @@ const findLatestHdiPreRecord = (records = [], currentRecord = null) => {
 };
 
 const ensureAdminSurveySchemaOrRespond = async (res, label) => {
+  logger.info('[ensureAdminSurveySchemaOrRespond] Entry', { label });
   const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_SURVEY_TABLES);
   if (!requiredStatus.ok) {
+    logger.warn('[ensureAdminSurveySchemaOrRespond] Required table missing', { label, requiredStatus });
     respondSchemaUnavailable(res, label, requiredStatus);
     return false;
   }
@@ -15994,6 +16059,7 @@ const ensureAdminSurveySchemaOrRespond = async (res, label) => {
       message: error?.message ?? null,
     });
   }
+  logger.info('[ensureAdminSurveySchemaOrRespond] Success', { label });
   return true;
 };
 

@@ -158,6 +158,58 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     setGlobalActiveOrgIdForApi(activeOrgId ?? null);
   }, [activeOrgId]);
 
+  // Track last known admin/role/org state for assertions
+  const lastRoleRef = useRef<string | null>(null);
+  const lastAdminAllowedRef = useRef<boolean>(false);
+
+  // Assert and log role transitions
+  useEffect(() => {
+    const currentRole = user?.role ?? null;
+    if (lastRoleRef.current !== currentRole) {
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH][ROLE_TRANSITION]', {
+          from: lastRoleRef.current,
+          to: currentRole,
+          userId: user?.id,
+          orgId: activeOrgId,
+          ts: Date.now(),
+        });
+      }
+      lastRoleRef.current = currentRole;
+    }
+  }, [user, activeOrgId]);
+
+  // Ensure admin store initialization waits for final resolved auth/org state
+  useEffect(() => {
+    // Only initialize admin store if session/org/role is fully resolved and admin is allowed
+    const isAdmin = (user?.role === 'admin' || user?.role === 'platform_admin') && membershipStatus === 'ready';
+    if (isAdmin && !lastAdminAllowedRef.current) {
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH][ADMIN_GATE] Admin store initializing', {
+          userId: user?.id,
+          orgId: activeOrgId,
+          membershipStatus,
+          ts: Date.now(),
+        });
+      }
+      // Trigger admin store (or any downstream) initialization here
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('huddle:admin_ready', { detail: { userId: user?.id, orgId: activeOrgId } }));
+      }
+      lastAdminAllowedRef.current = true;
+    } else if (!isAdmin && lastAdminAllowedRef.current) {
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH][ADMIN_GATE] Admin store de-initialized', {
+          userId: user?.id,
+          orgId: activeOrgId,
+          membershipStatus,
+          ts: Date.now(),
+        });
+      }
+      lastAdminAllowedRef.current = false;
+    }
+  }, [user, activeOrgId, membershipStatus]);
+
   const setRequestedOrgHint = useCallback((orgId: string | null) => {
     if (!orgId) {
       setRequestedOrgHintState(null);
@@ -397,6 +449,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         organizationIdsSnapshotRef.current = [];
         clearMembershipRetryBackoff();
         setIsAuthenticated({ lms: false, admin: false, client: false });
+        setSurfaceAuthStatus({ admin: 'idle', lms: 'idle', client: 'idle' });
         if (persistTokens) {
           clearAuth(tokenReason);
           setSessionMetaVersion((value) => value + 1);
@@ -439,7 +492,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setMemberships(resolvedMemberships);
       setOrganizationIds(orgIds);
       setActiveOrgIdState(session.activeOrgId ?? null);
-      setIsAuthenticated(computeAuthState(session, surface));
+      const authState = computeAuthState(session, surface);
+      setIsAuthenticated(authState);
+      setSurfaceAuthStatus({
+        admin: authState.admin ? 'ready' : 'idle',
+        lms: authState.lms ? 'ready' : 'idle',
+        client: authState.client ? 'ready' : 'idle',
+      });
       setUserSession(session);
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = resolvedState.activeOrgSource;
@@ -1426,9 +1485,20 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const resolveSession = useCallback(
     async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}) => {
+      const hadLiveSession = hasAuthenticatedSessionRef.current || Boolean(user);
       try {
         const hasUser = await fetchServerSession({ surface, signal });
         if (hasUser) {
+          return true;
+        }
+
+        if (hadLiveSession) {
+          if (import.meta.env?.DEV) {
+            console.warn('[SecureAuth] resolveSession preserved existing session after empty result', {
+              surface,
+              pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            });
+          }
           return true;
         }
 
@@ -1438,12 +1508,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
           return false;
         }
+        if (hadLiveSession) {
+          console.warn('[SecureAuth] resolveSession preserved existing session after error', {
+            surface,
+            error,
+          });
+          return true;
+        }
         console.error('[SecureAuth] resolveSession failed', error);
         applySessionPayload(null, { persistTokens: true, reason: 'resolve_session_error' });
         return false;
       }
     },
-    [applySessionPayload, fetchServerSession],
+    [applySessionPayload, fetchServerSession, user],
   );
 
   const loadSession = useCallback(

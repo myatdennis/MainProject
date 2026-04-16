@@ -399,7 +399,6 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
   // execute runs sequentially (fresh context each run)
   for (let runIndex = 0; runIndex < RUNS; runIndex++) {
-    // eslint-disable-next-line no-await-in-loop
     await runSingle(runIndex);
   }
 

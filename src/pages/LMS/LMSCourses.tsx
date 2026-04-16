@@ -132,8 +132,11 @@ const LMSCourses = () => {
       });
   }, [adminCatalogState.phase, learnerCatalogState.status]);
 
+  // Treat only catalog-phase/loading and the empty-published-catalog case as
+  // catalog-loading. Background progress syncs shouldn't hide the course
+  // cards (they only populate progress numbers), so remove `isSyncing` from
+  // the catalog-level loading flag.
   const catalogLoading =
-    isSyncing ||
     adminCatalogState.phase === 'loading' ||
     (learnerCatalogState.status === 'idle' && publishedCourses.length === 0);
 
@@ -253,6 +256,11 @@ const LMSCourses = () => {
                   <Layers3 className="h-4 w-4 text-sunrise" />
                   {publishedCourses.length} courses available
                 </span>
+                {isSyncing && (
+                  <span className="inline-flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-slate/700">
+                    Syncing progress…
+                  </span>
+                )}
                 <span className="inline-flex items-center gap-2 rounded-full bg-white/70 px-4 py-2 shadow-card-sm">
                   <Sparkle className="h-4 w-4 text-forest" />
                   Curated for DEI impact
