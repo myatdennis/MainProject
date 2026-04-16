@@ -1,7 +1,16 @@
+## Netlify build config
+## WARNING: Do NOT place server-only secrets (service role keys, DB URLs, JWT secrets)
+## in this file or in the Netlify Build environment. Server-only secrets must live
+## only in your server runtime environment (Railway, Netlify Functions runtime env,
+## or other backend host). The build safety check will fail if it detects server
+## secrets present in client-facing VITE_* variables.
+
 [build]
   command = "npm run build:client"
   publish = "dist"
 
+# Only include client-safe build environment variables here. Keep server secrets
+# out of the build environment.
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--include=dev"
