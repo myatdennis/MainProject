@@ -8,7 +8,7 @@ import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
 import { getActiveOrgPreference } from '../lib/secureStorage';
-import { getAssignmentsForUser } from '../utils/assignmentStorage';
+import { getAssignmentsForUserWithOutcome } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
 import { loadStoredCourseProgress } from '../utils/courseProgress';
@@ -21,6 +21,7 @@ import { canonicalizeLessonContent } from '../utils/lessonContent';
 import { SlugConflictError } from '../utils/slugConflict';
 import isUuid from '../utils/isUuid';
 import { isAdminSurface } from '../utils/surface';
+import type { SessionSurface } from '../context/surfaceAccess';
 import { resolveOrgContextFromBridge, isOrgResolverRegistered } from './courseStoreOrgBridge';
 import {
   evictStaleCatalogKeys,
@@ -31,6 +32,7 @@ import {
   clearAllCatalogCache,
   clearCatalogCacheForOrg,
 } from '../utils/catalogPersistence';
+// ...existing code... (removed unused imports currentSurface and isAuthBootstrapping)
 
 // Run stale key eviction immediately at module load — before any cache reads.
 evictStaleCatalogKeys();
@@ -336,8 +338,6 @@ const getDefaultCourses = (): { [key: string]: Course } => {
     keyTakeaways: [
       'Psychological safety is the foundation of inclusive leadership',
       'Vulnerability builds trust and encourages authentic communication',
-      'Self-awareness is crucial for recognizing your impact on others',
-      'Creating inclusive environments requires intentional daily actions'
     ],
     type: 'Video + Worksheet',
     lessons: 4,
@@ -1612,8 +1612,39 @@ const ensureAssignmentScopedCatalog = async (
     Boolean(catalog && Object.keys(catalog).length > 0);
 
   try {
-    const assignments = await getAssignmentsForUser(userId);
+    const outcome = await getAssignmentsForUserWithOutcome(userId);
+    // outcome.outcome: 'success' | 'empty' | 'error' | 'unauthenticated'
+    if (outcome.outcome === 'error') {
+      console.error('[courseStore] assignment_fetch_error', { userId, orgId, error: outcome.error ?? 'remote_failed', surface: 'learner' });
+      // Do not treat remote failure as empty — preserve current catalog and mark error state.
+      if (!skipDiagnostics) {
+        emitCatalogDiagnostic('assignment_scope_failed', { userId, orgId, phase: 'post_fetch', error: outcome.error ?? 'remote_failed' });
+      }
+      setLearnerCatalogState({
+        status: 'error',
+        lastUpdatedAt: Date.now(),
+        lastError: outcome.error ?? 'assignment_fetch_error',
+        detail: 'assignment_fetch_error',
+      });
+      // Do not clear cache or merge defaults — keep currentCourses intact.
+      return currentCourses;
+    }
+
+    if (outcome.outcome === 'unauthenticated') {
+      // Can't reliably scope assignments for this user — keep current catalog.
+      if (!skipDiagnostics) {
+        emitCatalogDiagnostic('assignment_scope_failed', { userId, orgId, phase: 'post_fetch', error: 'unauthenticated' });
+      }
+      setLearnerCatalogState({ status: 'idle', lastUpdatedAt: Date.now(), lastError: null, detail: null });
+      return currentCourses;
+    }
+
+    const assignments = outcome.assignments;
+    if (outcome.outcome === 'success') {
+      console.info('[courseStore] assignment_fetch_success', { userId, orgId, count: assignments.length, surface: 'learner' });
+    }
     if (!assignments || assignments.length === 0) {
+      console.info('[courseStore] assignment_fetch_empty', { userId, orgId, surface: 'learner' });
       if (!skipDiagnostics) {
         emitCatalogDiagnostic('assignment_scope_empty', { userId, orgId, phase: 'post_fetch' });
       }
@@ -1825,8 +1856,9 @@ export const courseStore = {
   setEditingCourseId: (id: string | null): void => {
     editingCourseId = id ?? null;
   },
-  init: (options?: { reason?: string | null }): Promise<void> => {
-    const initReason = options?.reason ?? 'auto';
+  init: (options?: { reason?: string | null; surface?: SessionSurface }): Promise<void> => {
+    const reason = options?.reason ?? null;
+    const initReason = reason ?? 'unknown';
     if (initPromise) {
       // Re-use the in-flight promise — never start a second concurrent init.
       return initPromise;
@@ -1854,7 +1886,11 @@ export const courseStore = {
       }
     }
 
-  const promise = (async () => {
+  // Start the init promise immediately and store it so concurrent callers
+  // reuse the same in-flight operation. Assigning to initPromise before
+  // the async work avoids a tiny race window that could spawn two in-flight
+  // initializations under heavy concurrency.
+  initPromise = (async () => {
     let restrictToOrg = true;
     let canUseAdminApi = false;
     let adminLoadStatus: AdminLoadStatus = 'skipped';
@@ -1900,7 +1936,10 @@ export const courseStore = {
         courses = getDefaultCourses();
         return;
       }
-      const adminSurfaceDetected = isAdminSurface();
+      const adminSurfaceDetected =
+          typeof options?.surface === 'string'
+            ? options.surface === 'admin'
+            : isAdminSurface();
       if (adminSurfaceDetected && !orgContext.role) {
         orgContext = await waitForRoleResolution(orgContext, initReason);
         if (!orgContext.role) {
@@ -2462,14 +2501,14 @@ export const courseStore = {
         lastInitOrgId = resolvedOrgIdForInit;
       }
     }
-    })();
+  })();
 
-    initPromise = promise;
-    promise.finally(() => {
-      initPromise = null;
-    });
+  // Ensure the stored promise is cleared when complete.
+  initPromise.finally(() => {
+    initPromise = null;
+  });
 
-    return promise;
+  return initPromise;
   },
 
   // Force a fresh catalog fetch, bypassing the ready-guard.

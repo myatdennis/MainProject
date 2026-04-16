@@ -92,6 +92,10 @@ const getAuthedSupabaseClient = async () => {
   }
 };
 
+const hasSupabaseFrom = (client: any): client is { from: (...args: any[]) => any } => {
+  return Boolean(client && typeof client.from === 'function');
+};
+
 type SupabaseAssignmentRow = {
   id: string;
   course_id?: string | null;
@@ -299,34 +303,39 @@ const syncLocalAssignmentsToSupabase = async () => {
       return;
     }
 
-    try {
-      const supabase = await getAuthedSupabaseClient();
-      if (!supabase) {
-        console.info('[assignmentStorage] Skipping Supabase sync (no authenticated session).');
-        return;
+      try {
+        const supabase = await getAuthedSupabaseClient();
+        if (!supabase) {
+          console.info('[assignmentStorage] Skipping Supabase sync (no authenticated session).');
+          return;
+        }
+
+        if (!hasSupabaseFrom(supabase)) {
+          console.warn('[assignmentStorage] Supabase client does not expose .from(); skipping remote sync.');
+          return;
+        }
+
+        const attemptSync = async (includeProgressField: boolean) => {
+          const payload = pending.map((assignment) =>
+            buildSupabaseAssignmentRecord(assignment, includeProgressField),
+          );
+          const { error } = await supabase
+            .from(ASSIGNMENTS_TABLE)
+            .upsert(payload, buildUpsertOptions());
+          if (error) throw error;
+        };
+
+        await executeAssignmentsMutation('syncLocalAssignments', attemptSync);
+
+        clearLocalAssignments();
+      } catch (error) {
+        if (handleAssignmentsTableMissing('sync', error)) {
+          return;
+        }
+        console.warn('[assignmentStorage] Failed to sync local assignments to Supabase:', error);
+      } finally {
+        inflightLocalSync = null;
       }
-
-      const attemptSync = async (includeProgressField: boolean) => {
-        const payload = pending.map((assignment) =>
-          buildSupabaseAssignmentRecord(assignment, includeProgressField),
-        );
-        const { error } = await supabase
-          .from(ASSIGNMENTS_TABLE)
-          .upsert(payload, buildUpsertOptions());
-        if (error) throw error;
-      };
-
-      await executeAssignmentsMutation('syncLocalAssignments', attemptSync);
-
-      clearLocalAssignments();
-    } catch (error) {
-      if (handleAssignmentsTableMissing('sync', error)) {
-        return;
-      }
-      console.warn('[assignmentStorage] Failed to sync local assignments to Supabase:', error);
-    } finally {
-      inflightLocalSync = null;
-    }
   })();
 
   return inflightLocalSync;
@@ -430,6 +439,10 @@ export async function legacyAddAssignments(
 
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
+      if (!hasSupabaseFrom(supabase)) {
+        console.warn('[assignmentStorage] Supabase client missing .from() — aborting remote op to allow local fallback.');
+        throw new Error('Supabase client missing from()');
+      }
 
       const runUpsert = async (includeProgressField: boolean) => {
         const payload = normalizedIds.map((userId) => ({
@@ -560,6 +573,89 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
   }
 };
 
+/**
+ * Fetch assignments but return a richer outcome so callers can distinguish
+ * between success (remote returned), empty (remote returned empty) and error
+ * (remote failed). This helper is intended for callers that must treat a
+ * remote failure as an error state instead of silently falling back to
+ * local assignments.
+ */
+export const getAssignmentsForUserWithOutcome = async (
+  userId?: string | null,
+): Promise<{
+  outcome: 'success' | 'empty' | 'error' | 'unauthenticated';
+  assignments: CourseAssignment[];
+  error?: string | null;
+}> => {
+  const normalized = normalizeUserId(userId) ?? null;
+  if (!normalized) {
+    return { outcome: 'unauthenticated', assignments: [], error: 'invalid_user' };
+  }
+
+  const sessionUserId = getSessionUserId();
+  const sessionUserEmail = getSessionUserEmail();
+  let liveSessionId: string | null = null;
+  let liveSessionEmail: string | null = null;
+  let sessionUserIdResolved = sessionUserId;
+
+  const loadLocalForUser = (): CourseAssignment[] =>
+    loadLocalAssignments().filter((record) => record.userId === normalized);
+
+  const ensureLiveSessionChecked = async () => {
+    if (liveSessionId !== null || liveSessionEmail !== null) return;
+    const liveContext = await resolveLiveSessionContext();
+    liveSessionId = liveContext.id;
+    liveSessionEmail = liveContext.email;
+    if (!sessionUserIdResolved && liveSessionId) sessionUserIdResolved = liveSessionId;
+  };
+
+  const currentSessionMatchesRequestedUser = () =>
+    sessionUserIdResolved === normalized ||
+    sessionUserEmail === normalized ||
+    liveSessionId === normalized ||
+    liveSessionEmail === normalized;
+
+  if (!currentSessionMatchesRequestedUser()) {
+    await ensureLiveSessionChecked();
+  }
+
+  if (!currentSessionMatchesRequestedUser()) {
+    // caller requested a user that does not match the authenticated session,
+    // return local-only data but mark as unauthenticated so callers can decide.
+    return { outcome: 'unauthenticated', assignments: loadLocalForUser(), error: 'session_mismatch' };
+  }
+
+  if (!sessionUserIdResolved && !sessionUserEmail && !liveSessionId && !liveSessionEmail) {
+    return { outcome: 'unauthenticated', assignments: loadLocalForUser(), error: 'no_authenticated_session' };
+  }
+
+  try {
+    const { rows, failed } = await fetchAssignmentsViaApi();
+    if (failed) {
+      // Remote call failed — surface as an error outcome but return local fallback
+      return { outcome: 'error', assignments: loadLocalForUser(), error: 'remote_failed' };
+    }
+    const filtered = rows.filter((record) => {
+      const assignmentType = (record.assignmentType ?? 'course') as AssignmentKind;
+      if (assignmentType !== 'course') return false;
+      const sessionJoiningKeys = new Set<string>([normalized]);
+      if (sessionUserIdResolved) sessionJoiningKeys.add(sessionUserIdResolved);
+      if (sessionUserEmail) sessionJoiningKeys.add(sessionUserEmail);
+      if (liveSessionId) sessionJoiningKeys.add(liveSessionId);
+      if (liveSessionEmail) sessionJoiningKeys.add(liveSessionEmail);
+      return sessionJoiningKeys.has(record.userId);
+    });
+    if (filtered.length === 0) return { outcome: 'empty', assignments: [], error: null };
+    // persist for offline scenarios
+    persistLocalAssignments(filtered);
+    filtered.forEach((assignment) => emitLocalEvent('assignment_updated', assignment));
+    return { outcome: 'success', assignments: filtered, error: null };
+  } catch (err) {
+    console.warn('[assignmentStorage] getAssignmentsForUserWithOutcome unexpected error:', err);
+    return { outcome: 'error', assignments: loadLocalForUser(), error: (err as Error)?.message ?? String(err) };
+  }
+};
+
 export const getAssignmentsForUser = async (userId?: string | null): Promise<CourseAssignment[]> => {
   const normalized = normalizeUserId(userId) ?? null;
   if (!normalized) {
@@ -658,6 +754,10 @@ export const updateAssignmentProgress = async (
     async () => {
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
+      if (!hasSupabaseFrom(supabase)) {
+        console.warn('[assignmentStorage] Supabase client missing .from() — aborting remote op to allow local fallback.');
+        throw new Error('Supabase client missing from()');
+      }
 
       const runUpdate = async (includeProgressField: boolean) => {
         const { data, error } = await supabase

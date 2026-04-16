@@ -107,12 +107,16 @@ const getRawApiBase = (): string => {
       if (isLocalRuntime) {
         try {
           const configuredHost = new URL(trimmed).hostname.toLowerCase();
-          if (!localHostPattern.test(configuredHost)) {
-            console.warn(
-              `[apiBase] Local runtime detected (${currentHost}) but VITE_API_BASE_URL points to remote host (${configuredHost}). Falling back to /api.`,
-            );
-            return DEFAULT_DEV_API_BASE;
-          }
+            // Only warn once to avoid log spam during busy E2E runs
+            if (!localHostPattern.test(configuredHost)) {
+              if (!(getRawApiBase as any)._localRuntimeRemoteHostWarningLogged) {
+                (getRawApiBase as any)._localRuntimeRemoteHostWarningLogged = true;
+                console.warn(
+                  `[apiBase] Local runtime detected (${currentHost}) but VITE_API_BASE_URL points to remote host (${configuredHost}). Falling back to /api.`,
+                );
+              }
+              return DEFAULT_DEV_API_BASE;
+            }
         } catch {
           // ignore parse failures and continue with normal handling
         }

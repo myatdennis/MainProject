@@ -1,0 +1,515 @@
+{
+  "runIndex": 2,
+  "startedAt": "2026-04-16T10:46:29.867Z",
+  "learnerFlow": {
+    "network": [
+      {
+        "event": "request",
+        "url": "http://localhost:8888/lms/login",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336391188
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/lms/login",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336391191
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336421204
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336421207
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336422225
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336422228
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336423245
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336423249
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336424269
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336424273
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336425294
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336425295
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336426311
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336426314
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336427332
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336427335
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336428355
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336428357
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336429376
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336429379
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336430399
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336430402
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336431423
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336431425
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336432442
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336432446
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336433466
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336433469
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336434490
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336434493
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336435511
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336435514
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336436532
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336436535
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336437554
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336437558
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336438575
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336438577
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336439587
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336439590
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336440609
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336440612
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336441629
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336441632
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/client/courses",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336442140
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/client/courses",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336442143
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/lms/dashboard",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336443218
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/lms/dashboard",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336443222
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/lms/dashboard",
+        "method": "GET",
+        "type": "document",
+        "timestamp": 1776336443731
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/lms/dashboard",
+        "status": 404,
+        "duration": 0,
+        "timestamp": 1776336443734
+      }
+    ],
+    "console": [
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      }
+    ],
+    "errors": [],
+    "adminCallsDetected": [],
+    "jsBundlesLoaded": [],
+    "swInfo": {
+      "controller": false,
+      "registrations": []
+    },
+    "finalUrl": "http://localhost:8888/client/courses",
+    "logoutOccurred": false,
+    "clicked": false,
+    "adminCallsAfterReturn": []
+  },
+  "adminFlow": {
+    "network": [
+      {
+        "event": "request",
+        "url": "http://localhost:8888/admin/dashboard",
+        "method": "GET",
+        "timestamp": 1776336442712
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/admin/dashboard",
+        "status": 404,
+        "timestamp": 1776336442713
+      },
+      {
+        "event": "request",
+        "url": "http://localhost:8888/admin/dashboard",
+        "method": "GET",
+        "timestamp": 1776336444242
+      },
+      {
+        "event": "response",
+        "url": "http://localhost:8888/admin/dashboard",
+        "status": 404,
+        "timestamp": 1776336444246
+      }
+    ],
+    "console": [
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (File not found)"
+      }
+    ],
+    "errors": [],
+    "jsBundlesLoaded": [],
+    "swInfo": null,
+    "adminApiCalls": []
+  },
+  "success": true,
+  "endedAt": "2026-04-16T10:47:24.752Z"
+}

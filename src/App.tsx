@@ -300,7 +300,7 @@ export function AppContent() {
             ts: Date.now(),
           });
         }
-        await courseStore.init();
+        await courseStore.init({ surface });
         if (!cancelled) {
           courseInitKeyRef.current = targetKey;
         }

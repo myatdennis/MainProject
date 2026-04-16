@@ -47,7 +47,26 @@ export const createCourseAssignmentsController = ({
     const context = requireUserContext(req, res);
     if (!context) return;
     try {
+      logger.info('client_assignments_controller_request_received', {
+        requestId: req.requestId ?? null,
+        path: req.path,
+        query: req.query ?? null,
+        authUserId: req.authContext?.userId ?? null,
+        contextUserId: context.userId ?? null,
+      });
+    } catch (e) {
+      // continue
+    }
+    try {
       const result = await service.loadClientAssignments({ req, context });
+      try {
+        logger.info('client_assignments_controller_response', {
+          requestId: req.requestId ?? null,
+          status: result.status ?? null,
+          count: result.meta?.count ?? (Array.isArray(result.data) ? result.data.length : null),
+          orgId: result.meta?.orgId ?? null,
+        });
+      } catch (e) {}
       if (result.error) {
         return sendError(res, result.status, result.error.code, result.error.message, undefined, result.meta);
       }
@@ -64,6 +83,8 @@ export const createCourseAssignmentsController = ({
         userId: req.authContext?.userId ?? null,
         code: error?.code,
         message: error?.message,
+        stack: error?.stack ?? null,
+        query: req.query ?? null,
       });
       return sendError(res, 500, 'fetch_failed', 'Unable to load assignments');
     }

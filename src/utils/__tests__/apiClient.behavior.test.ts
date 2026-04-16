@@ -241,7 +241,7 @@ describe('apiClient', () => {
   it('throws ApiError with parsed message on non-2xx status', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    const { apiRequest, ApiError } = await loadApiClient();
+  const { apiRequest, ApiError } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ message: 'Forbidden' }, { status: 403 }));
 
     await expect(apiRequest('/courses')).rejects.toMatchObject({
@@ -391,6 +391,17 @@ describe('apiClient', () => {
 
     await apiRequest('/api/admin/courses', { allowAnonymous: true });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks admin API calls when surface hint is non-admin in production', async () => {
+    // Simulate production so dev-mode warnings become strict enforcement
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('DEV', '' as any);
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+  const { apiRequest } = await loadApiClient();
+
+  await expect(apiRequest('/api/admin/courses', { surface: 'lms' as any })).rejects.toBeTruthy();
   });
 
   it('sends browser credentials for API requests to preserve cookies', async () => {

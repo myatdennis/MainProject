@@ -108,6 +108,34 @@ if (shouldFailServer || shouldFailClient) {
   process.exit(1);
 }
 
+// Extra safety: ensure we are not leaking server-secret values into client VITE_* vars.
+// If any client-facing env value equals a server secret's value, fail in protected contexts.
+try {
+  const serverSecretKeys = [...requiredServer, ...requiredServerAnyOf.flat()];
+  const clientKeys = Object.keys(process.env).filter((k) => k.startsWith('VITE_'));
+  const leakedPairs = [];
+  for (const sk of serverSecretKeys) {
+    const sVal = process.env[sk];
+    if (!sVal) continue;
+    for (const ck of clientKeys) {
+      const cVal = process.env[ck];
+      if (!cVal) continue;
+      if (String(cVal).trim() === String(sVal).trim()) {
+        leakedPairs.push({ serverKey: sk, clientKey: ck });
+      }
+    }
+  }
+  if (leakedPairs.length > 0 && shouldEnforceStrict) {
+    console.error('\nDetected potential server-secret values assigned to client-facing VITE_* environment variables:');
+    leakedPairs.forEach((p) => console.error(`  Server var ${p.serverKey} appears in client env ${p.clientKey}`));
+    console.error('\nThis is unsafe: remove server secrets from client env variables.');
+    process.exit(2);
+  }
+} catch (e) {
+  // best-effort only — do not crash the entire check if this verification throws.
+  console.warn('[check_deploy_env] leak-detection failed', e?.message ?? e);
+}
+
 if (hasMissing) {
   console.warn('\nMissing env vars detected in a non-production local context; continuing because strict enforcement is disabled.');
 }

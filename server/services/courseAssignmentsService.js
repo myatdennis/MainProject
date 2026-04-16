@@ -938,16 +938,29 @@ export const createCourseAssignmentsService = ({
   };
 
   const loadClientAssignments = async ({ req, context }) => {
-    const requestId = req.requestId;
-    const normalizedUserId = String(context.userId || '').trim().toLowerCase();
+    try {
+      const requestId = req.requestId;
+      const normalizedUserId = String(context.userId || '').trim().toLowerCase();
 
-    if (!normalizedUserId) {
-      return {
-        status: 401,
-        data: [],
-        meta: { count: 0, orgId: null, error: 'not_authenticated' },
-      };
-    }
+      try {
+        logger.info('client_assignments_request_received', {
+          requestId: requestId ?? null,
+          authUserId: req.authContext?.userId ?? null,
+          contextUserId: context.userId ?? null,
+          normalizedUserId,
+          query: req.query ?? null,
+        });
+      } catch (e) {
+        // non-fatal
+      }
+
+      if (!normalizedUserId) {
+        return {
+          status: 401,
+          data: [],
+          meta: { count: 0, orgId: null, error: 'not_authenticated' },
+        };
+      }
 
     let queryUserId = normalizedUserId;
     if (!isUuid(queryUserId) && !isDemoMode) {
@@ -1058,6 +1071,14 @@ export const createCourseAssignmentsService = ({
     let sourceTable = null;
 
     for (const table of assignmentTables) {
+      try {
+        logger.info('client_assignments_query_start', {
+          requestId,
+          table,
+          userId: queryUserId,
+          resolvedOrgId,
+        });
+      } catch (e) {}
       let query = supabase.from(table).select('*');
 
       if (table === 'assignments') {
@@ -1088,6 +1109,14 @@ export const createCourseAssignmentsService = ({
         .order('created_at', { ascending: false, nullsFirst: false });
 
       const { data, error } = await query;
+      try {
+        logger.info('client_assignments_query_result', {
+          requestId,
+          table,
+          error: error ? (error?.message ?? error) : null,
+          rows: Array.isArray(data) ? data.length : 0,
+        });
+      } catch (e) {}
       if (error) {
         const invalidUuidFilter =
           error?.code === '22P02' ||
@@ -1112,7 +1141,15 @@ export const createCourseAssignmentsService = ({
               .order('updated_at', { ascending: false, nullsFirst: false })
               .order('created_at', { ascending: false, nullsFirst: false });
             const { data: fallbackData, error: fallbackError } = await fallbackQuery;
-            if (!fallbackError) {
+              try {
+                logger.info('client_assignments_fallback_query_result', {
+                  requestId,
+                  table,
+                  fallbackError: fallbackError ? (fallbackError?.message ?? fallbackError) : null,
+                  rows: Array.isArray(fallbackData) ? fallbackData.length : 0,
+                });
+              } catch (e) {}
+              if (!fallbackError) {
               rows = fallbackData || [];
               sourceTable = table;
               if (rows.length > 0 || table === assignmentTables[assignmentTables.length - 1]) break;
@@ -1137,15 +1174,29 @@ export const createCourseAssignmentsService = ({
 
     if (!sourceTable) {
       logger.warn('client_assignments_no_table', { requestId, tablesTried: assignmentTables });
+      logger.info('client_assignments_response', { requestId, status: 200, count: 0, orgId: resolvedOrgId });
       return { status: 200, data: [], meta: { count: 0, orgId: resolvedOrgId } };
     }
 
     const normalizedRows = rows.map((row) => normalizeAssignmentRow(row)).filter(Boolean);
+    logger.info('client_assignments_response', { requestId, status: 200, count: normalizedRows.length, orgId: normalizedRows.length > 0 ? resolvedOrgId : null, table: sourceTable });
     return {
       status: 200,
       data: normalizedRows,
       meta: { count: normalizedRows.length, orgId: normalizedRows.length > 0 ? resolvedOrgId : null, table: sourceTable },
     };
+    } catch (error) {
+      // Defensive: do not surface unexpected internal errors as 500 to the
+      // client. Log the incident with full context and return an empty result
+      // (the frontend will surface an error state and will not fallback).
+      logger.error('client_assignments_fetch_unexpected_error', {
+        requestId: req.requestId ?? null,
+        userId: req.authContext?.userId ?? null,
+        message: error?.message ?? String(error),
+        stack: error?.stack ?? null,
+      });
+  return { status: 503, data: [], meta: { count: 0, orgId: null, error: 'fetch_failed' } };
+    }
   };
 
   const listAdminAssignments = async ({ req, isFallbackMode, requireOrgAccess, requireUserContext }) => {

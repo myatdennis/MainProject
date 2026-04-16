@@ -4566,6 +4566,7 @@ const loadSurveyRecordsByAssignmentIds = async (surveyIds = []) => {
       .from('surveys')
       .select('*')
       .in('id', resolvedIds),
+    10000,
   );
   const surveyRows = Array.isArray(surveyResult?.data) ? surveyResult.data : [];
 
@@ -4893,7 +4894,7 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
       orgQueryBuilder = () => prev().in('survey_id', filter);
     }
 
-    const orgResult = await runTimedQuery('survey.assignments.org_rollup', () => orgQueryBuilder());
+    const orgResult = await runTimedQuery('survey.assignments.org_rollup', () => orgQueryBuilder(), 10000);
     const orgAssignments = Array.isArray(orgResult?.data) ? orgResult.data : [];
     if (!orgAssignments || orgAssignments.length === 0) return;
 
@@ -4916,6 +4917,7 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
           .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
           .eq(column, value)
           .in('survey_id', surveyIds),
+        10000,
       );
       return Array.isArray(result?.data) ? result.data : [];
     };
@@ -4966,7 +4968,7 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
 
     if (!inserts.length) return;
 
-    await runTimedQuery('survey.assignments.materialize', () => supabase.from('assignments').insert(inserts));
+    await runTimedQuery('survey.assignments.materialize', () => supabase.from('assignments').insert(inserts), 10000);
 
     if (refreshAggregates) {
       const affectedSurveyIds = Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean)));
@@ -5884,14 +5886,14 @@ const runSupabaseQueryWithRetry = async (label, buildQuery) => {
  *  Use this instead of awaiting Supabase calls directly in admin routes. */
 const SUPABASE_QUERY_TIMEOUT_MS = Number(process.env.SUPABASE_QUERY_TIMEOUT_MS || 5000);
 
-const withSupabaseTimeout = (promise, label = 'supabase_query') => {
+const withSupabaseTimeout = (promise, label = 'supabase_query', timeoutMs = SUPABASE_QUERY_TIMEOUT_MS) => {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      const err = new Error(`${label} timed out after ${SUPABASE_QUERY_TIMEOUT_MS}ms`);
+      const err = new Error(`${label} timed out after ${timeoutMs}ms`);
       err.code = 'SUPABASE_TIMEOUT';
       err.label = label;
       reject(err);
-    }, SUPABASE_QUERY_TIMEOUT_MS);
+    }, timeoutMs);
 
     Promise.resolve(promise)
       .then((value) => { clearTimeout(timer); resolve(value); })
@@ -5902,8 +5904,8 @@ const withSupabaseTimeout = (promise, label = 'supabase_query') => {
 /** Runs a Supabase query builder fn with timeout + schema retry.
  *  Returns the full PostgREST result object { data, error, count }.
  *  Throws on error or timeout. */
-const runTimedQuery = (label, buildQuery) =>
-  withSupabaseTimeout(runSupabaseQueryWithRetry(label, buildQuery), label);
+const runTimedQuery = (label, buildQuery, timeoutMs = SUPABASE_QUERY_TIMEOUT_MS) =>
+  withSupabaseTimeout(runSupabaseQueryWithRetry(label, buildQuery), label, timeoutMs);
 
 const SUPABASE_TRANSIENT_MAX_ATTEMPTS = Math.min(
   Math.max(Number(process.env.SUPABASE_TRANSIENT_MAX_ATTEMPTS || 2), 1),

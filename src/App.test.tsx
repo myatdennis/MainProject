@@ -5,33 +5,25 @@ import { MemoryRouter } from 'react-router-dom';
 import ToastContext from './context/ToastContext';
 import { AppContent, buildCourseInitTargetKey } from './App';
 
-var mockInit: ReturnType<typeof vi.fn> | undefined;
-var mockUseSecureAuth: ReturnType<typeof vi.fn> | undefined;
+let mockInit: ReturnType<typeof vi.fn> | undefined;
+let mockUseSecureAuth: ReturnType<typeof vi.fn> | undefined;
 
-vi.mock('./store/courseStore', () => {
-  const init = vi.fn().mockResolvedValue(undefined);
-  mockInit = init;
-  return {
-    courseStore: {
-      init,
-      getAdminCatalogState: vi.fn(),
-      getLearnerCatalogState: vi.fn(),
-      getAllCourses: vi.fn().mockReturnValue([]),
-    },
-  };
-});
+vi.mock('./store/courseStore', () => ({
+  courseStore: {
+    init: vi.fn().mockResolvedValue(undefined),
+    getAdminCatalogState: vi.fn(),
+    getLearnerCatalogState: vi.fn(),
+    getAllCourses: vi.fn().mockReturnValue([]),
+  },
+}));
 
 vi.mock('./hooks/useViewportHeight', () => ({
   default: vi.fn(),
 }));
 
-vi.mock('./context/SecureAuthContext', () => {
-  const useSecureAuth = vi.fn();
-  mockUseSecureAuth = useSecureAuth;
-  return {
-    useSecureAuth,
-  };
-});
+vi.mock('./context/SecureAuthContext', () => ({
+  useSecureAuth: vi.fn(),
+}));
 
 vi.mock('./components/Admin/AdminLayout', () => ({
   default: () => <div>AdminLayoutStub</div>,
@@ -46,9 +38,15 @@ describe('buildCourseInitTargetKey', () => {
 });
 
 describe('AppContent course store initialization', () => {
-  beforeEach(() => {
-    mockInit?.mockReset();
-    mockUseSecureAuth?.mockReturnValue({
+  beforeEach(async () => {
+    const { courseStore } = (await vi.importMock('./store/courseStore')) as any;
+    const { useSecureAuth } = (await vi.importMock('./context/SecureAuthContext')) as any;
+
+    mockInit = courseStore.init;
+    mockUseSecureAuth = useSecureAuth;
+
+    mockInit!.mockReset();
+    mockUseSecureAuth!.mockReturnValue({
       sessionStatus: 'authenticated',
       user: { id: 'user-1' },
       activeOrgId: 'org-1',

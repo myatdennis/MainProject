@@ -45,6 +45,8 @@ type ApiRequestOptions = {
   noTransform?: boolean;
   credentials?: RequestCredentials;
   skipAdminGateCheck?: boolean;
+  // optional hint for which surface (admin | lms | client) the caller intends.
+  surface?: import('../context/surfaceAccess').SessionSurface;
   expectedStatus?: number[];
   /**
    * Hint to callers that they want the raw Response object. Kept for backward
@@ -509,7 +511,25 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   //
   // DEV hint (non-blocking): warn if calling an admin API from a clearly non-admin path,
   // but never block the request — server authorization is the source of truth.
-  if (devMode && !options.skipAdminGateCheck && !options.allowAnonymous && ADMIN_API_PATTERN.test(pathname)) {
+  // Stronger surface enforcement: when caller supplies a `surface` hint we ensure
+  // that admin APIs are not called from a non-admin surface unless explicitly allowed.
+  if (
+    options?.surface &&
+    !options.skipAdminGateCheck &&
+    !options.allowAnonymous &&
+    ADMIN_API_PATTERN.test(pathname)
+  ) {
+    const callerSurface = options.surface;
+    if (callerSurface !== 'admin') {
+      // In production enforce strictly; in dev warn but still allow when skipAdminGateCheck is used.
+      const message = `[apiRequest] blocked admin API call from non-admin surface (${callerSurface}) – ${pathname}`;
+      if (!devMode) {
+        throw buildAdminAccessDeniedError(pathname, { message });
+      } else {
+        console.warn(message, { tip: 'Pass skipAdminGateCheck:true if this is intentional (e.g. courseStore.init).' });
+      }
+    }
+  } else if (devMode && !options.skipAdminGateCheck && !options.allowAnonymous && ADMIN_API_PATTERN.test(pathname)) {
     if (typeof window !== 'undefined' && !isAdminSurface()) {
       console.warn('[apiRequest] dev_hint: admin API called from non-admin pathname', {
         pathname,

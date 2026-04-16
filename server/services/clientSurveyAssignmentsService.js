@@ -140,12 +140,12 @@ export const createClientSurveyAssignmentsService = ({
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     const isUserIdUuid = isUuid(context.userId);
 
-    const retryQuery = async (label, buildQuery) => {
+    const retryQuery = async (label, buildQuery, timeoutMs = undefined) => {
       let lastError;
       const maxAttempts = 2;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-          return await runTimedQuery(label, buildQuery);
+          return await runTimedQuery(label, buildQuery, timeoutMs);
         } catch (error) {
           lastError = error;
           if (!isSupabaseTransientError(error) || attempt >= maxAttempts) {
@@ -180,7 +180,7 @@ export const createClientSurveyAssignmentsService = ({
         }
         return query;
       };
-      const result = await retryQuery('survey.assigned.load_assignments', () => buildQuery());
+      const result = await retryQuery('survey.assigned.load_assignments', () => buildQuery(), 10000);
       return Array.isArray(result?.data) ? result.data : [];
     };
 
@@ -208,14 +208,21 @@ export const createClientSurveyAssignmentsService = ({
       assignments = await loadMergedUserAssignments();
     } catch (error) {
       if (isSupabaseTransientError(error)) {
-        error.statusCode = 503;
-        error.code = error?.code ?? 'SUPABASE_UNAVAILABLE';
-        error.userMessage = 'Unable to load assigned surveys right now. Please retry.';
+        logger.warn('client_assigned_surveys_load_transient', {
+          requestId,
+          userId: context.userId,
+          orgId: orgScope.orgId ?? null,
+          code: error?.code ?? null,
+          message: error?.message ?? String(error),
+        });
+        hydrationPending = true;
+        assignments = [];
+      } else {
+        throw error;
       }
-      throw error;
     }
 
-    if (assignments.length === 0) {
+    if (assignments.length === 0 && !hydrationPending) {
       const outcome = await Promise.race([
         materializeOutcome,
         waitForMs(materializeBudgetMs).then(() => ({ state: 'timeout' })),
@@ -225,18 +232,17 @@ export const createClientSurveyAssignmentsService = ({
         assignments = await loadMergedUserAssignments();
       } else if (outcome?.state === 'error') {
         if (isSupabaseTransientError(outcome.error)) {
-          outcome.error.statusCode = 503;
-          outcome.error.code = outcome.error?.code ?? 'SUPABASE_UNAVAILABLE';
-          outcome.error.userMessage = 'Unable to hydrate assigned surveys right now. Please retry.';
+          logger.warn('client_assigned_surveys_materialize_transient', {
+            requestId,
+            userId: context.userId,
+            orgId: orgScope.orgId ?? null,
+            code: outcome.error?.code ?? null,
+            message: outcome.error?.message ?? String(outcome.error),
+          });
+          hydrationPending = true;
+        } else {
           throw outcome.error;
         }
-        logger.warn('client_assigned_surveys_materialize_failed', {
-          requestId,
-          userId: context.userId,
-          orgId: orgScope.orgId ?? null,
-          code: outcome.error?.code ?? null,
-          message: outcome.error?.message ?? String(outcome.error),
-        });
       } else {
         hydrationPending = true;
       }

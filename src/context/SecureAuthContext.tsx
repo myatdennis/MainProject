@@ -253,6 +253,22 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     skipMembershipSelfHeal?: boolean;
   }) => Promise<boolean>;
   const fetchServerSessionRef = useRef<FetchServerSessionFn | null>(null);
+  const ensureLightMode = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (document?.documentElement?.classList?.contains && document.documentElement.classList.contains('dark')) {
+        document.documentElement.classList.remove('dark');
+        // Also remove any inline theme-color meta override if present
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta && meta instanceof HTMLMetaElement) {
+          meta.setAttribute('content', '#3A7DFF');
+        }
+      }
+    } catch (e) {
+      // swallow DOM exceptions in non-browser environments
+      if (import.meta.env?.DEV) console.warn('[SecureAuth] ensureLightMode failed', e);
+    }
+  }, []);
   const clearMembershipRetryBackoff = useCallback(() => {
     if (membershipRetryTimerRef.current) {
       clearTimeout(membershipRetryTimerRef.current);
@@ -849,6 +865,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           });
           setAuthStatus('authenticated', `fetchServerSession:${surface ?? 'unknown'}`);
           setSessionStatus('authenticated', `fetchServerSession:${surface ?? 'unknown'}`);
+          try { ensureLightMode(); } catch (_) { /* noop */ }
           if (!silent) {
             setBootstrapError(null);
           }
@@ -879,7 +896,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             console.info('[SecureAuth] membership_applied', diagLine);
           }
           void courseStore
-            .init({ reason: 'auth_membership_applied' })
+            .init({ reason: 'auth_membership_applied', surface: surface ?? (typeof window !== 'undefined' && isAdminSurface(window.location?.pathname ?? '') ? 'admin' : 'lms') })
             .catch((error) => console.warn('[SecureAuth] courseStore.init retry failed', error));
           finalizeMeta({
             statusCode: 200,
@@ -1102,6 +1119,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthStatus('authenticated');
           setSessionStatus('authenticated');
           setAuthInitializing(false);
+          try { ensureLightMode(); } catch (_) { /* noop */ }
           return;
         }
       } catch (e) {
@@ -1180,6 +1198,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           applySessionPayload(payload, { persistTokens: false, reason: 'bootstrap_success' });
           setAuthStatus('authenticated', 'runBootstrap:success');
           setBootstrapError(null);
+          try { ensureLightMode(); } catch (_) { /* noop */ }
           console.info('[SESSION BOOTSTRAPPED]', {
             surface: 'bootstrap',
             userId: payload.user.id ?? null,

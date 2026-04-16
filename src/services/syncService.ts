@@ -219,7 +219,38 @@ class SyncService {
       this.cleanupRealtimeChannels();
 
       const subscribeWithGuards = (channelName: string, configure: (channel: any) => any) => {
-        const channel = configure(supabase.channel(channelName));
+        // Guard for Supabase realtime/channel API presence — E2E fake clients may omit this surface.
+        if (typeof supabase.channel !== 'function') {
+          if (import.meta.env.DEV) {
+            logSyncDebug('[SyncService] Supabase client missing realtime channel API; skipping realtime channel:', channelName);
+          }
+          return;
+        }
+
+        const channelCandidate = supabase.channel(channelName);
+        if (!channelCandidate) {
+          if (import.meta.env.DEV) {
+            logSyncDebug('[SyncService] Supabase.channel() returned falsy channel for:', channelName);
+          }
+          return;
+        }
+        // Allow configure to call channel.on(...) but make sure we subscribe on the
+        // original channel candidate. Some fake/test channel implementations return
+        // undefined from .on() while real Supabase returns the channel instance.
+        try {
+          configure(channelCandidate);
+        } catch (e) {
+          if (import.meta.env.DEV) logSyncDebug('[SyncService] Error configuring channel', { channelName, error: e });
+        }
+
+        const channel = channelCandidate;
+        if (!channel || typeof channel.subscribe !== 'function') {
+          if (import.meta.env.DEV) {
+            logSyncDebug('[SyncService] Supabase realtime channel missing subscribe(); skipping:', channelName);
+          }
+          return;
+        }
+
         const subscribedChannel = channel.subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
             if (import.meta.env.DEV) {

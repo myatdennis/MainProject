@@ -7,6 +7,10 @@ const createApp = (options?: {
   isDemoOrTestMode?: boolean;
   supabase?: any;
   explicitSelectionRequired?: boolean;
+  runTimedQuery?: any;
+  ensureSurveyAssignmentsForUserFromOrgScope?: any;
+  loadSurveyRecordsByAssignmentIds?: any;
+  isSupabaseTransientError?: any;
 }) => {
   const e2eStore = {
     assignments: [
@@ -53,7 +57,7 @@ const createApp = (options?: {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.requestId = 'req-1';
+    (req as any).requestId = 'req-1';
     next();
   });
   app.use(
@@ -65,14 +69,14 @@ const createApp = (options?: {
       persistE2EStore,
       isDemoOrTestMode: options?.isDemoOrTestMode ?? true,
       surveyAssignmentType: 'survey',
-      ensureSurveyAssignmentsForUserFromOrgScope: vi.fn(async () => undefined),
+      ensureSurveyAssignmentsForUserFromOrgScope: options?.ensureSurveyAssignmentsForUserFromOrgScope ?? vi.fn(async () => undefined),
       detectAssignmentsUserIdUuidColumnAvailability: vi.fn(async () => false),
       getAssignmentsOrgColumnName: vi.fn(async () => 'organization_id'),
       isUuid: vi.fn(() => false),
-      runTimedQuery: vi.fn(async (_label, fn) => fn()),
+      runTimedQuery: options?.runTimedQuery ?? vi.fn(async (_label, fn) => fn()),
       surveyAssignmentSelect: '*',
-      isSupabaseTransientError: vi.fn(() => false),
-      loadSurveyRecordsByAssignmentIds: vi.fn(async () => ({
+      isSupabaseTransientError: options?.isSupabaseTransientError ?? vi.fn(() => false),
+      loadSurveyRecordsByAssignmentIds: options?.loadSurveyRecordsByAssignmentIds ?? vi.fn(async () => ({
         surveyMap: new Map(),
         requestedCount: 0,
         resolvedIdCount: 0,
@@ -99,7 +103,7 @@ describe('client survey assignments router', () => {
     const context = createApp();
     server = context.app.listen(0);
     await new Promise<void>((resolve) => server.once('listening', resolve));
-    baseUrl = `http://127.0.0.1:${server.address().port}`;
+    baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
   });
 
   afterEach(async () => {
@@ -129,7 +133,7 @@ describe('client survey assignments router', () => {
     const context = createApp({ explicitSelectionRequired: true });
     const deniedServer = context.app.listen(0);
     await new Promise<void>((resolve) => deniedServer.once('listening', resolve));
-    const deniedUrl = `http://127.0.0.1:${deniedServer.address().port}`;
+    const deniedUrl = `http://127.0.0.1:${(deniedServer.address() as any).port}`;
 
     try {
       const response = await fetch(`${deniedUrl}/api/client/surveys/assigned`);
@@ -151,7 +155,7 @@ describe('client survey assignments router', () => {
     const context = createApp({ isDemoOrTestMode: false, supabase: null });
     const unavailableServer = context.app.listen(0);
     await new Promise<void>((resolve) => unavailableServer.once('listening', resolve));
-    const unavailableUrl = `http://127.0.0.1:${unavailableServer.address().port}`;
+    const unavailableUrl = `http://127.0.0.1:${(unavailableServer.address() as any).port}`;
 
     try {
       const response = await fetch(`${unavailableUrl}/api/client/surveys/assigned`);
@@ -165,6 +169,43 @@ describe('client survey assignments router', () => {
     } finally {
       await new Promise<void>((resolve, reject) =>
         unavailableServer.close((error: Error | undefined) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it('returns hydrationPending when Supabase assigned survey load times out', async () => {
+    const timedQuery = vi.fn(async (label, fn) => {
+      if (label === 'survey.assigned.load_assignments') {
+        const err = new Error('timeout') as any;
+        err.code = 'SUPABASE_TIMEOUT';
+        throw err;
+      }
+      return fn();
+    });
+
+    const context = createApp({
+      isDemoOrTestMode: false,
+      supabase: {},
+      runTimedQuery: timedQuery,
+      ensureSurveyAssignmentsForUserFromOrgScope: vi.fn(async () => undefined),
+      isSupabaseTransientError: vi.fn((error: any) => String(error?.code) === 'SUPABASE_TIMEOUT'),
+    });
+    const timeoutServer = context.app.listen(0);
+    await new Promise<void>((resolve) => timeoutServer.once('listening', resolve));
+    const timeoutUrl = `http://127.0.0.1:${(timeoutServer.address() as any).port}`;
+
+    try {
+      const response = await fetch(`${timeoutUrl}/api/client/surveys/assigned`);
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(Array.isArray(payload.data)).toBe(true);
+      expect(payload.data).toHaveLength(0);
+      expect(payload.meta).toEqual({ hydrationPending: true, orgId: 'org-1' });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        timeoutServer.close((error: Error | undefined) => (error ? reject(error) : resolve())),
       );
     }
   });

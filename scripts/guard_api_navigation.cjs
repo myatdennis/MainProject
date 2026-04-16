@@ -8,54 +8,75 @@
  * go through apiRequest/apiClient helpers so credentials + headers are attached.
  */
 
-const { execSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 
-const RG_OPTS = '--color never --no-heading -n';
+const SOURCE_DIR = path.resolve(process.cwd(), 'src');
+const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
 
 const CHECKS = [
   {
     id: 'href',
     description: 'Anchor/link href pointing at /api/*',
-    command: `rg ${RG_OPTS} -g'*.[tj]sx' -g'*.[tj]s' -e 'href\\s*=\\s*(?:\\{\\s*)?[\\'"\\\`]/api' src`,
+    pattern: /href\s*=\s*(?:\{\s*)?[\'"\`]\/?api/, 
     suggestion: 'Use a UI route or call apiRequest()/apiClient() instead of linking directly to /api/*.',
   },
   {
     id: 'action',
     description: 'Form action posting directly to /api/*',
-    command: `rg ${RG_OPTS} -g'*.[tj]sx' -g'*.[tj]s' -e 'action\\s*=\\s*(?:\\{\\s*)?[\\'"\\\`]/api' src`,
+    pattern: /action\s*=\s*(?:\{\s*)?[\'"\`]\/?api/, 
     suggestion: 'Submit forms through React handlers that call apiRequest() so auth headers/cookies are included.',
   },
   {
     id: 'navigate',
     description: 'Router navigation helpers sending users to /api/*',
-    command: `rg ${RG_OPTS} -g'*.[tj]sx' -g'*.[tj]s' -e '(navigate|router\\.push|router\\.replace)\\s*\\(\\s*[\\'"\\\`]/api' src`,
+    pattern: /(navigate|router\.push|router\.replace)\s*\(\s*[\'"\`]\/?api/, 
     suggestion: 'Route users to SPA pages (e.g., /admin/organizations) and let the page load data via the API client.',
   },
   {
     id: 'location',
     description: 'window.location mutations targeting /api/*',
-    command: `rg ${RG_OPTS} -g'*.[tj]sx' -g'*.[tj]s' -e 'window\\.location\\.(href|assign|replace)\\s*=\\s*[\\'"\\\`]/api' src`,
+    pattern: /window\.location\.(href|assign|replace)\s*=\s*[\'"\`]\/?api/, 
     suggestion: 'Use fetch/axios with credentials instead of causing a top-level navigation to an API route.',
   },
 ];
 
+const visitedFiles = [];
+function collectSourceFiles(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectSourceFiles(entryPath);
+    } else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
+      visitedFiles.push(entryPath);
+    }
+  }
+}
+
+collectSourceFiles(SOURCE_DIR);
+
 let hasFailures = false;
 
 for (const check of CHECKS) {
-  try {
-    const output = execSync(check.command, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    if (output.trim().length > 0) {
-      hasFailures = true;
-      console.error(`\n🚫 ${check.description}`);
-      console.error(output.trim());
-      console.error(`Suggestion: ${check.suggestion}\n`);
+  const failures = [];
+  for (const filePath of visitedFiles) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split(/\r?\n/);
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      if (check.pattern.test(lines[lineIndex])) {
+        failures.push({ filePath, lineNumber: lineIndex + 1, line: lines[lineIndex].trim() });
+      }
     }
-  } catch (error) {
-    // Ripgrep exits with status 1 when no matches are found—we can ignore that.
-    if (typeof error.status === 'number' && error.status === 1) {
-      continue;
+  }
+
+  if (failures.length > 0) {
+    hasFailures = true;
+    console.error(`\n🚫 ${check.description}`);
+    for (const failure of failures) {
+      console.error(`${failure.filePath}:${failure.lineNumber}: ${failure.line}`);
     }
-    throw error;
+    console.error(`Suggestion: ${check.suggestion}\n`);
   }
 }
 
