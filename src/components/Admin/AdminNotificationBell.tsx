@@ -6,6 +6,8 @@ import { useSecureAuth } from '../../context/SecureAuthContext';
 import { useToast } from '../../context/ToastContext';
 import Button from '../ui/Button';
 import { useNavigate } from 'react-router-dom';
+import useActiveOrganization from '../../hooks/useActiveOrganization';
+import { wsClient } from '../../dal/wsClient';
 
 const BookIcon = () => (
   <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-sky-100 text-sky-700 text-[10px] font-semibold">
@@ -43,6 +45,7 @@ const formatTimestamp = (value?: string) => {
 
 const AdminNotificationBell = () => {
   const { user } = useSecureAuth();
+  const { activeOrgId } = useActiveOrganization({ surface: 'admin' });
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -66,6 +69,7 @@ const AdminNotificationBell = () => {
     setLoading(true);
     try {
       const { notifications: items, notificationsDisabled } = await listAdminNotificationsWithMeta({
+        organizationId: activeOrgId ?? undefined,
         userId: user.id,
       });
       setNotifications(items);
@@ -78,10 +82,30 @@ const AdminNotificationBell = () => {
       setLoading(false);
       setAutoRefreshing(false);
     }
-  }, [user?.id]);
+  }, [activeOrgId, user?.id]);
 
   useEffect(() => {
     void loadNotifications();
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    const refresh = () => {
+      void loadNotifications();
+    };
+
+    wsClient.on('notification', refresh);
+    wsClient.on('notification_deleted', refresh);
+    wsClient.on('message_sent', refresh);
+
+    if (wsClient.isEnabled()) {
+      wsClient.connect();
+    }
+
+    return () => {
+      wsClient.off('notification', refresh);
+      wsClient.off('notification_deleted', refresh);
+      wsClient.off('message_sent', refresh);
+    };
   }, [loadNotifications]);
 
   useEffect(() => {

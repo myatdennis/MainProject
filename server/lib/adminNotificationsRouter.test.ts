@@ -288,6 +288,31 @@ describe('admin notifications router', () => {
     expect(payload.meta.pagination.total).toBe(1);
   });
 
+  it('merges org-scoped and user-scoped notifications when both filters are provided', async () => {
+    state.notifications.push({
+      id: 'notif-2',
+      title: 'Org alert',
+      body: 'Org scoped',
+      organization_id: 'org-1',
+      user_id: null,
+      read: false,
+      dispatch_status: 'queued',
+      channels: ['in_app'],
+      metadata: {},
+      scheduled_for: null,
+      delivered_at: null,
+      created_at: '2026-04-12T11:00:00.000Z',
+    });
+
+    const response = await fetch(`${baseUrl}/api/admin/notifications?orgId=org-1&userId=learner-1`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.map((row) => row.id)).toEqual(expect.arrayContaining(['notif-1', 'notif-2']));
+    expect(payload.meta.pagination.total).toBeGreaterThanOrEqual(2);
+  });
+
   it('creates notifications through the extracted admin route', async () => {
     const response = await fetch(`${baseUrl}/api/admin/notifications`, {
       method: 'POST',

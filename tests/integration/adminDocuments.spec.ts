@@ -13,6 +13,7 @@ describe('Admin documents create flow', () => {
   let server: TestServerHandle | null = null;
   let platformAdminHeaders: Record<string, string> = {};
   let orgAdminHeaders: Record<string, string> = {};
+  let learnerHeaders: Record<string, string> = {};
 
   beforeAll(async () => {
     server = await startTestServer();
@@ -24,6 +25,16 @@ describe('Admin documents create flow', () => {
       organization_ids: [DEMO_ORG_ID],
       app_metadata: {
         memberships: [{ orgId: DEMO_ORG_ID, role: 'admin', status: 'active' }],
+      },
+    } as any);
+    learnerHeaders = await buildAuthHeaders({
+      userId: '00000000-0000-0000-0000-000000000003',
+      email: 'learner-docs@local',
+      role: 'member',
+      platformRole: null,
+      organization_ids: [DEMO_ORG_ID],
+      app_metadata: {
+        memberships: [{ orgId: DEMO_ORG_ID, role: 'member', status: 'active' }],
       },
     } as any);
   });
@@ -97,6 +108,37 @@ describe('Admin documents create flow', () => {
     expect(listBody.data.some((doc: any) => doc.id === createBody.data.id)).toBe(true);
   });
 
+  it('makes org-scoped documents visible to learners in the same organization', async () => {
+    const uploadRes = await uploadDocument(orgAdminHeaders);
+    const uploadBody = await parseJson(uploadRes as any);
+    expect(uploadRes.status).toBe(201);
+
+    const createRes = await server!.fetch('/api/admin/documents', {
+      method: 'POST',
+      headers: await jsonHeaders(orgAdminHeaders),
+      body: JSON.stringify({
+        name: 'Learner Visible Resource',
+        category: 'Resources',
+        visibility: 'org',
+        organization_id: DEMO_ORG_ID,
+        storagePath: uploadBody.data.storagePath,
+        url: uploadBody.data.signedUrl,
+        urlExpiresAt: uploadBody.data.urlExpiresAt,
+        filename: 'welcome.txt',
+      }),
+    });
+    const createBody = await parseJson(createRes as any);
+    expect(createRes.status).toBe(201);
+
+    const learnerListRes = await server!.fetch(`/api/client/documents?orgId=${DEMO_ORG_ID}`, {
+      headers: { Accept: 'application/json', ...learnerHeaders },
+    });
+    const learnerListBody = await parseJson(learnerListRes as any);
+    expect(learnerListRes.status).toBe(200);
+    expect(Array.isArray(learnerListBody?.data)).toBe(true);
+    expect(learnerListBody.data.some((doc: any) => doc.id === createBody.data.id)).toBe(true);
+  });
+
   it('returns 400 when org scope is ambiguous and no organizationId is provided', async () => {
     const ambiguousHeaders = await buildAuthHeaders({
       email: 'platform-admin-docs@local',
@@ -120,8 +162,10 @@ describe('Admin documents create flow', () => {
     const body = await parseJson(res as any);
     expect(res.status).toBe(400);
     expect(body).toMatchObject({
-      error: 'explicit_org_selection_required',
       code: 'explicit_org_selection_required',
+      error: {
+        code: 'explicit_org_selection_required',
+      },
     });
   });
 
@@ -139,8 +183,10 @@ describe('Admin documents create flow', () => {
     const body = await parseJson(res as any);
     expect(res.status).toBe(403);
     expect(body).toMatchObject({
-      error: 'org_access_denied',
       code: 'org_access_denied',
+      error: {
+        code: 'org_access_denied',
+      },
     });
   });
 
@@ -155,8 +201,10 @@ describe('Admin documents create flow', () => {
     const body = await parseJson(res as any);
     expect(res.status).toBe(400);
     expect(body).toMatchObject({
-      error: 'validation_failed',
       code: 'validation_failed',
+      error: {
+        code: 'validation_failed',
+      },
     });
   });
 
@@ -165,8 +213,10 @@ describe('Admin documents create flow', () => {
     const body = await parseJson(res as any);
     expect(res.status).toBe(502);
     expect(body).toMatchObject({
-      error: 'document_storage_upload_failed',
       code: 'document_storage_upload_failed',
+      error: {
+        code: 'document_storage_upload_failed',
+      },
     });
   });
 
@@ -193,9 +243,11 @@ describe('Admin documents create flow', () => {
     const createBody = await parseJson(createRes as any);
     expect(createRes.status).toBeGreaterThanOrEqual(500);
     expect(createBody).toMatchObject({
-      error: 'document_create_failed',
       code: 'document_create_failed',
+      error: {
+        code: 'document_create_failed',
+      },
     });
-    expect(createBody.message).not.toBe('Unable to create document');
+    expect(createBody?.error?.message).not.toBe('Unable to create document');
   });
 });

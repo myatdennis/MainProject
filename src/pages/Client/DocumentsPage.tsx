@@ -8,6 +8,7 @@ import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import documentService, { type DocumentMeta } from '../../dal/documents';
 import useDocumentDownload from '../../hooks/useDocumentDownload';
 import { useUserProfile } from '../../hooks/useUserProfile';
+import useActiveOrganization from '../../hooks/useActiveOrganization';
 
 const SecureDocumentAction: React.FC<{ document: DocumentMeta }> = ({ document }) => {
   const { download, isLoading, error } = useDocumentDownload(document);
@@ -28,7 +29,8 @@ const SecureDocumentAction: React.FC<{ document: DocumentMeta }> = ({ document }
 
 const DocumentsPage: React.FC = () => {
   const { user } = useUserProfile();
-  const orgId = user?.organizationId ?? null;
+  const { activeOrgId } = useActiveOrganization({ surface: 'client' });
+  const orgId = activeOrgId ?? user?.organizationId ?? null;
   const userId = user?.id ?? null;
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
   const [loading, setLoading] = useState(false);

@@ -81,7 +81,28 @@ export const createDocumentsService = ({
     const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
 
     if (isDemoOrTestMode) {
-      return { status: 200, data: [] };
+      const requestedOrgIds = Array.isArray(context.organizationIds)
+        ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean)
+        : [];
+      const effectiveOrgIds = new Set(
+        [
+          ...(resolvedRequestedOrgId ? [resolvedRequestedOrgId] : []),
+          ...requestedOrgIds,
+        ].filter(Boolean),
+      );
+      const rows = Array.from(e2eStore.documents.values())
+        .filter((row) => {
+          if (!row) return false;
+          const visibility = String(row.visibility || 'global').toLowerCase();
+          const rowOrgId = normalizeOrgIdValue(row.organization_id ?? row.org_id ?? null);
+          const rowUserId = row.user_id ?? null;
+          if (visibility === 'global') return true;
+          if (visibility === 'user') return Boolean(rowUserId) && String(rowUserId) === String(context.userId);
+          if (visibility === 'org') return Boolean(rowOrgId) && effectiveOrgIds.has(rowOrgId);
+          return false;
+        })
+        .sort((a, b) => Date.parse(b?.created_at || 0) - Date.parse(a?.created_at || 0));
+      return { status: 200, data: rows };
     }
 
     if (!ensureSupabase(res)) return null;

@@ -8,12 +8,29 @@ export const createClientSurveyAssignmentsService = ({
   ensureSurveyAssignmentsForUserFromOrgScope,
   detectAssignmentsUserIdUuidColumnAvailability,
   getAssignmentsOrgColumnName,
+  buildClientSurveyAssignmentSelect,
   isUuid,
   runTimedQuery,
   surveyAssignmentSelect,
   isSupabaseTransientError,
   loadSurveyRecordsByAssignmentIds,
 }) => {
+  const buildSurveyAssignmentSelect = buildClientSurveyAssignmentSelect ?? ((assignmentsOrgColumn) => {
+    const baseColumns =
+      typeof surveyAssignmentSelect === 'string' && surveyAssignmentSelect.trim().length > 0 && surveyAssignmentSelect.trim() !== '*'
+        ? surveyAssignmentSelect
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)
+            .filter((value) => value !== 'organization_id' && value !== 'org_id')
+        : ['id', 'survey_id', 'status', 'due_at', 'note', 'assigned_by', 'metadata', 'active'];
+
+    if (assignmentsOrgColumn === 'org_id') {
+      return [...baseColumns, 'organization_id:org_id', 'org_id'].join(',');
+    }
+    return [...baseColumns, 'organization_id'].join(',');
+  });
+
   const parseBoolean = (value, defaultValue = true) => {
     if (value === undefined || value === null) return defaultValue;
     const normalized = String(value).trim().toLowerCase();
@@ -138,6 +155,7 @@ export const createClientSurveyAssignmentsService = ({
 
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+    const assignmentSelect = buildSurveyAssignmentSelect(assignmentsOrgColumn);
     const isUserIdUuid = isUuid(context.userId);
 
     const retryQuery = async (label, buildQuery, timeoutMs = undefined) => {
@@ -169,7 +187,7 @@ export const createClientSurveyAssignmentsService = ({
       const buildQuery = () => {
         let query = supabase
           .from('assignments')
-          .select(surveyAssignmentSelect)
+          .select(assignmentSelect)
           .eq('assignment_type', surveyAssignmentType)
           .eq(column, value);
         if (scopedOrgIds.length > 0) {

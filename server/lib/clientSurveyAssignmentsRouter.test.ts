@@ -6,11 +6,13 @@ const createApp = (options?: {
   context?: any;
   isDemoOrTestMode?: boolean;
   supabase?: any;
+  buildClientSurveyAssignmentSelect?: any;
   explicitSelectionRequired?: boolean;
   runTimedQuery?: any;
   ensureSurveyAssignmentsForUserFromOrgScope?: any;
   loadSurveyRecordsByAssignmentIds?: any;
   isSupabaseTransientError?: any;
+  getAssignmentsOrgColumnName?: any;
 }) => {
   const e2eStore = {
     assignments: [
@@ -68,10 +70,11 @@ const createApp = (options?: {
       e2eStore,
       persistE2EStore,
       isDemoOrTestMode: options?.isDemoOrTestMode ?? true,
+        buildClientSurveyAssignmentSelect: options?.buildClientSurveyAssignmentSelect ?? undefined,
       surveyAssignmentType: 'survey',
       ensureSurveyAssignmentsForUserFromOrgScope: options?.ensureSurveyAssignmentsForUserFromOrgScope ?? vi.fn(async () => undefined),
       detectAssignmentsUserIdUuidColumnAvailability: vi.fn(async () => false),
-      getAssignmentsOrgColumnName: vi.fn(async () => 'organization_id'),
+      getAssignmentsOrgColumnName: options?.getAssignmentsOrgColumnName ?? vi.fn(async () => 'organization_id'),
       isUuid: vi.fn(() => false),
       runTimedQuery: options?.runTimedQuery ?? vi.fn(async (_label, fn) => fn()),
       surveyAssignmentSelect: '*',
@@ -206,6 +209,58 @@ describe('client survey assignments router', () => {
     } finally {
       await new Promise<void>((resolve, reject) =>
         timeoutServer.close((error: Error | undefined) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it('uses a schema-safe assignment select when assignments use organization_id', async () => {
+    const selectCalls: string[] = [];
+    const createBuilder = () => {
+      const builder: any = {
+        select(columns: string) {
+          selectCalls.push(columns);
+          return builder;
+        },
+        eq() {
+          return builder;
+        },
+        in() {
+          return builder;
+        },
+        then(resolve: (value: any) => any) {
+          return Promise.resolve(resolve({ data: [], error: null }));
+        },
+      };
+      return builder;
+    };
+    const supabase = {
+      from(table: string) {
+        expect(table).toBe('assignments');
+        return createBuilder();
+      },
+    };
+
+    const context = createApp({
+      isDemoOrTestMode: false,
+      supabase,
+      ensureSurveyAssignmentsForUserFromOrgScope: vi.fn(async () => undefined),
+      getAssignmentsOrgColumnName: vi.fn(async () => 'organization_id'),
+    });
+    const schemaSafeServer = context.app.listen(0);
+    await new Promise<void>((resolve) => schemaSafeServer.once('listening', resolve));
+    const schemaSafeUrl = `http://127.0.0.1:${(schemaSafeServer.address() as any).port}`;
+
+    try {
+      const response = await fetch(`${schemaSafeUrl}/api/client/surveys/assigned`);
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(selectCalls.some((columns) => columns.includes('organization_id'))).toBe(true);
+      expect(selectCalls.some((columns) => columns.includes('org_id'))).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        schemaSafeServer.close((error: Error | undefined) => (error ? reject(error) : resolve())),
       );
     }
   });

@@ -64,40 +64,14 @@ export const createAdminNotificationsService = ({
         .map((status) => status.trim())
         .filter(Boolean);
 
-      try {
-        if (requestedOrgId) {
-          const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
-          if (!access) {
-            return normalizedContextError(403, 'org_access_denied', 'You do not have access to this organization.');
-          }
-        } else if (!isAdmin) {
-          return normalizedContextError(403, 'org_id_required', 'org_id is required for non-admin users');
-        }
-
+      const buildBaseQuery = () => {
         let query = supabase
           .from('notifications')
           .select(
             'id,title,body,organization_id,org_id,user_id,created_at,read,dispatch_status,channels,metadata,scheduled_for,delivered_at',
             { count: 'exact' },
           )
-          .order('created_at', { ascending: false })
-          .range(from, to);
-
-        if (requestedOrgId) {
-          query = query.or(`organization_id.eq.${requestedOrgId},org_id.eq.${requestedOrgId}`);
-        }
-
-        if (requestedUserId) {
-          if (!isAdmin && requestedUserId !== context.userId) {
-            return normalizedContextError(403, 'forbidden', 'Cannot view notifications for another user');
-          }
-          query = query.eq('user_id', requestedUserId);
-        } else if (!isAdmin && !requestedOrgId) {
-          if (!context.userId) {
-            return normalizedContextError(400, 'user_id_required', 'user_id is required for non-admin queries');
-          }
-          query = query.eq('user_id', context.userId);
-        }
+          .order('created_at', { ascending: false });
 
         if (dispatchStatuses.length) {
           query = query.in('dispatch_status', dispatchStatuses);
@@ -108,13 +82,76 @@ export const createAdminNotificationsService = ({
           query = query.or(`title.ilike.%${term}%,body.ilike.%${term}%`);
         }
 
-        const { data, error, count } = await query;
-        if (error) {
-          if (isNotificationsTableMissingError(error)) {
-            logNotificationsMissingTable('admin.list', { code: error.code });
-            return disabledResponse(page, pageSize, req.requestId ?? null);
+        return query;
+      };
+
+      try {
+        if (requestedOrgId) {
+          const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
+          if (!access) {
+            return normalizedContextError(403, 'org_access_denied', 'You do not have access to this organization.');
           }
-          throw error;
+        } else if (!isAdmin) {
+          return normalizedContextError(403, 'org_id_required', 'org_id is required for non-admin users');
+        }
+
+        let data = [];
+        let count = 0;
+
+        if (requestedOrgId && requestedUserId) {
+          const [userResult, orgResult, globalResult] = await Promise.all([
+            buildBaseQuery().eq('user_id', requestedUserId).limit(pageSize),
+            buildBaseQuery().or(`organization_id.eq.${requestedOrgId},org_id.eq.${requestedOrgId}`).is('user_id', null).limit(pageSize),
+            buildBaseQuery().is('organization_id', null).is('org_id', null).is('user_id', null).limit(Math.max(10, Math.ceil(pageSize / 2))),
+          ]);
+
+          const candidateErrors = [userResult?.error, orgResult?.error, globalResult?.error].filter(Boolean);
+          const firstError = candidateErrors[0] ?? null;
+          if (firstError) {
+            if (isNotificationsTableMissingError(firstError)) {
+              logNotificationsMissingTable('admin.list', { code: firstError.code });
+              return disabledResponse(page, pageSize, req.requestId ?? null);
+            }
+            throw firstError;
+          }
+
+          const merged = new Map();
+          for (const row of [...(userResult?.data || []), ...(orgResult?.data || []), ...(globalResult?.data || [])]) {
+            if (row?.id && !merged.has(row.id)) merged.set(row.id, row);
+          }
+          data = Array.from(merged.values())
+            .sort((a, b) => (Date.parse(b?.created_at || '') || 0) - (Date.parse(a?.created_at || '') || 0))
+            .slice(from, to + 1);
+          count = merged.size;
+        } else {
+          let query = buildBaseQuery().range(from, to);
+
+          if (requestedOrgId) {
+            query = query.or(`organization_id.eq.${requestedOrgId},org_id.eq.${requestedOrgId}`);
+          }
+
+          if (requestedUserId) {
+            if (!isAdmin && requestedUserId !== context.userId) {
+              return normalizedContextError(403, 'forbidden', 'Cannot view notifications for another user');
+            }
+            query = query.eq('user_id', requestedUserId);
+          } else if (!isAdmin && !requestedOrgId) {
+            if (!context.userId) {
+              return normalizedContextError(400, 'user_id_required', 'user_id is required for non-admin queries');
+            }
+            query = query.eq('user_id', context.userId);
+          }
+
+          const result = await query;
+          if (result.error) {
+            if (isNotificationsTableMissingError(result.error)) {
+              logNotificationsMissingTable('admin.list', { code: result.error.code });
+              return disabledResponse(page, pageSize, req.requestId ?? null);
+            }
+            throw result.error;
+          }
+          data = result.data || [];
+          count = result.count || 0;
         }
 
         return {

@@ -34,7 +34,10 @@ const AdminDocuments: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await documentService.listDocuments({ forceAdmin: true });
+      const list = await documentService.listDocuments({
+        forceAdmin: true,
+        organizationId: (activeOrgId ?? orgId) || undefined,
+      });
       setDocs(list || []);
     } catch (err: any) {
       console.error('[AdminDocuments] load_failed', { message: err?.message });
@@ -44,7 +47,7 @@ const AdminDocuments: React.FC = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [activeOrgId]);
   useEffect(() => {
     if (orgId) return;
     if (activeOrgId) {
@@ -118,7 +121,7 @@ const AdminDocuments: React.FC = () => {
         await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with you.`, userId });
       }
 
-      setName(''); setFile(null); setTags(''); setOrgId(''); setUserId('');
+      setName(''); setFile(null); setTags(''); setOrgId(activeOrgId ?? ''); setUserId('');
       setFormError(null);
       setFieldErrors({});
       await load();

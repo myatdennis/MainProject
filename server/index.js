@@ -4930,8 +4930,7 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const includeUserIdUuid = assignmentsSupportUserIdUuid && isUuid(userId);
 
-    const ORG_ROLLUP_SELECT =
-      'survey_id,status,due_at,note,assigned_by,metadata,active,organization_id,org_id';
+    const ORG_ROLLUP_SELECT = buildSurveyOrgRollupSelect(assignmentsOrgColumn);
     let orgQueryBuilder = () =>
       supabase
         .from('assignments')
@@ -15219,9 +15218,13 @@ app.post(
     if (!file) {
       res.status(400).json({
         ok: false,
-        error: 'validation_failed',
         code: 'validation_failed',
         message: 'A document file is required.',
+        error: {
+          code: 'validation_failed',
+          message: 'A document file is required.',
+          details: { fields: { file: 'file is required' } },
+        },
         fields: { file: 'file is required' },
       });
       return;
@@ -15229,9 +15232,12 @@ app.post(
     if (!file.originalname || !file.mimetype) {
       res.status(400).json({
         ok: false,
-        error: 'validation_failed',
         code: 'validation_failed',
         message: 'The uploaded file is missing required filename or content type metadata.',
+        error: {
+          code: 'validation_failed',
+          message: 'The uploaded file is missing required filename or content type metadata.',
+        },
       });
       return;
     }
@@ -15317,9 +15323,12 @@ app.post(
       if (!supabase) {
         res.status(503).json({
           ok: false,
-          error: 'document_storage_unavailable',
           code: 'document_storage_unavailable',
           message: 'Document storage is not configured in this environment.',
+          error: {
+            code: 'document_storage_unavailable',
+            message: 'Document storage is not configured in this environment.',
+          },
         });
         return;
       }
@@ -15362,15 +15371,20 @@ app.post(
         error: error instanceof Error ? error.message : String(error),
       });
       const isMulterLimit = error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE';
+      const code = isMulterLimit ? 'validation_failed' : 'document_storage_upload_failed';
+      const message = isMulterLimit
+        ? 'The selected file is too large to upload.'
+        : error instanceof Error && error.message
+        ? error.message
+        : 'Document storage upload failed.';
       res.status(isMulterLimit ? 400 : 502).json({
         ok: false,
-        error: isMulterLimit ? 'validation_failed' : 'document_storage_upload_failed',
-        code: isMulterLimit ? 'validation_failed' : 'document_storage_upload_failed',
-        message: isMulterLimit
-          ? 'The selected file is too large to upload.'
-          : error instanceof Error && error.message
-          ? error.message
-          : 'Document storage upload failed.',
+        code,
+        message,
+        error: {
+          code,
+          message,
+        },
       });
     }
   },
@@ -15556,9 +15570,12 @@ const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { su
     if (!resolvedExplicitOrgId || !isUuid(String(resolvedExplicitOrgId).trim())) {
       res.status(403).json({
         ok: false,
-        error: 'org_access_denied',
         code: 'org_access_denied',
         message: 'Organization scope not permitted.',
+        error: {
+          code: 'org_access_denied',
+          message: 'Organization scope not permitted.',
+        },
       });
       return null;
     }
@@ -15568,9 +15585,12 @@ const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { su
       if (!res.headersSent) {
         res.status(403).json({
           ok: false,
-          error: 'org_access_denied',
           code: 'org_access_denied',
           message: 'Organization scope not permitted.',
+          error: {
+            code: 'org_access_denied',
+            message: 'Organization scope not permitted.',
+          },
         });
       }
       return null;
@@ -15582,9 +15602,12 @@ const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { su
   if (fallbackCandidates.length === 0) {
     res.status(400).json({
       ok: false,
-      error: 'organization_scope_required',
       code: 'organization_scope_required',
       message: 'A target organization is required to upload this document.',
+      error: {
+        code: 'organization_scope_required',
+        message: 'A target organization is required to upload this document.',
+      },
     });
     return null;
   }
@@ -15592,9 +15615,12 @@ const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { su
   if (fallbackCandidates.length > 1) {
     res.status(400).json({
       ok: false,
-      error: 'explicit_org_selection_required',
       code: 'explicit_org_selection_required',
       message: 'This document upload is ambiguous across multiple organizations. Select an organization explicitly.',
+      error: {
+        code: 'explicit_org_selection_required',
+        message: 'This document upload is ambiguous across multiple organizations. Select an organization explicitly.',
+      },
     });
     return null;
   }
@@ -15603,9 +15629,12 @@ const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { su
   if (!resolvedFallbackOrgId || !isUuid(String(resolvedFallbackOrgId).trim())) {
     res.status(403).json({
       ok: false,
-      error: 'org_access_denied',
       code: 'org_access_denied',
       message: 'Organization scope not permitted.',
+      error: {
+        code: 'org_access_denied',
+        message: 'Organization scope not permitted.',
+      },
     });
     return null;
   }
@@ -15615,9 +15644,12 @@ const resolveDocumentTargetOrg = async (req, res, context, rawPayload = {}, { su
     if (!res.headersSent) {
       res.status(403).json({
         ok: false,
-        error: 'org_access_denied',
         code: 'org_access_denied',
         message: 'Organization scope not permitted.',
+        error: {
+          code: 'org_access_denied',
+          message: 'Organization scope not permitted.',
+        },
       });
     }
     return null;
@@ -15686,9 +15718,12 @@ const buildDocumentCreateFailure = (error) => {
       status: 400,
       body: {
         ok: false,
-        error: 'validation_failed',
         code: 'validation_failed',
         message,
+        error: {
+          code: 'validation_failed',
+          message,
+        },
         meta: { details, hint },
       },
     };
@@ -15699,9 +15734,12 @@ const buildDocumentCreateFailure = (error) => {
       status: 500,
       body: {
         ok: false,
-        error: 'document_schema_mismatch',
         code: 'document_schema_mismatch',
         message: 'Document metadata could not be saved because the documents schema is incompatible.',
+        error: {
+          code: 'document_schema_mismatch',
+          message: 'Document metadata could not be saved because the documents schema is incompatible.',
+        },
         meta: { details, hint, code },
       },
     };
@@ -15711,9 +15749,12 @@ const buildDocumentCreateFailure = (error) => {
     status: 500,
     body: {
       ok: false,
-      error: 'document_create_failed',
       code: 'document_create_failed',
       message,
+      error: {
+        code: 'document_create_failed',
+        message,
+      },
       meta: { details, hint, code },
     },
   };
@@ -16010,7 +16051,23 @@ const REQUIRED_ADMIN_SURVEY_TABLES = [
 const OPTIONAL_ADMIN_SURVEY_TABLES = [{ table: 'survey_assignments', columns: ['survey_id', 'organization_id'] }];
 const SURVEY_ASSIGNMENT_TYPE = 'survey';
 const SURVEY_ASSIGNMENT_SELECT = '*';
-const CLIENT_SURVEY_ASSIGNMENT_SELECT = 'id,survey_id,status,due_at,note,assigned_by,metadata,active,organization_id,org_id';
+const CLIENT_SURVEY_ASSIGNMENT_SELECT = 'id,survey_id,status,due_at,note,assigned_by,metadata,active';
+
+const buildClientSurveyAssignmentSelect = (assignmentsOrgColumn = 'organization_id') => {
+  const baseColumns = ['id', 'survey_id', 'status', 'due_at', 'note', 'assigned_by', 'metadata', 'active'];
+  if (assignmentsOrgColumn === 'org_id') {
+    return [...baseColumns, 'organization_id:org_id', 'org_id'].join(',');
+  }
+  return [...baseColumns, 'organization_id'].join(',');
+};
+
+const buildSurveyOrgRollupSelect = (assignmentsOrgColumn = 'organization_id') => {
+  const baseColumns = ['survey_id', 'status', 'due_at', 'note', 'assigned_by', 'metadata', 'active'];
+  if (assignmentsOrgColumn === 'org_id') {
+    return [...baseColumns, 'organization_id:org_id', 'org_id'].join(',');
+  }
+  return [...baseColumns, 'organization_id'].join(',');
+};
 
 const findLatestHdiPreRecord = (records = [], currentRecord = null) => {
   if (!Array.isArray(records) || records.length === 0 || !currentRecord) return null;
@@ -16183,6 +16240,7 @@ app.use(
     ensureSurveyAssignmentsForUserFromOrgScope,
     detectAssignmentsUserIdUuidColumnAvailability,
     getAssignmentsOrgColumnName,
+    buildClientSurveyAssignmentSelect,
     isUuid,
     runTimedQuery,
     surveyAssignmentSelect: CLIENT_SURVEY_ASSIGNMENT_SELECT,

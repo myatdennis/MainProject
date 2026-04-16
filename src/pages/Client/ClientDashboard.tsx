@@ -105,7 +105,7 @@ const ClientDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useUserProfile();
-  const { sessionStatus, membershipStatus } = useSecureAuth();
+  const { sessionStatus, membershipStatus, activeOrgId } = useSecureAuth();
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
     if (user?.email) return user.email.toLowerCase();
@@ -715,7 +715,8 @@ const ClientDashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (!user?.organizationId) {
+    const resolvedOrgId = activeOrgId ?? user?.organizationId ?? null;
+    if (!resolvedOrgId) {
       setResources([]);
       setResourcesError(null);
       return;
@@ -724,7 +725,7 @@ const ClientDashboard = () => {
     setResourcesLoading(true);
     setResourcesError(null);
     documentService
-      .listDocuments({ organizationId: user.organizationId })
+      .listDocuments({ organizationId: resolvedOrgId, userId: user?.id ?? undefined })
       .then((list) => {
         if (cancelled) return;
         setResources(list);
@@ -741,7 +742,7 @@ const ClientDashboard = () => {
     return () => {
       cancelled = true;
     };
-  }, [user?.organizationId]);
+  }, [activeOrgId, user?.id, user?.organizationId]);
 
   useEffect(() => {
     if (!user?.organizationId) {
