@@ -43,8 +43,11 @@ const STRICT_AUTH = String(process.env.STRICT_AUTH || 'false').toLowerCase() ===
 const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 5_000);
 const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
 
-const membershipCache = new Map();
-const tokenCache = new Map();
+import cacheClient from '../lib/cacheClient.js';
+
+// Cache abstraction: in-memory for local dev, Redis-backed in production when REDIS_URL is set.
+const membershipCache = cacheClient;
+const tokenCache = cacheClient;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
@@ -359,27 +362,16 @@ const isDevRequest = (req) => {
 };
 
 const allowDemoBypassForRequest = (req) => {
+  // Strict: only allow demo/E2E bypass when E2E_TEST_MODE is explicitly enabled.
+  // Do not attempt to infer dev hosts or trust x-forwarded-* heuristics here.
   const explicitBypassSignal =
     String(req?.headers?.['x-e2e-bypass'] || '').trim().toLowerCase() === 'true' ||
     String(req?.headers?.['x-user-role'] || '').trim().length > 0;
 
-  if (isTestMode || String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true') {
-    return explicitBypassSignal;
-  }
-
-  if (!isDemoMode) {
-    return false;
-  }
-
-  if (!demoAutoAuthEnabled) {
-    return false;
-  }
-
-  if (isProduction) {
-    return false;
-  }
-
-  return isDevRequest(req);
+  const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' || isTestMode;
+  if (!e2eEnabled) return false;
+  if (isProduction) return false;
+  return explicitBypassSignal;
 };
 
 const buildDemoAuthContextPayload = ({ role = 'learner' } = {}) => {
@@ -522,19 +514,31 @@ const cacheSet = (store, key, value, ttlMs = MEMBERSHIP_CACHE_MS) => {
   }
 };
 
-export const invalidateMembershipCache = (userId, { orgId } = {}) => {
-  if (userId) {
-    membershipCache.delete(`org-memberships:${userId}`);
-  }
-  // When a role or membership changes for an org, purge all cached entries for
-  // that org's members so no user retains a stale role beyond TTL.
-  if (orgId) {
-    for (const [key, entry] of membershipCache.entries()) {
-      const memberships = entry?.value;
-      if (Array.isArray(memberships) && memberships.some((m) => m.orgId === orgId || m.organizationId === orgId)) {
-        membershipCache.delete(key);
+export const invalidateMembershipCache = async (userId, { orgId } = {}) => {
+  try {
+    if (userId) {
+      await membershipCache.del(`org-memberships:${userId}`);
+    }
+    // When a role or membership changes for an org, purge all cached entries for
+    // that org's members so no user retains a stale role beyond TTL.
+    if (orgId) {
+      // Use keys/scan to find matching entries in redis or in-memory store.
+      const keys = await membershipCache.keys('*org-memberships*');
+      for (const key of keys) {
+        try {
+          const entry = await membershipCache.get(key);
+          const memberships = entry ?? [];
+          if (Array.isArray(memberships) && memberships.some((m) => m.orgId === orgId || m.organizationId === orgId)) {
+            await membershipCache.del(key);
+          }
+        } catch (_) {
+          // best-effort only
+        }
       }
     }
+  } catch (err) {
+    // Best-effort: do not throw — invalidate attempts should not crash request flows.
+    console.warn('[invalidateMembershipCache] failed', { userId, orgId, err: err?.message || err });
   }
 };
 
@@ -645,21 +649,21 @@ const determineActiveOrgId = (req, memberships = []) => {
 
 async function loadSupabaseUser(token) {
   if (!token || !supabaseAuthClient) return null;
-  const cached = cacheGet(tokenCache, token);
+  const cached = await tokenCache.get(token);
   if (cached) return cached;
 
   const { data, error } = await supabaseAuthClient.auth.getUser(token);
   if (error || !data?.user) {
     return null;
   }
-  cacheSet(tokenCache, token, data.user);
+  await tokenCache.set(token, data.user, MEMBERSHIP_CACHE_MS);
   return data.user;
 }
 
 async function loadMemberships(userId) {
   if (!userId) return [];
   const cacheKey = `org-memberships:${userId}`;
-  const cached = cacheGet(membershipCache, cacheKey);
+  const cached = await membershipCache.get(cacheKey);
   if (cached) return cached;
 
   const rows = await getUserMemberships(userId, { logPrefix: '[auth-middleware]' });
@@ -672,7 +676,7 @@ async function loadMemberships(userId) {
       configurable: true,
     });
   }
-  cacheSet(membershipCache, cacheKey, mapped);
+  await membershipCache.set(cacheKey, mapped, MEMBERSHIP_CACHE_MS);
   return mapped;
 }
 

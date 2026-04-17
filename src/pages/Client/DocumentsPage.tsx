@@ -4,7 +4,7 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
-import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import Loading from '../../components/ui/Loading';
 import documentService, { type DocumentMeta } from '../../dal/documents';
 import useDocumentDownload from '../../hooks/useDocumentDownload';
 import { useUserProfile } from '../../hooks/useUserProfile';
@@ -103,7 +103,7 @@ const DocumentsPage: React.FC = () => {
       ) : loading ? (
         <Card tone="muted" padding="lg" className="text-center">
           <div className="flex flex-col items-center justify-center gap-3 py-10">
-            <LoadingSpinner size="md" />
+            <Loading size="md" />
             <p className="text-sm text-slate/70">Loading documents…</p>
           </div>
         </Card>

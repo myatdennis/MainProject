@@ -37,7 +37,7 @@ import Button from '../../components/ui/Button';
 import ActionsMenu from '../../components/ui/ActionsMenu';
 import { listOrgs } from '../../dal/orgs';
 import { useSecureAuth } from '../../context/SecureAuthContext';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
@@ -695,7 +695,7 @@ const AdminUsers = () => {
       <div className="table-card">
         {usersLoading ? (
           <div className="flex justify-center py-16">
-            <LoadingSpinner size="lg" />
+            <Loading size="lg" />
           </div>
         ) : (
         <div className="overflow-x-auto">

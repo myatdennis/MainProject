@@ -34,7 +34,7 @@ import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Badge from '../ui/Badge';
-import LoadingSpinner from '../ui/LoadingSpinner';
+import Loading from '../ui/Loading';
 import SurveyQueueStatus from '../Survey/SurveyQueueStatus';
 import type { LucideIcon } from 'lucide-react';
 import { useActiveOrganization } from '../../hooks/useActiveOrganization';
@@ -156,7 +156,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       return;
     }
 
-    if (catalogState.phase === 'loading' || catalogState.adminLoadStatus === 'success') {
+    const terminalReadyState =
+      catalogState.phase === 'ready' &&
+      (catalogState.adminLoadStatus === 'success' ||
+        catalogState.adminLoadStatus === 'empty' ||
+        catalogState.adminLoadStatus === 'unauthorized');
+
+    if (catalogState.phase === 'loading' || terminalReadyState) {
       return;
     }
 
@@ -514,7 +520,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   if (normalizedAuthInitializing && !hasSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
       </div>
     );
   }
@@ -883,7 +889,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
         <AdminErrorBoundary resetKey={location.pathname}>
           <Suspense fallback={
             <div className="flex items-center justify-center min-h-[40vh]">
-              <LoadingSpinner size="lg" />
+              <Loading size="lg" />
             </div>
           }>
             {/*

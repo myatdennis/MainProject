@@ -156,18 +156,13 @@ const hasExplicitE2EBypassHeader = (req) => {
 };
 
 const shouldBypassForE2ETokenlessRequest = (req) => {
-  // If an Authorization token is present, prefer validating it.
+  // Strict policy: only allow explicit E2E/demo bypass when E2E_TEST_MODE is
+  // enabled. Never allow bypass in production. This prevents accidental
+  // tokenless access in development from leaking to production.
   if (hasRequestAuthToken(req)) return false;
-
-  // Allow explicit E2E bypass header locally (non-production) even when
-  // the global E2E_TEST_MODE flag isn't set. This makes smoke scripts and
-  // local test runners able to run without toggling E2E_TEST_MODE env var
-  // (which is intentionally restricted when real Supabase creds are set).
-  if (hasExplicitE2EBypassHeader(req) && (process.env.NODE_ENV || 'development') !== 'production') {
-    return true;
-  }
-
-  if (!E2E_TEST_MODE_ACTIVE) return false;
+  const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' || E2E_TEST_MODE_ACTIVE;
+  if (!e2eEnabled) return false;
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') return false;
   return hasExplicitE2EBypassHeader(req);
 };
 

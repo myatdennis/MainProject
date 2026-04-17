@@ -140,4 +140,15 @@ if (hasMissing) {
   console.warn('\nMissing env vars detected in a non-production local context; continuing because strict enforcement is disabled.');
 }
 
+// Extra guard: do not allow E2E/demo/dev flags to be set in production contexts.
+const forbiddenInProduction = ['E2E_TEST_MODE', 'DEV_FALLBACK', 'DEMO_MODE', 'DEMO_AUTO_AUTH'];
+if (shouldEnforceStrict) {
+  for (const f of forbiddenInProduction) {
+    if (String(process.env[f] || '').trim().length > 0 && String(process.env[f] || '').toLowerCase() !== 'false') {
+      console.error(`\nEnvironment misconfiguration: ${f} must not be set in production or CI contexts.`);
+      process.exit(3);
+    }
+  }
+}
+
 process.exit(0);

@@ -449,15 +449,11 @@ const GuidedReflectionFlow = ({
       setSaveState('unsaved');
       setSaveError(null);
     }
-    const nextSignature = `${currentStepId}:${stepId}`;
-    if (lastInputEventRef.current !== nextSignature) {
-      lastInputEventRef.current = nextSignature;
-      console.info('[guided-reflection] reflectionInputChanged', {
-        lessonId,
-        stepId: currentStepId,
-        field: stepId,
-      });
-    }
+      const nextSignature = `${currentStepId}:${stepId}`;
+      if (lastInputEventRef.current !== nextSignature) {
+        lastInputEventRef.current = nextSignature;
+        // Intentionally silent in production — avoid noisy console logging.
+      }
   };
 
   const goToStep = (nextIndex: number) => {

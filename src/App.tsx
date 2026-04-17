@@ -2,7 +2,7 @@ import { useEffect, Suspense, lazy, useRef, useContext, type ReactNode } from 'r
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { isAdminSurface } from './utils/surface';
 import { courseStore } from './store/courseStore';
-import { LoadingSpinner } from './components/LoadingComponents';
+import Loading from './components/ui/Loading';
 import { ErrorBoundary } from './components/ErrorHandling';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -366,7 +366,7 @@ export function AppContent() {
           <Route
             path="/about"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <AboutPage />
                 </ErrorBoundary>
@@ -376,7 +376,7 @@ export function AppContent() {
           <Route
             path="/services"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <ServicesPage />
                 </ErrorBoundary>
@@ -386,7 +386,7 @@ export function AppContent() {
           <Route
             path="/resources"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <ResourcePage />
                 </ErrorBoundary>
@@ -396,7 +396,7 @@ export function AppContent() {
           <Route
             path="/testimonials"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <TestimonialsPage />
                 </ErrorBoundary>
@@ -406,7 +406,7 @@ export function AppContent() {
           <Route
             path="/contact"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <ContactPage />
                 </ErrorBoundary>
@@ -416,7 +416,7 @@ export function AppContent() {
           <Route
             path="/client-portal"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <ClientPortalPage />
                 </ErrorBoundary>
@@ -428,7 +428,7 @@ export function AppContent() {
           <Route
             path="/unauthorized"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading..." />}>
                 <ErrorBoundary>
                   <Unauthorized />
                 </ErrorBoundary>
@@ -438,7 +438,7 @@ export function AppContent() {
           <Route
             path="/client-portal/org/:orgId/*"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading workspace..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading workspace..." />}>
                 <ErrorBoundary>
                   <OrgWorkspaceProtectedLayout />
                 </ErrorBoundary>
@@ -456,7 +456,7 @@ export function AppContent() {
           <Route
             path="/client/*"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading Client Portal..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading Client Portal..." />}>
                 <ErrorBoundary resetKey={location.pathname}>
                   <ClientProtectedLayout />
                 </ErrorBoundary>
@@ -497,7 +497,7 @@ export function AppContent() {
           <Route
             path="/lms/*"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading LMS..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading LMS..." />}>
                 <ErrorBoundary resetKey={location.pathname}>
                   <LmsProtectedLayout />
                 </ErrorBoundary>
@@ -546,7 +546,7 @@ export function AppContent() {
           <Route
             path="/admin/*"
             element={
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading Admin..." />}>
+              <Suspense fallback={<Loading size="lg" className="py-20" text="Loading Admin..." />}>
                 <ErrorBoundary resetKey={location.pathname}>
                   <AdminProtectedLayout />
                 </ErrorBoundary>

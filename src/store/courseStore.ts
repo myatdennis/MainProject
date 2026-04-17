@@ -1193,6 +1193,7 @@ let learnerCatalogState: LearnerCatalogState = {
 };
 
 let initPromise: Promise<void> | null = null;
+let initTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 // Track the org context that was used for the last successful init so we can
 // detect org switches and flush the stale localStorage catalog cache.
 let lastInitOrgId: string | null = null;
@@ -2665,8 +2666,12 @@ export const courseStore = {
   // 'Syncing the admin catalog…' gate. The inner actualInit continues in the
   // background and may later update the store as usual.
   const timeoutPromise = new Promise<void>((resolve) => {
-    setTimeout(() => {
+    initTimeoutHandle = setTimeout(() => {
       try {
+        if (adminCatalogState.phase !== 'loading') {
+          resolve();
+          return;
+        }
         console.warn('[courseStore.init] init_timeout_triggered', { timeoutMs: INIT_TIMEOUT_MS, reason: initReason });
         setAdminCatalogState({
           phase: 'ready',
@@ -2686,6 +2691,10 @@ export const courseStore = {
 
   // Ensure the stored promise is cleared when complete.
   initPromise.finally(() => {
+    if (initTimeoutHandle) {
+      clearTimeout(initTimeoutHandle);
+      initTimeoutHandle = null;
+    }
     initPromise = null;
   });
 
@@ -2711,6 +2720,10 @@ export const courseStore = {
     }
 
     // Clear any in-flight promise so a fresh run can start.
+    if (initTimeoutHandle) {
+      clearTimeout(initTimeoutHandle);
+      initTimeoutHandle = null;
+    }
     initPromise = null;
     // Notify other tabs about the org switch so they can reset their initPromise
     // and avoid serving a stale catalog from the previous org.

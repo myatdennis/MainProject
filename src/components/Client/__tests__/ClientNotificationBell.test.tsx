@@ -14,6 +14,7 @@ const {
   wsOffMock,
   wsConnectMock,
   navigateMock,
+  secureAuthState,
 } = vi.hoisted(() => {
   const syncSubscribers = new Map<string, Array<() => void>>();
   const wsHandlers = new Map<string, Array<(payload: unknown) => void>>();
@@ -36,6 +37,13 @@ const {
     }),
     wsConnectMock: vi.fn(),
     navigateMock: vi.fn(),
+    secureAuthState: {
+      value: {
+        sessionStatus: 'authenticated',
+        authInitializing: false,
+        isAuthenticated: { client: true, lms: true },
+      },
+    },
   };
 });
 
@@ -77,6 +85,10 @@ vi.mock('../../../dal/wsClient', () => ({
   },
 }));
 
+vi.mock('../../../context/SecureAuthContext', () => ({
+  useSecureAuth: () => secureAuthState.value,
+}));
+
 describe('ClientNotificationBell', () => {
   beforeEach(() => {
     listLearnerNotificationsMock.mockReset();
@@ -87,6 +99,11 @@ describe('ClientNotificationBell', () => {
     wsOffMock.mockClear();
     wsConnectMock.mockClear();
   navigateMock.mockClear();
+    secureAuthState.value = {
+      sessionStatus: 'authenticated',
+      authInitializing: false,
+      isAuthenticated: { client: true, lms: true },
+    };
 
     listLearnerNotificationsMock.mockResolvedValue([
       {
@@ -107,6 +124,21 @@ describe('ClientNotificationBell', () => {
     });
 
     expect(screen.getByText('1')).toBeInTheDocument();
+  });
+
+  it('stays idle when no learner session is available', async () => {
+    secureAuthState.value = {
+      sessionStatus: 'unauthenticated',
+      authInitializing: false,
+      isAuthenticated: { client: false, lms: false },
+    };
+
+    render(<ClientNotificationBell />);
+    await act(async () => {
+      await wait(50);
+    });
+
+    expect(listLearnerNotificationsMock).not.toHaveBeenCalled();
   });
 
   it('refreshes notifications when assignment sync events arrive', async () => {

@@ -5,7 +5,7 @@ import {
   // ArrowUpRight (unused) removed to silence TS6133 warning
 } from 'lucide-react';
 import Button from '../../components/ui/Button';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 import { courseStore } from '../../store/courseStore';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { normalizeCourse } from '../../utils/courseNormalization';
@@ -105,7 +105,7 @@ const ClientDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useUserProfile();
-  const { sessionStatus, membershipStatus, activeOrgId } = useSecureAuth();
+  const { sessionStatus, membershipStatus, activeOrgId, authInitializing, isAuthenticated } = useSecureAuth();
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
     if (user?.email) return user.email.toLowerCase();
@@ -169,6 +169,7 @@ const ClientDashboard = () => {
   const [orgGrowthLoading, setOrgGrowthLoading] = useState(false);
   const [orgGrowthMessage, setOrgGrowthMessage] = useState<string | null>(null);
   const showDebugOverlay = useMemo(() => new URLSearchParams(location.search).get('debug') === '1', [location.search]);
+  const learnerSessionReady = !authInitializing && sessionStatus === 'authenticated' && (isAuthenticated?.client || isAuthenticated?.lms);
   // DEV-only debug: surface auth + boot step state to browser console to help
   // diagnose cases where the dashboard remains stuck on the loading spinner.
   useEffect(() => {
@@ -322,6 +323,11 @@ const ClientDashboard = () => {
   }, []);
 
   useEffect(() => {
+    if (!learnerSessionReady) {
+      setAssignments([]);
+      setAssignmentsLoading(false);
+      return;
+    }
     let isMounted = true;
     let pollHandle: number | null = null;
 
@@ -400,9 +406,15 @@ const ClientDashboard = () => {
       unsubscribeUpdate?.();
       unsubscribeDelete?.();
     };
-  }, [learnerId, bootAttempt, updateBootStep]);
+  }, [learnerId, bootAttempt, updateBootStep, learnerSessionReady]);
 
   useEffect(() => {
+    if (!learnerSessionReady) {
+      setSurveyAssignments([]);
+      setSurveyAssignmentsLoading(false);
+      setSurveyAssignmentsError(null);
+      return;
+    }
     let cancelled = false;
     let pollHandle: number | null = null;
 
@@ -445,7 +457,7 @@ const ClientDashboard = () => {
       }
       unsubscribeSurveyAssignments();
     };
-  }, []);
+  }, [learnerSessionReady]);
 
   const handleRetryBoot = () => {
     setCatalogError(null);
@@ -806,7 +818,7 @@ const ClientDashboard = () => {
       <>
         <div className="min-h-screen bg-softwhite">
         <div className="container-page section text-center">
-          <LoadingSpinner size="lg" text={lastCriticalError || 'Unable to initialize session.'} className="py-10" />
+          <Loading size="lg" text={lastCriticalError || 'Unable to initialize session.'} className="py-10" />
           <div className="mt-6 flex justify-center">
             <Button variant="secondary" onClick={handleRetryBoot}>
               Retry
@@ -825,7 +837,7 @@ const ClientDashboard = () => {
       <>
         <div className="min-h-screen bg-softwhite">
         <div className="container-page section text-center">
-          <LoadingSpinner size="lg" text={spinnerLabel} className="py-10" />
+          <Loading size="lg" text={spinnerLabel} className="py-10" />
         </div>
         </div>
   {showDebugOverlay && <BootDebugOverlay orderedBootSteps={ORDERED_BOOT_STEPS} steps={bootSteps} onRetry={handleRetryBoot} />}

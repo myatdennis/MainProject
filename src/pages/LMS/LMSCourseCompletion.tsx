@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useSyncExternalStore } from 
 import { useNavigate, useParams } from 'react-router-dom';
 
 import ClientErrorBoundary from '../../components/ClientErrorBoundary';
-import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import Loading from '../../components/ui/Loading';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
@@ -189,7 +189,7 @@ const LMSCourseCompletion = () => {
   if (isLoading) {
     return (
       <div className="py-24">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
       </div>
     );
   }

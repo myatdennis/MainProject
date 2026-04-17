@@ -14,7 +14,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 
 const AdminPerformanceDashboard: React.FC = () => {
   const { data, loading, error, refresh, lastUpdated } = useAnalyticsDashboard();
@@ -132,7 +132,7 @@ const AdminPerformanceDashboard: React.FC = () => {
             Learning Platform Health
           </h2>
           {loading ? (
-            <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+            <div className="flex justify-center py-8"><Loading size="md" /></div>
           ) : (
             <div className="space-y-4">
               {[
@@ -158,7 +158,7 @@ const AdminPerformanceDashboard: React.FC = () => {
             Engagement Overview
           </h2>
           {loading ? (
-            <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+            <div className="flex justify-center py-8"><Loading size="md" /></div>
           ) : (
             <div className="space-y-4">
               {[

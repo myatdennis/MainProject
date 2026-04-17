@@ -55,6 +55,8 @@ describe('Health signal mapping', () => {
         expect(body.healthSignal).toHaveProperty('alertLevel');
         expect(Array.isArray(body.healthSignal.reasons)).toBe(true);
         expect(Array.isArray(body.healthSignal.checks)).toBe(true);
+        expect(body.database?.source).toBe('shallow_health');
+        expect(body.database?.writable).toBeNull();
 
         const validAlertLevels = new Set(['info', 'warning', 'critical']);
         expect(validAlertLevels.has(body.healthSignal.alertLevel)).toBe(true);

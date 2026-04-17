@@ -25,7 +25,8 @@ import { getAssignmentsForUser } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 
 import SEO from '../components/SEO';
-import { LoadingSpinner, CourseCardSkeleton } from '../components/LoadingComponents';
+import Loading from '../components/ui/Loading';
+import { CourseCardSkeleton } from '../components/LoadingComponents';
 import { LazyImage, ImageSkeleton, useDebounce } from '../components/PerformanceComponents';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -377,7 +378,7 @@ const LearnerDashboard = () => {
           keywords="learning dashboard, course progress, online education, skills development"
         />
         <div className="mx-auto max-w-7xl px-6 py-12 lg:px-12">
-          <LoadingSpinner size="lg" text={`Loading step: ${runningStepLabel}`} className="py-20" />
+          <Loading size="lg" text={`Loading step: ${runningStepLabel}`} className="py-20" />
           <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <CourseCardSkeleton key={i} />

@@ -42,7 +42,7 @@ import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import ProgressBar from '../ui/ProgressBar';
-import LoadingSpinner from '../ui/LoadingSpinner';
+import Loading from '../ui/Loading';
 import CourseCompletion from '../CourseCompletion';
 import { useSyncService } from '../../dal/sync';
 import { useToast } from '../../context/ToastContext';
@@ -1282,7 +1282,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
       </div>
     );
   }
@@ -2541,7 +2541,7 @@ const LessonContent: React.FC<{
     }
 
     return (
-      <React.Suspense fallback={<LoadingSpinner className="mx-auto my-10" />}>
+  <React.Suspense fallback={<Loading className="mx-auto my-10" />}>
         <ScenarioLesson
           courseId={courseId}
           learnerId={learnerId}

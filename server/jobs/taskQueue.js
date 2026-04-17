@@ -1,8 +1,9 @@
-import BullMQ from 'bullmq';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const BullMQ = require('bullmq');
+const { Queue, Worker, JobScheduler } = BullMQ;
 import Redis from 'ioredis';
 import { logger } from '../lib/logger.js';
-
-const { Queue, Worker, QueueScheduler } = BullMQ;
 
 const REDIS_URL = process.env.REDIS_URL || process.env.JOBS_REDIS_URL || null;
 const DEFAULT_JOB_OPTIONS = {
@@ -48,7 +49,7 @@ const ensureScheduler = (name) => {
   if (!schedulers.has(name)) {
     schedulers.set(
       name,
-      new QueueScheduler(name, {
+      new JobScheduler(name, {
         connection: redisConnection,
       })
     );

@@ -15,7 +15,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
-import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import Loading from '../../components/ui/Loading';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse, parseDurationToMinutes } from '../../utils/courseNormalization';
@@ -351,7 +351,7 @@ const LMSProgress: React.FC = () => {
   if (loading) {
     return (
       <div className="py-24 flex flex-col items-center gap-3">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
         <p className="text-sm text-slate/80">Collecting your progress…</p>
       </div>
     );

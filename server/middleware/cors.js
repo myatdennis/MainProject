@@ -146,6 +146,8 @@ const isHealthRequest = (req) => {
   return typeof path === 'string' && path.startsWith('/api/health');
 };
 
+// Build the allowed headers list dynamically so we can gate test-only headers
+// (like X-E2E-Bypass) behind explicit environment flags.
 const allowHeaders = [
   'Content-Type',
   'Authorization',
@@ -164,10 +166,11 @@ const allowHeaders = [
   'x-csrf-token',
   'X-Request-Id',
   'x-request-id',
-  // Allow our E2E bypass header so test harnesses can send it in browser requests.
-  'X-E2E-Bypass',
-  // Include the lowercase variant to be explicit for environments that preserve header casing.
-  'x-e2e-bypass',
+  // Allow our E2E bypass header only when E2E_TEST_MODE is explicitly enabled
+  // and never in production. This prevents accidental bypass surface exposure.
+  ...(String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' && (process.env.NODE_ENV || '').toLowerCase() !== 'production'
+    ? ['X-E2E-Bypass', 'x-e2e-bypass']
+    : []),
 ];
 
 const setHeader = (res, key, value) => {

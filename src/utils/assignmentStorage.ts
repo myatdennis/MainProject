@@ -172,6 +172,10 @@ const getSessionUserEmail = (): string | null => {
   }
 };
 
+const hasAuthenticatedSessionSnapshot = (): boolean => {
+  return Boolean(getSessionUserId() || getSessionUserEmail());
+};
+
 const resolveLiveSessionContext = async (): Promise<{ id: string | null; email: string | null }> => {
   try {
     const supabase = await getSupabase();
@@ -419,18 +423,18 @@ const syncLocalAssignmentsToSupabase = async () => {
 };
 
 if (typeof window !== 'undefined') {
-  if (supabaseReady()) {
+  if (supabaseReady() && hasAuthenticatedSessionSnapshot()) {
     void syncLocalAssignmentsToSupabase();
   }
 
   subscribeRuntimeStatus((status) => {
-    if (status.supabaseConfigured && status.supabaseHealthy) {
+    if (status.supabaseConfigured && status.supabaseHealthy && hasAuthenticatedSessionSnapshot()) {
       void syncLocalAssignmentsToSupabase();
     }
   });
 
   window.addEventListener('online', () => {
-    if (supabaseReady()) {
+    if (supabaseReady() && hasAuthenticatedSessionSnapshot()) {
       void syncLocalAssignmentsToSupabase();
     }
   });

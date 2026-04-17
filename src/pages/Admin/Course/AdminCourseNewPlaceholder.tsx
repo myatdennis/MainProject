@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Card from '../../../components/ui/Card';
-import LoadingSpinner from '../../../components/ui/LoadingSpinner';
+import Loading from '../../../components/ui/Loading';
 
 // /admin/courses/new redirects to the full Course Builder
 const AdminCourseNewPlaceholder = () => {
@@ -15,7 +15,7 @@ const AdminCourseNewPlaceholder = () => {
 		<div className="mx-auto flex min-h-[50vh] max-w-3xl items-center px-6 py-12">
 			<Card tone="muted" className="w-full text-center" padding="lg">
 				<div className="mx-auto mb-4 flex justify-center">
-					<LoadingSpinner size="md" />
+					<Loading size="md" />
 				</div>
 				<h1 className="font-heading text-xl font-semibold text-charcoal">Opening Course Builder</h1>
 				<p className="mt-2 text-sm text-slate/75">

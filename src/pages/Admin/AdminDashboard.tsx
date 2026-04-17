@@ -13,7 +13,7 @@ import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 import { ErrorBoundary } from '../../components/ErrorHandling';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
@@ -391,7 +391,7 @@ const AdminDashboard = () => {
   if (isCatalogLoading) {
     gateContent = (
       <div className="flex min-h-[50vh] flex-col items-center justify-center rounded-3xl border border-mist/40 bg-white px-8 py-16 text-center shadow-card-sm">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
         <p className="mt-4 text-sm text-slate/80">Syncing the admin catalog&hellip;</p>
       </div>
     );
@@ -783,7 +783,7 @@ const AdminDashboard = () => {
             </div>
             <div className="space-y-3">
               {analyticsLoading ? (
-                <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
+                <div className="flex justify-center py-4"><Loading size="sm" /></div>
               ) : analyticsData.topOrgs.length === 0 ? (
                 <p className="text-sm text-slate/60 py-2">No org data available yet.</p>
               ) : (
@@ -813,7 +813,7 @@ const AdminDashboard = () => {
             </div>
             <div className="space-y-3">
               {analyticsLoading ? (
-                <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
+                <div className="flex justify-center py-4"><Loading size="sm" /></div>
               ) : analyticsData.courseDetail.length === 0 ? (
                 <p className="text-sm text-slate/60 py-2">No published course data available yet.</p>
               ) : (

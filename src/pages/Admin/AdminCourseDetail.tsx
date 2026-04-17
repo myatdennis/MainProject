@@ -5,7 +5,7 @@ import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } f
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
 import { SlugConflictError } from '../../utils/slugConflict';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 import { useNavTrace } from '../../hooks/useNavTrace';
 
 import { LazyImage } from '../../components/PerformanceComponents';
@@ -276,7 +276,7 @@ const AdminCourseDetail = () => {
           </Link>
           <div className="flex min-h-[40vh] items-center justify-center rounded-2xl border border-mist/40 bg-white">
             <div className="flex flex-col items-center gap-3">
-              <LoadingSpinner size="lg" />
+              <Loading size="lg" />
               <p className="text-sm text-slate/70">Loading course&hellip;</p>
             </div>
           </div>

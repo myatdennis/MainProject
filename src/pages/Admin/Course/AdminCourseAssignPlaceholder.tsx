@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import Card from '../../../components/ui/Card';
-import LoadingSpinner from '../../../components/ui/LoadingSpinner';
+import Loading from '../../../components/ui/Loading';
 
 /**
  * AdminCourseAssignPlaceholder — redirects to the course detail page
@@ -25,7 +25,7 @@ const AdminCourseAssignPlaceholder = () => {
     <div className="mx-auto flex min-h-[50vh] max-w-3xl items-center px-6 py-12">
       <Card tone="muted" className="w-full text-center" padding="lg">
         <div className="mx-auto mb-4 flex justify-center">
-          <LoadingSpinner size="md" />
+          <Loading size="md" />
         </div>
         <h1 className="font-heading text-xl font-semibold text-charcoal">Opening assignment workspace</h1>
         <p className="mt-2 text-sm text-slate/75">

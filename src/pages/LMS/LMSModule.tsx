@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 
 import { useUserProfile } from '../../hooks/useUserProfile';
 import ClientErrorBoundary from '../../components/ClientErrorBoundary';
-import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import Loading from '../../components/ui/Loading';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -633,7 +633,7 @@ const LMSModule = () => {
   if (isLoading) {
     return (
       <div className="py-24">
-	<LoadingSpinner size="lg" />
+  <Loading size="lg" />
       </div>
     );
   }
@@ -764,7 +764,7 @@ const LMSModule = () => {
 
                             {securingVideo && !securedVideoUrl && (
                               <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
-                                <LoadingSpinner size="sm" />
+                                <Loading size="sm" />
                                 <span>Securing this video for playback…</span>
                               </div>
                             )}
@@ -860,7 +860,7 @@ const LMSModule = () => {
                             )}
                             {securingDocument && (
                               <div className="flex items-center gap-2 text-xs text-blue-700">
-                                <LoadingSpinner size="sm" />
+                                <Loading size="sm" />
                                 <span>Fetching secure download link…</span>
                               </div>
                             )}

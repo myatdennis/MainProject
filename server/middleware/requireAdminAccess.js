@@ -91,7 +91,10 @@ const ensureAdminAccess = async (req, res) => {
   const cookieVal = (req.cookies && (req.cookies['x-e2e-bypass'] || req.cookies['e2e_bypass'])) || '';
   const queryVal = (req.query && (req.query['x-e2e-bypass'] || req.query['e2e_bypass'])) || '';
   const hasBypassHeader = Boolean(String(headerVal || cookieVal || queryVal || '').trim().length > 0);
-    if (hasBypassHeader && (process.env.NODE_ENV || '').toLowerCase() !== 'production') {
+    // Only permit explicit header/cookie/query bypass when E2E_TEST_MODE is explicitly enabled.
+    // This MUST NOT work in production.
+    const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
+    if (hasBypassHeader && e2eEnabled) {
       req.e2eBypass = true;
       req.user = req.user || {
         id: '00000000-0000-0000-0000-000000000001',
@@ -102,8 +105,8 @@ const ensureAdminAccess = async (req, res) => {
         refreshToken: 'e2e-refresh-token',
       };
   console.info('[requireAdminAccess] e2e_header_bypass granted', { requestId: req.requestId ?? null, userId: req.user?.id });
-  // For local E2E runs, allow the bypass to elevate to platform admin so test harnesses
-  // can exercise admin-only endpoints. This is strictly guarded by the NODE_ENV check above.
+  // For E2E runs, allow the bypass to elevate to platform admin so test harnesses
+  // can exercise admin-only endpoints. This is strictly guarded by E2E_TEST_MODE.
   return grantAdminAccess(req, 'e2e_header_bypass', { elevatePlatformAdmin: true });
     }
   } catch (e) {

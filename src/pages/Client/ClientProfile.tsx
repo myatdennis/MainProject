@@ -9,7 +9,7 @@ import { courseStore } from '../../store/courseStore';
 import { getAssignmentsForUser } from '../../utils/assignmentStorage';
 import { fetchAssignedSurveysForLearner, type LearnerSurveyAssignment } from '../../dal/surveys';
 import type { CourseAssignment } from '../../types/assignment';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 
 const ClientProfile = () => {
   const { user } = useSecureAuth();
@@ -120,7 +120,7 @@ const ClientProfile = () => {
 
         {isLoadingAssignments ? (
           <div className="py-2">
-            <LoadingSpinner size="md" text="Loading assigned courses and surveys…" />
+            <Loading size="md" text="Loading assigned courses and surveys…" />
           </div>
         ) : assignmentError ? (
           <p className="text-sm text-rose-700">{assignmentError}</p>

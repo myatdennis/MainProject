@@ -17,7 +17,7 @@ import {
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
-import LoadingSpinner from '../ui/LoadingSpinner';
+import Loading from '../ui/Loading';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { refreshRuntimeStatus } from '../../state/runtimeStatus';
 import ApiStatusBanner from '../system/ApiStatusBanner';
@@ -86,7 +86,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
   if (authInitializing || authStatus === 'booting') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
       </div>
     );
   }

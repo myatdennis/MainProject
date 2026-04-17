@@ -45,7 +45,7 @@ import Card from '../../components/ui/Card';
 import EmptyState from '../../components/ui/EmptyState';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 
 import { LazyImage } from '../../components/PerformanceComponents';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
@@ -534,7 +534,7 @@ const AdminCourses = () => {
   if (isCatalogLoading) {
     gateContent = (
       <div className="flex min-h-[40vh] flex-col items-center justify-center rounded-3xl border border-mist/40 bg-white px-8 py-16 text-center shadow-card-sm">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
         <p className="mt-4 text-sm text-slate/80">Syncing the admin catalog&hellip;</p>
       </div>
     );

@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import { getUserSession } from '../lib/secureStorage';
 
 export type Notification = {
   id: string;
@@ -29,6 +30,7 @@ type NotificationCacheEntry = {
 
 const learnerNotificationCache = new Map<string, NotificationCacheEntry>();
 const learnerNotificationInflight = new Map<string, Promise<Notification[]>>();
+let learnerNotificationsDisabledUntilAuthRestore = false;
 const adminNotificationCache = new Map<string, { expiresAt: number; result: { notifications: Notification[]; notificationsDisabled: boolean } }>();
 const adminNotificationInflight = new Map<
   string,
@@ -74,6 +76,21 @@ const invalidateNotificationCaches = () => {
   learnerNotificationInflight.clear();
   adminNotificationCache.clear();
   adminNotificationInflight.clear();
+};
+
+const hasLearnerSession = (): boolean => {
+  try {
+    const session = getUserSession();
+    return Boolean(session?.id);
+  } catch {
+    return false;
+  }
+};
+
+const resetLearnerNotificationAuthBackoffIfNeeded = () => {
+  if (learnerNotificationsDisabledUntilAuthRestore && hasLearnerSession()) {
+    learnerNotificationsDisabledUntilAuthRestore = false;
+  }
 };
 
 const mapNotification = (record: any): Notification => ({
@@ -241,6 +258,14 @@ const buildLearnerNotificationsPath = (opts?: { limit?: number; unreadOnly?: boo
 };
 
 export const listLearnerNotifications = async (opts?: { limit?: number; unreadOnly?: boolean }) => {
+  resetLearnerNotificationAuthBackoffIfNeeded();
+  if (!hasLearnerSession()) {
+    learnerNotificationsDisabledUntilAuthRestore = true;
+    return [];
+  }
+  if (learnerNotificationsDisabledUntilAuthRestore) {
+    return [];
+  }
   const params = new URLSearchParams();
   if (opts?.limit && Number.isFinite(opts.limit)) {
     params.set('limit', String(opts.limit));
@@ -277,6 +302,15 @@ export const listLearnerNotifications = async (opts?: { limit?: number; unreadOn
       });
       return items;
     } catch (error) {
+      const status = (error as { status?: number })?.status ?? (error as { response?: { status?: number } })?.response?.status;
+      if (status === 401 || status === 403) {
+        learnerNotificationsDisabledUntilAuthRestore = true;
+        learnerNotificationCache.set(cacheKey, {
+          expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
+          items: [],
+        });
+        return [];
+      }
       const fallback = handleSchemaMissing(error, 'learner.list', [] as Notification[]);
       learnerNotificationCache.set(cacheKey, {
         expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
@@ -293,6 +327,15 @@ export const listLearnerNotifications = async (opts?: { limit?: number; unreadOn
 };
 
 export const markLearnerNotificationRead = async (id: string) => {
+  resetLearnerNotificationAuthBackoffIfNeeded();
+  if (!hasLearnerSession() || learnerNotificationsDisabledUntilAuthRestore) {
+    return mapNotification({
+      id,
+      title: 'Notification',
+      created_at: new Date().toISOString(),
+      read: true,
+    });
+  }
   try {
     const json = await apiFetch<any>(
       'learner.markRead',
@@ -318,6 +361,10 @@ export const markLearnerNotificationRead = async (id: string) => {
     invalidateNotificationCaches();
     return mapNotification(raw);
   } catch (error) {
+    const status = (error as { status?: number })?.status ?? (error as { response?: { status?: number } })?.response?.status;
+    if (status === 401 || status === 403) {
+      learnerNotificationsDisabledUntilAuthRestore = true;
+    }
     return handleSchemaMissing(
       error,
       'learner.markRead',
@@ -331,6 +378,10 @@ export const markLearnerNotificationRead = async (id: string) => {
   }
 };
 export const deleteLearnerNotification = async (id: string) => {
+  resetLearnerNotificationAuthBackoffIfNeeded();
+  if (!hasLearnerSession() || learnerNotificationsDisabledUntilAuthRestore) {
+    return;
+  }
   await apiFetch<void>('learner.delete', `/api/learner/notifications/${id}`, {
     method: 'DELETE',
     expectedStatus: [200, 204],

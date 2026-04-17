@@ -17,7 +17,7 @@ import {
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
 import { useAnalyticsDashboard, type AnalyticsDateRange } from '../../hooks/useAnalyticsDashboard';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -271,7 +271,7 @@ const AdminAnalytics = () => {
             )}
           </p>
         </div>
-        {loading && <LoadingSpinner size="sm" />}
+  {loading && <Loading size="sm" />}
       </div>
 
       {error && (
@@ -379,7 +379,7 @@ const AdminAnalytics = () => {
           <h2 className="text-xl font-bold text-gray-900 mb-4">Engagement Heatmap</h2>
           <p className="text-xs text-gray-500 mb-4">Active events by day × 2-hour bucket</p>
           {loading ? (
-            <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+            <div className="flex justify-center py-8"><Loading size="md" /></div>
           ) : engagementHeatmap.every((d) => d.hours.every((v) => v === 0)) ? (
             <p className="text-sm text-gray-500 py-8 text-center">No engagement events recorded yet.</p>
           ) : (
@@ -421,7 +421,7 @@ const AdminAnalytics = () => {
         <div className="card-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Learner Journey</h2>
           {loading ? (
-            <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+            <div className="flex justify-center py-8"><Loading size="md" /></div>
           ) : learnerJourney.length === 0 ? (
             <p className="text-sm text-gray-500 py-8 text-center">No learner progress data available yet.</p>
           ) : (
@@ -495,7 +495,7 @@ const AdminAnalytics = () => {
           <h2 className="text-xl font-bold text-gray-900">Course Performance</h2>
         </div>
         {loading ? (
-          <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+          <div className="flex justify-center py-8"><Loading size="md" /></div>
         ) : contentPerformance.length === 0 ? (
           <p className="text-sm text-gray-500 py-8 text-center">No published courses with learner data yet.</p>
         ) : (

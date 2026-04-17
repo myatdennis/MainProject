@@ -2,7 +2,7 @@ import { AlertTriangle, Inbox } from 'lucide-react';
 import type { ReactNode } from 'react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
-import LoadingSpinner from '../ui/LoadingSpinner';
+import Loading from '../ui/Loading';
 
 export type AsyncPanelState = 'loading' | 'error' | 'empty' | 'ready';
 
@@ -38,7 +38,7 @@ const AsyncStatePanel = ({
   if (state === 'loading') {
     return (
       <div className={`flex flex-col items-center justify-center gap-4 py-20 ${className}`} role="status" aria-live="polite">
-        <LoadingSpinner size="lg" color="secondary" />
+  <Loading size="lg" />
         <span className="text-lg text-slate-500">{loadingLabel}</span>
       </div>
     );

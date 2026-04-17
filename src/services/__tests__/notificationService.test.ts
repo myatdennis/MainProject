@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+const { getUserSessionMock } = vi.hoisted(() => ({
+  getUserSessionMock: vi.fn(),
+}));
+
 vi.mock('../../utils/requestContext', () => ({
   __esModule: true,
   default: vi.fn().mockResolvedValue({
@@ -7,9 +11,19 @@ vi.mock('../../utils/requestContext', () => ({
     'X-User-Role': 'member'
   })
 }));
+vi.mock('../../lib/secureStorage', () => ({
+  getUserSession: getUserSessionMock,
+}));
 vi.mock('../../utils/apiClient', () => ({
   __esModule: true,
-  default: vi.fn()
+  default: vi.fn(),
+  ApiError: class extends Error {
+    status: number;
+    constructor(message: string, status: number) {
+      super(message);
+      this.status = status;
+    }
+  },
 }));
 import {
   listNotifications,
@@ -25,6 +39,7 @@ describe('notificationService', () => {
   beforeEach(() => {
     vi.mocked(apiRequest).mockReset();
     vi.clearAllMocks();
+    getUserSessionMock.mockReturnValue({ id: 'learner-1' });
   });
 
   it('loads notifications with query filters applied', async () => {
@@ -84,6 +99,34 @@ describe('notificationService', () => {
 
     expect(apiRequest).toHaveBeenCalledWith('/api/learner/notifications', {});
     expect(notifications).toEqual([]);
+  });
+
+  it('does not request learner notifications when no session exists', async () => {
+    getUserSessionMock.mockReturnValue(null);
+
+    const notifications = await listLearnerNotifications();
+
+    expect(notifications).toEqual([]);
+    expect(apiRequest).not.toHaveBeenCalled();
+  });
+
+  it('disables learner notification fetches after a 401 until auth is restored', async () => {
+    const error = new Error('expired') as Error & { status?: number };
+    error.status = 401;
+    vi.mocked(apiRequest).mockRejectedValueOnce(error);
+
+    const first = await listLearnerNotifications({ limit: 11 });
+    const second = await listLearnerNotifications({ limit: 11 });
+
+    expect(first).toEqual([]);
+    expect(second).toEqual([]);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
+
+    getUserSessionMock.mockReturnValue({ id: 'learner-1' });
+    vi.mocked(apiRequest).mockResolvedValueOnce({ data: [] });
+    const third = await listLearnerNotifications({ unreadOnly: true, limit: 12 });
+    expect(third).toEqual([]);
+    expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 
   it('returns a safe read fallback when learner mark-read is disabled', async () => {

@@ -44,7 +44,7 @@ h3, .h3 {
 	@apply font-heading tracking-tight;
 	color: var(--text-primary);
 	font-size: var(--font-size-h3);
-	line-height: 1.35;
+	line-height: var(--line-height-heading);
 	font-weight: 600;
 	margin-bottom: 0.75rem;
 }
@@ -74,14 +74,19 @@ select {
 }
 
 .card {
-	@apply bg-softwhite rounded-xl shadow-card p-card;
+	@apply bg-app-surface rounded-xl shadow-card;
+	padding: var(--card-padding-md, 24px);
+	border: 1px solid var(--card-border);
+	transition: box-shadow 160ms ease, transform 160ms ease;
+	will-change: box-shadow, transform;
 }
 .btn-primary {
 	/* Standardized animation timing and easing */
-	@apply bg-sunrise text-white rounded-lg px-6 py-3 font-heading text-lg transition-transform duration-300 ease-out;
+	@apply bg-sunrise text-white rounded-lg px-6 py-3 font-heading text-lg transition-transform duration-200 ease-out;
 }
 .btn-primary:hover {
-	@apply bg-sunrise/90 scale-105;
+	@apply bg-sunrise/90;
+	transform: translateY(-1px) scale(1.02);
 }
 .btn-secondary {
 	/* Standardized animation timing and easing */
@@ -94,8 +99,21 @@ select {
 	@apply opacity-50 cursor-not-allowed;
 }
 .input {
-	@apply border border-mist rounded-lg px-4 py-3 font-body text-charcoal shadow-inner focus:outline-skyblue;
-	background: var(--surface-card);
+	@apply border border-app-subtle rounded-lg px-4 py-3 font-body text-charcoal bg-app-surface;
+	min-width: 160px;
+	line-height: 1.6;
+	transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+
+textarea, .input[type='text'], input.input, textarea.input {
+  min-width: 320px;
+  max-width: 100%;
+  resize: vertical;
+}
+
+.card:hover {
+  box-shadow: 0 22px 46px rgba(16,24,40,0.06);
+  transform: translateY(-4px);
 }
 
 /* Toast system mapped to design tokens */
@@ -273,6 +291,17 @@ select {
 }
 .btn-cta:active {
 	transform: scale(0.98);
+}
+
+/* Disabled/ghost clarity */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+.btn-ghost:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
 }
 
 /* Semantic text + surface utilities */

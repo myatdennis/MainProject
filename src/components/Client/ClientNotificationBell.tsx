@@ -3,6 +3,7 @@ import { listLearnerNotifications, markLearnerNotificationRead, markLearnerNotif
 import type { Notification } from '../../dal/notifications';
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 import Button from '../ui/Button';
 import { syncService } from '../../dal/sync';
@@ -51,15 +52,23 @@ const formatTimestamp = (value?: string) => {
 
 const ClientNotificationBell = () => {
   const navigate = useNavigate();
+  const { sessionStatus, authInitializing, isAuthenticated } = useSecureAuth();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
 
+  const learnerSessionReady = !authInitializing && sessionStatus === 'authenticated' && (isAuthenticated?.client || isAuthenticated?.lms);
+
   const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
 
   const loadNotifications = useCallback(async () => {
+    if (!learnerSessionReady) {
+      setNotifications([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const items = await listLearnerNotifications();
@@ -67,7 +76,7 @@ const ClientNotificationBell = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [learnerSessionReady]);
 
   const scheduleNotificationRefresh = useCallback(() => {
     if (refreshTimerRef.current) {
@@ -79,15 +88,24 @@ const ClientNotificationBell = () => {
     }, REALTIME_REFRESH_DEBOUNCE_MS);
   }, [loadNotifications]);
 
-  useEffect(() => { void loadNotifications(); }, [loadNotifications]);
+  useEffect(() => {
+    if (!learnerSessionReady) {
+      setNotifications([]);
+      return;
+    }
+    void loadNotifications();
+  }, [learnerSessionReady, loadNotifications]);
 
   useEffect(() => {
-    if (open) {
+    if (open && learnerSessionReady) {
       void loadNotifications();
     }
-  }, [open, loadNotifications]);
+  }, [open, learnerSessionReady, loadNotifications]);
 
   useEffect(() => {
+    if (!learnerSessionReady) {
+      return;
+    }
     const refreshFromSync = () => {
       scheduleNotificationRefresh();
     };
@@ -102,9 +120,12 @@ const ClientNotificationBell = () => {
     return () => {
       unsubs.forEach((unsubscribe) => unsubscribe?.());
     };
-  }, [scheduleNotificationRefresh]);
+  }, [learnerSessionReady, scheduleNotificationRefresh]);
 
   useEffect(() => {
+    if (!learnerSessionReady) {
+      return;
+    }
     const handleRealtimeEvent = (payload: unknown) => {
       const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
       const eventType =
@@ -133,7 +154,7 @@ const ClientNotificationBell = () => {
       wsClient.off('notification_deleted', handleRealtimeEvent);
       wsClient.off('message_sent', handleRealtimeEvent);
     };
-  }, [scheduleNotificationRefresh]);
+  }, [learnerSessionReady, scheduleNotificationRefresh]);
 
   useEffect(() => {
     return () => {

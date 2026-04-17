@@ -29,6 +29,17 @@ const normalizeUrl = (target: string): string => {
   if (!target) return target;
   const absolutePattern = /^https?:\/\//i;
   if (absolutePattern.test(target)) {
+    try {
+      const parsed = new URL(target);
+      const host = String(parsed.hostname || '').toLowerCase();
+      const path = String(parsed.pathname || '');
+      if (host.endsWith('.supabase.co') && /^\/functions\/v1(?:\/|$)/i.test(path)) {
+        const normalizedPath = `${path.replace(/^\/functions\/v1/i, '') || '/'}${parsed.search || ''}${parsed.hash || ''}`;
+        return resolveApiUrl(normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`);
+      }
+    } catch {
+      // Fall through to the raw target if URL parsing fails.
+    }
     return target;
   }
   return resolveApiUrl(target);

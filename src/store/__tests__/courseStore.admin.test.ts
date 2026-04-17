@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Course } from '../../types/courseTypes';
 import type { AdminCatalogState } from '../courseStore';
 import type { OrgContextSnapshot } from '../courseStoreOrgBridge';
@@ -199,6 +199,7 @@ const importCourseStore = async () => {
 };
 
 beforeEach(() => {
+  vi.useRealTimers();
   vi.resetModules();
   vi.clearAllMocks();
   adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([]);
@@ -223,6 +224,10 @@ beforeEach(() => {
   apiAccessTokenMock.mockResolvedValue('token-123');
   setRuntimeStatusSnapshot();
   setOrgContextSnapshot(buildOrgContextSnapshot());
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('courseStore admin catalog phase transitions', () => {
@@ -274,6 +279,40 @@ describe('courseStore admin catalog phase transitions', () => {
     expect(seen[seen.length - 1]?.phase).toBe('ready');
     expect(finalState.adminLoadStatus).toBe('empty');
     expect(finalState.phase).toBe('ready');
+  });
+
+  it('does not let the init timeout overwrite a terminal empty admin result', async () => {
+    vi.useFakeTimers();
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([]);
+    const courseStore = await importCourseStore();
+
+    const initPromise = courseStore.init();
+    await initPromise;
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    const finalState = courseStore.getAdminCatalogState();
+    expect(finalState.phase).toBe('ready');
+    expect(finalState.adminLoadStatus).toBe('empty');
+    expect(finalState.lastError).toBeNull();
+  });
+
+  it('marks api_unreachable only when init work is still unresolved at timeout', async () => {
+    vi.useFakeTimers();
+    adminCoursesMock.getAllCoursesFromDatabase.mockImplementation(
+      () =>
+        new Promise(() => {
+          // intentionally unresolved
+        }) as Promise<any>,
+    );
+    const courseStore = await importCourseStore();
+
+    void courseStore.init();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    const finalState = courseStore.getAdminCatalogState();
+    expect(finalState.phase).toBe('ready');
+    expect(finalState.adminLoadStatus).toBe('api_unreachable');
+    expect(finalState.lastError).toContain('init_timeout');
   });
 
   it('treats admin API auth failures as errors without marking unauthorized', async () => {

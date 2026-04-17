@@ -4,7 +4,7 @@ import SEO from '../../components/SEO/SEO';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 import { fetchAssignedSurveysForLearner, saveLearnerSurveyProgress, submitLearnerSurveyResponse } from '../../dal/surveys';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 import type { SurveyQuestion } from '../../types/survey';
@@ -211,7 +211,7 @@ const ClientSurveyTake = () => {
   if (loading) {
     return (
       <div className="mx-auto max-w-4xl p-6">
-        <LoadingSpinner size="lg" text="Loading survey…" />
+  <Loading size="lg" text="Loading survey…" />
       </div>
     );
   }

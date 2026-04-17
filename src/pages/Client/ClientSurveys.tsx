@@ -6,7 +6,8 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import EmptyState from '../../components/ui/EmptyState';
+import Loading from '../../components/ui/Loading';
 import {
   fetchAssignedSurveysForLearner,
   type LearnerSurveyAssignment,
@@ -325,7 +326,7 @@ const ClientSurveys = () => {
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <LoadingSpinner size="lg" text="Loading surveys…" />
+          <Loading size="lg" text="Loading surveys…" />
         </div>
       ) : error ? (
         <Card tone="muted" className="space-y-3 text-center" padding="lg">
@@ -336,16 +337,18 @@ const ClientSurveys = () => {
           </div>
         </Card>
       ) : assignments.length === 0 ? (
-        <Card tone="muted" className="space-y-3 text-center" padding="lg">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-cloud text-slate/70">
-            <ClipboardList className="h-6 w-6" />
-          </div>
-          <h2 className="font-heading text-lg font-semibold text-charcoal">No surveys assigned</h2>
-          <p className="text-sm text-slate/70">You don’t have any surveys yet. Check back later.</p>
-          <Button variant="ghost" asChild>
-            <Link to={`${portalPath}/dashboard`}>← Back to dashboard</Link>
-          </Button>
-        </Card>
+        <div className="mt-8">
+          <EmptyState
+            title="No surveys assigned"
+            description="You don’t have any surveys yet. Check back later."
+            action={(
+              <Button variant="ghost" asChild>
+                <Link to={`${portalPath}/dashboard`}>← Back to dashboard</Link>
+              </Button>
+            )}
+            icon={<ClipboardList className="h-6 w-6" />}
+          />
+        </div>
       ) : (
         <div className="space-y-8">
           <section className="space-y-3">
@@ -354,9 +357,11 @@ const ClientSurveys = () => {
               <Badge tone="info">{pendingAssignments.length}</Badge>
             </div>
             {pendingAssignments.length === 0 ? (
-              <Card tone="muted" padding="md">
-                <p className="text-sm text-slate/70">You’re all caught up. New surveys will appear here.</p>
-              </Card>
+              <EmptyState
+                title="You’re all caught up"
+                description="New surveys will appear here when assigned."
+                compact
+              />
             ) : (
               <div className="space-y-3">
                 {pendingAssignments.map(renderSurveyCard)}
@@ -370,9 +375,11 @@ const ClientSurveys = () => {
               <Badge tone="positive">{completedAssignments.length}</Badge>
             </div>
             {completedAssignments.length === 0 ? (
-              <Card tone="muted" padding="md">
-                <p className="text-sm text-slate/70">No submitted surveys yet. Completed surveys will show here.</p>
-              </Card>
+              <EmptyState
+                title="No submitted surveys yet"
+                description="Completed surveys will show here once you submit them."
+                compact
+              />
             ) : (
               <div className="space-y-3">
                 {completedAssignments.map(renderSurveyCard)}

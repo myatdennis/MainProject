@@ -19,6 +19,8 @@ const {
       membershipStatus: 'ready',
       membershipCount: 0,
       activeOrgId: 'org-1',
+      authInitializing: false,
+      isAuthenticated: { client: true, lms: true },
     },
   },
   getCourseMock: vi.fn(),
@@ -116,6 +118,8 @@ describe('ClientDashboard', () => {
       membershipStatus: 'ready',
       membershipCount: 0,
       activeOrgId: 'org-1',
+      authInitializing: false,
+      isAuthenticated: { client: true, lms: true },
     };
     getAssignmentsForUserMock.mockClear();
     getCourseMock.mockReset();
@@ -145,6 +149,21 @@ describe('ClientDashboard', () => {
 
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
+  });
+
+  it('does not start assignment loading before learner auth is ready', async () => {
+    secureAuthState.value = {
+      sessionStatus: 'loading',
+      membershipStatus: 'loading',
+      membershipCount: 0,
+      activeOrgId: null,
+      authInitializing: true,
+      isAuthenticated: { client: false, lms: false },
+    };
+
+    renderDashboard();
+    expect(await screen.findByText(/Validating session/i)).toBeInTheDocument();
+    expect(getAssignmentsForUserMock).not.toHaveBeenCalled();
   });
 
   it('keeps the dashboard shell mounted after auth and membership have already resolved once', async () => {

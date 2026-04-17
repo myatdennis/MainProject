@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
-import LoadingSpinner from '../ui/LoadingSpinner';
+import Loading from '../ui/Loading';
 import Button from '../ui/Button';
 import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
@@ -758,7 +758,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   if (shouldShowBootstrapSpinner) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
-        <LoadingSpinner size="lg" />
+  <Loading size="lg" />
       </div>
     );
   }
@@ -920,7 +920,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       if (surfaceWaitingForAuth) {
         return (
           <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
-            <LoadingSpinner size="lg" />
+            <Loading size="lg" />
           </div>
         );
       }

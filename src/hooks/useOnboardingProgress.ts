@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import pollingHub from '../lib/pollingHub';
 import {
   getDefaultOnboardingProgress,
   getStepOrder,
@@ -114,7 +115,8 @@ export const useOnboardingProgress = (orgId?: string, options: UseOnboardingProg
       return;
     }
     pollRef.current = setInterval(() => {
-      refresh();
+      const key = `onboarding:org:${orgId}`;
+      void pollingHub.fetchOnce(key, () => refresh(), { dedupeMs: Math.max(1000, options.pollIntervalMs ?? 60000) });
     }, options.pollIntervalMs);
     return () => {
       if (pollRef.current) {

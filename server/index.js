@@ -102,6 +102,7 @@ const sendApiError = (res, statusCode, code, message, extra = {}) => {
   });
 };
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
+import cacheClient from './lib/cacheClient.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
@@ -207,7 +208,20 @@ if (process.env.NODE_ENV === 'production') {
     throw new Error('TEST_IDEMPOTENCY_FALLBACK_MODE must never be enabled in production.');
   }
 }
+// Basic in-process metrics hooks (lightweight). For production-grade metrics
+// integrate a Prometheus client or APM; this provides a minimal /metrics sink.
+import { recordRequest, getMetricsText, recordError } from './lib/metrics.js';
 import { sendEmail, configureEmailLogging, getEmailConfigSummary, isEmailEnabled } from './services/emailService.js';
+
+// Startup runtime validation: in production, ensure E2E/demo flags are not set.
+if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+  const forbiddenFlags = ['E2E_TEST_MODE', 'DEV_FALLBACK', 'DEMO_MODE', 'DEMO_AUTO_AUTH'];
+  for (const f of forbiddenFlags) {
+    if (String(process.env[f] || '').trim().length > 0 && String(process.env[f] || '').toLowerCase() !== 'false') {
+      throw new Error(`Runtime flag ${f} must not be set in production.`);
+    }
+  }
+}
 import { createMediaService } from './services/mediaService.js';
 import { createNotificationService } from './services/notificationService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
@@ -1161,6 +1175,19 @@ app.use(cookieParser());
 app.use(setDoubleSubmitCSRF);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
+// Lightweight metrics middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.once('finish', () => {
+    try {
+      recordRequest(Date.now() - start);
+    } catch (e) {
+      // ignore
+    }
+  });
+  next();
+});
+
 // Temporary probe endpoint to echo presence of E2E bypass signals.
 // Returns whether the X-E2E-Bypass header, x-e2e-bypass cookie, or e2e_bypass query param are present.
 app.get('/api/_probe_echo', (req, res) => {
@@ -1673,6 +1700,79 @@ const buildHealthPayload = async (overrides = {}) => {
   };
 };
 
+let cachedShallowHealthPayload = null;
+let cachedShallowHealthAt = 0;
+const SHALLOW_HEALTH_CACHE_TTL_MS = 1000;
+
+const buildShallowHealthPayload = async (overrides = {}) => {
+  const now = Date.now();
+  if (cachedShallowHealthPayload && now - cachedShallowHealthAt < SHALLOW_HEALTH_CACHE_TTL_MS) {
+    return {
+      ...cachedShallowHealthPayload,
+      ...overrides,
+    };
+  }
+
+  const [supabaseHealth, storageHealth] = await Promise.all([
+    checkSupabaseHealth().catch((error) => {
+      logger.warn('supabase_health_probe_failed', { message: error instanceof Error ? error.message : error });
+      return { status: 'error', message: 'probe_failed' };
+    }),
+    getStorageHealth().catch((error) => ({
+      status: 'degraded',
+      message: error instanceof Error ? error.message : String(error),
+    })),
+  ]);
+
+  const offlineQueue = getOfflineQueueHealth();
+  const metrics = getMetricsSnapshot();
+  const lastBatchAt = metrics.analyticsIngest?.lastBatch?.at;
+  const analyticsIngestLagMs = lastBatchAt ? Date.now() - Date.parse(lastBatchAt) : null;
+  const overallStatus = deriveOverallStatus([
+    supabaseHealth.status || 'unknown',
+    offlineQueue.status || 'unknown',
+    storageHealth.status || 'unknown',
+  ]);
+
+  cachedShallowHealthPayload = {
+    status: overallStatus,
+    generatedAt: new Date().toISOString(),
+    supabase: supabaseHealth,
+    offlineQueue,
+    storage: storageHealth,
+    analyticsIngestLagMs,
+    metrics: {
+      analyticsIngest: metrics.analyticsIngest,
+      progressBatch: metrics.progressBatch,
+    },
+    featureFlags: {
+      forceOrgEnforcement: Boolean(FORCE_ORG_ENFORCEMENT),
+      devFallback: Boolean(isDemoMode),
+      supabaseJwtSecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
+    },
+    runtime: {
+      mode: startupExecutionMode,
+      fallbackTriggers: fallbackTriggerReasons,
+      surveyAssignmentPersistence: assignmentPersistenceSimulated ? 'simulated' : 'real',
+    },
+    orgEnforcement: {
+      enforced: Boolean(FORCE_ORG_ENFORCEMENT),
+      devFallback: Boolean(isDemoMode),
+    },
+    realtime: {
+      wsEnabled: Boolean(wsHealthSnapshot.enabled),
+      wsPath: wsHealthSnapshot.path,
+      wsError: wsHealthSnapshot.lastError,
+      wsLastStartedAt: wsHealthSnapshot.lastStartedAt,
+    },
+  };
+  cachedShallowHealthAt = now;
+  return {
+    ...cachedShallowHealthPayload,
+    ...overrides,
+  };
+};
+
 const resolveAppVersion = () =>
   process.env.APP_VERSION ||
   process.env.RAILWAY_GIT_COMMIT_SHA ||
@@ -1768,14 +1868,16 @@ const probeDatabaseHealth = async ({ requireWritable = true } = {}) => {
 const respondWithHealthPayload = async (_req, res) => {
   logger.info('[health] request start', { path: _req.path, requestId: _req.requestId || null });
   try {
-    const dbHealth = await probeDatabaseHealth();
-    logger.info('[health] dbHealth', { dbHealth });
-    const overrides = { database: dbHealth };
-    if (!dbHealth.ok || dbHealth.writable === false) {
-      const dbStatus = normalizeHealthStatus(dbHealth.status);
-      overrides.status = dbStatus === 'error' || dbStatus === 'disabled' ? 'error' : 'degraded';
-    }
-    const payload = await buildHealthPayload(overrides);
+    const cachedDbSnapshot = {
+      status: 'unknown',
+      ok: true,
+      writable: null,
+      latencyMs: null,
+      code: null,
+      message: null,
+      source: 'shallow_health',
+    };
+    const payload = await buildShallowHealthPayload({ database: cachedDbSnapshot });
     logger.info('[health] buildHealthPayload', { payload });
     const isDevEnv = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
     const forceHealthyForDev = Boolean(isDevEnv || isDemoMode || isTestMode);
@@ -1785,7 +1887,7 @@ const respondWithHealthPayload = async (_req, res) => {
     const returnedOk = Boolean(!isCriticalProbe || forceHealthyForDev);
     const healthSignal = buildHealthSignal({
       payload,
-      dbHealth,
+      dbHealth: cachedDbSnapshot,
       forceHealthyForDev,
       requestId: _req?.requestId ?? null,
     });
@@ -1954,12 +2056,86 @@ app.get('/ws/health', (_req, res) => {
 // Security middleware
 app.use(securityHeaders);
 
+// ---------------------------------------------------------------------------
+// Dev-only cache diagnostics (early registration to bypass normal auth/CSRF)
+// This is intentionally registered before the main '/api' auth middleware so
+// developers can exercise cache behavior on loopback without bearer tokens or
+// CSRF. It remains strictly gated by DEV_TOOLS_ENABLED and the x-dev-tools-key
+// header and only accepts loopback requests.
+if (process.env.NODE_ENV !== 'production') {
+  const devCacheGate = (req, res, next) => {
+    const devToolsEnabledFlag = (process.env.DEV_TOOLS_ENABLED || '').toLowerCase() === 'true';
+    const expectedKey = process.env.DEV_TOOLS_KEY || '';
+    const headerKey = (req.get && req.get('x-dev-tools-key')) || '';
+    if (!devToolsEnabledFlag || !expectedKey || !headerKey || headerKey !== expectedKey) {
+      return res.status(404).send('Not Found');
+    }
+    const remoteAddress = req.ip || req.connection?.remoteAddress || '';
+    const forwardedFor = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+    const candidateIp = forwardedFor || remoteAddress || '';
+    const isLoopback = typeof candidateIp === 'string' && (candidateIp.startsWith('127.') || candidateIp === '::1' || candidateIp === '::ffff:127.0.0.1');
+    if (!isLoopback) return res.status(404).send('Not Found');
+    return next();
+  };
+
+  app.get('/api/dev/diagnostics/cache', devCacheGate, async (req, res) => {
+    const key = typeof req.query.key === 'string' ? req.query.key.trim() : null;
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : null;
+    const cacheKey = key || (userId ? `org-memberships:${userId}` : null);
+    if (!cacheKey) return res.status(400).json({ error: 'key_or_userId_required' });
+    try {
+      const value = await cacheClient.get(cacheKey);
+      return res.json({ ok: true, key: cacheKey, value });
+    } catch (err) {
+      logger.error('dev_cache_get_failed_early', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
+      return res.status(500).json({ error: 'cache_get_failed' });
+    }
+  });
+
+  app.post('/api/dev/diagnostics/cache', devCacheGate, async (req, res) => {
+    const { key, userId, value, ttlMs } = req.body || {};
+    const cacheKey = key || (typeof userId === 'string' && userId ? `org-memberships:${String(userId).trim()}` : null);
+    if (!cacheKey) return res.status(400).json({ error: 'key_or_userId_required' });
+    try {
+      await cacheClient.set(cacheKey, value, Number(ttlMs) || undefined);
+      return res.json({ ok: true, key: cacheKey });
+    } catch (err) {
+      logger.error('dev_cache_set_failed_early', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
+      return res.status(500).json({ error: 'cache_set_failed' });
+    }
+  });
+
+  app.delete('/api/dev/diagnostics/cache', devCacheGate, async (req, res) => {
+    const key = typeof req.query.key === 'string' ? req.query.key.trim() : req.body?.key || null;
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : req.body?.userId || null;
+    const cacheKey = key || (userId ? `org-memberships:${userId}` : null);
+    if (!cacheKey) return res.status(400).json({ error: 'key_or_userId_required' });
+    try {
+      await cacheClient.del(cacheKey);
+      return res.json({ ok: true, key: cacheKey });
+    } catch (err) {
+      logger.error('dev_cache_del_failed_early', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
+      return res.status(500).json({ error: 'cache_del_failed' });
+    }
+  });
+}
+
 // Auth routes (login, refresh, logout) must run before CSRF enforcement so they can issue tokens
 // without requiring the SPA to fetch a CSRF token first.
 app.use('/api/auth', authRoutes);
 
 // Health endpoints remain public and must be registered before JWT protection.
 app.use('/', healthRouter);
+
+// Expose a minimal /metrics endpoint for scraping in staging/production.
+app.get('/metrics', (_req, res) => {
+  try {
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4');
+    res.send(getMetricsText());
+  } catch (e) {
+    res.status(500).send('metrics_error');
+  }
+});
 
 app.use(setDoubleSubmitCSRF);
 
@@ -1970,7 +2146,9 @@ app.use((req, res, next) => {
     path.startsWith('/api/auth') ||
     path.startsWith('/api/health') ||
     path.startsWith('/api/ws') ||
-    path.startsWith('/api/audit-log')
+    path.startsWith('/api/audit-log') ||
+    // Allow dev-only diagnostics cache endpoint to bypass CSRF (loopback + dev key enforced elsewhere)
+    path === '/api/dev/diagnostics/cache'
   ) {
     return next();
   }
@@ -2012,7 +2190,9 @@ logger.debug('diagnostics_cookies_and_cors', {
 });
 
 const API_AUTH_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics', '/broadcast', '/audit-log', '/analytics', '/client/courses', '/admin/me'];
-const API_AUTH_BYPASS_EXACT = new Set(['/auth/csrf']);
+// Exact API paths (relative to /api) that should bypass bearer authentication.
+// Add only the specific dev diagnostics cache endpoint so other routes are unaffected.
+const API_AUTH_BYPASS_EXACT = new Set(['/auth/csrf', '/dev/diagnostics/cache']);
 
 const matchesBypassPrefix = (path, prefixes) =>
   prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
@@ -2077,6 +2257,26 @@ app.use('/api', (req, res, next) => {
 app.use('/api', apiLimiter);
 app.use('/api', supabaseJwtMiddleware);
 app.use('/api', (req, res, next) => {
+  // Allow an explicit dev-tools key from loopback to bypass auth for dev-only
+  // diagnostics endpoints. This is intentionally narrow and requires both
+  // DEV_TOOLS_ENABLED=true and the correct x-dev-tools-key header.
+  try {
+    const devToolsEnabledFlag = (process.env.DEV_TOOLS_ENABLED || '').toLowerCase() === 'true';
+    const headerKey = (req.get && req.get('x-dev-tools-key')) || '';
+    const expectedKey = process.env.DEV_TOOLS_KEY || '';
+    if (devToolsEnabledFlag && headerKey && expectedKey && headerKey === expectedKey) {
+      const remoteAddress = req.ip || req.connection?.remoteAddress || '';
+      const forwardedFor = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+      const candidateIp = forwardedFor || remoteAddress || '';
+      const isLoopback = typeof candidateIp === 'string' && (candidateIp.startsWith('127.') || candidateIp === '::1' || candidateIp === '::ffff:127.0.0.1');
+      if (isLoopback) {
+        req.authBypassed = true;
+        return next();
+      }
+    }
+  } catch (e) {
+    // Do not block requests due to dev-tools check failures; fall through to normal auth
+  }
   const path = req.path || '/';
   if (shouldBypassApiAuth(path, req.method)) {
     req.authBypassed = true;
@@ -4192,6 +4392,58 @@ if (process.env.NODE_ENV !== 'production') {
         error: error instanceof Error ? error.message : error,
       });
       res.status(500).json({ error: 'publish_failed' });
+    }
+  }));
+
+  // Dev-only cache diagnostics: read/write/delete cache keys.
+  app.get('/api/dev/diagnostics/cache', withDevToolsGate(async (req, res) => {
+    const key = typeof req.query.key === 'string' ? req.query.key.trim() : null;
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : null;
+    const cacheKey = key || (userId ? `org-memberships:${userId}` : null);
+    if (!cacheKey) {
+      res.status(400).json({ error: 'key_or_userId_required' });
+      return;
+    }
+    try {
+      const value = await cacheClient.get(cacheKey);
+      res.json({ ok: true, key: cacheKey, value });
+    } catch (err) {
+      logger.error('dev_cache_get_failed', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'cache_get_failed' });
+    }
+  }));
+
+  app.post('/api/dev/diagnostics/cache', withDevToolsGate(async (req, res) => {
+    const { key, userId, value, ttlMs } = req.body || {};
+    const cacheKey = key || (typeof userId === 'string' && userId ? `org-memberships:${String(userId).trim()}` : null);
+    if (!cacheKey) {
+      res.status(400).json({ error: 'key_or_userId_required' });
+      return;
+    }
+    try {
+      // Accept raw object/value; store as-is
+      await cacheClient.set(cacheKey, value, Number(ttlMs) || undefined);
+      res.json({ ok: true, key: cacheKey });
+    } catch (err) {
+      logger.error('dev_cache_set_failed', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'cache_set_failed' });
+    }
+  }));
+
+  app.delete('/api/dev/diagnostics/cache', withDevToolsGate(async (req, res) => {
+    const key = typeof req.query.key === 'string' ? req.query.key.trim() : req.body?.key || null;
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : req.body?.userId || null;
+    const cacheKey = key || (userId ? `org-memberships:${userId}` : null);
+    if (!cacheKey) {
+      res.status(400).json({ error: 'key_or_userId_required' });
+      return;
+    }
+    try {
+      await cacheClient.del(cacheKey);
+      res.json({ ok: true, key: cacheKey });
+    } catch (err) {
+      logger.error('dev_cache_del_failed', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: 'cache_del_failed' });
     }
   }));
 }

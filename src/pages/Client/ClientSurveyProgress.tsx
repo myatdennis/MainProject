@@ -5,7 +5,7 @@ import SEO from '../../components/SEO/SEO';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
-import { LoadingSpinner } from '../../components/LoadingComponents';
+import Loading from '../../components/ui/Loading';
 import { fetchLearnerSurveyResults } from '../../dal/surveys';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 
@@ -52,7 +52,7 @@ const ClientSurveyProgress = () => {
   if (loading) {
     return (
       <div className="p-6 max-w-5xl mx-auto">
-        <LoadingSpinner size="lg" text="Loading HDI progress…" />
+  <Loading size="lg" text="Loading HDI progress…" />
       </div>
     );
   }

@@ -3,6 +3,8 @@ import { Flag, ShieldAlert } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
+import EmptyState from '../../components/ui/EmptyState';
+import Loading from '../../components/ui/Loading';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { listTeamHuddleReports, moderateTeamHuddlePost, type TeamHuddleReport } from '../../dal/teamHuddle';
 
@@ -56,9 +58,13 @@ const AdminTeamHuddleModeration = () => {
       {error && <Card className="border border-red-200 text-red-700">{error}</Card>}
 
       {loading ? (
-        <Card>Loading moderation queue…</Card>
+        <div className="flex items-center justify-center py-8">
+          <Loading text="Loading moderation queue…" />
+        </div>
       ) : reports.length === 0 ? (
-        <Card>No active reports. Great work, moderators 🎉</Card>
+        <div className="mt-6">
+          <EmptyState title="No active reports" description="Great work — no flagged posts right now." />
+        </div>
       ) : (
         <div className="space-y-4">
           {reports.map((report) => (

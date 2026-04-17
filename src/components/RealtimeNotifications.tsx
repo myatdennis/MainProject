@@ -21,6 +21,7 @@ import {
   type Notification as LearnerNotification,
 } from '../dal/notifications';
 import { wsClient } from '../dal/wsClient';
+import pollingHub from '../lib/pollingHub';
 import { useToast } from '../context/ToastContext';
 
 type NotificationCategory =
@@ -246,7 +247,7 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   limit = 25,
   refreshIntervalMs = DEFAULT_REFRESH_MS,
 }) => {
-  const { user, authInitializing, isAuthenticated } = useSecureAuth();
+  const { user, authInitializing, isAuthenticated, sessionStatus } = useSecureAuth();
   const { showToast } = useToast();
   const normalizedOverride = useMemo(
     () => (overrideUserId ? String(overrideUserId).trim().toLowerCase() : undefined),
@@ -270,7 +271,7 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     );
   }, [user]);
   const effectiveUserId = normalizedOverride ?? authUserId;
-  const canFetchLearner = Boolean(isAuthenticated?.lms);
+  const canFetchLearner = Boolean(sessionStatus === 'authenticated' && (isAuthenticated?.lms || isAuthenticated?.client));
   const canFetch = enabled && canFetchLearner && Boolean(effectiveUserId) && !authInitializing;
   const normalizedLimit = Math.min(Math.max(limit, 1), MAX_NOTIFICATIONS);
 
@@ -296,7 +297,8 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
       }
 
       try {
-        const items = await listLearnerNotifications({ limit: normalizedLimit });
+        const cacheKey = `notifications:user:${effectiveUserId}:limit:${normalizedLimit}`;
+        const items = await pollingHub.fetchOnce(cacheKey, async () => await listLearnerNotifications({ limit: normalizedLimit }));
         setNotifications(sortNotifications(items.map(toDisplayNotification)));
         setError(null);
       } catch (err) {

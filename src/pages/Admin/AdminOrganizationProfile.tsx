@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
-import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import Loading from '../../components/ui/Loading';
 import {
   Activity,
   Building2,
@@ -316,7 +316,7 @@ useEffect(() => {
       return (
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
           <div className="flex flex-col items-center justify-center py-8">
-            <LoadingSpinner />
+            <Loading />
             <span className="mt-2 text-sm text-gray-500">Loading organization profile...</span>
           </div>
         </div>
@@ -798,7 +798,7 @@ useEffect(() => {
       return (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="flex flex-col items-center justify-center py-8">
-            <LoadingSpinner />
+            <Loading />
             <span className="mt-2 text-sm text-gray-500">Loading services…</span>
           </div>
         </div>
@@ -904,7 +904,7 @@ useEffect(() => {
         {documentsLoading ? (
           <div className="rounded-lg border border-gray-100 bg-white p-8 text-center">
             <div className="flex flex-col items-center justify-center py-8">
-              <LoadingSpinner />
+              <Loading />
               <span className="mt-2 text-sm text-gray-500">Loading shared resources…</span>
             </div>
           </div>
@@ -1079,7 +1079,7 @@ useEffect(() => {
 
           {actionLoading ? (
             <div className="flex flex-col items-center justify-center py-8">
-              <LoadingSpinner />
+              <Loading />
               <span className="mt-2 text-sm text-gray-500">Loading action items…</span>
             </div>
           ) : actionItems.length === 0 ? (
