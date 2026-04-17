@@ -86,20 +86,36 @@ const AdminSurveys = () => {
   
   useEffect(() => {
     let cancelled = false;
-    listOrgs()
-      .then((orgs) => {
-        if (cancelled) return;
-        const next = new Map<string, string>();
-        orgs.forEach((org) => {
-          if (org?.id) {
-            next.set(org.id, org.name ?? org.id);
-          }
-        });
-        setOrgNameMap(next);
-      })
-      .catch((error) => {
-        console.warn('[AdminSurveys] Failed to load organization names', error);
-      });
+
+    const fetchWithRetry = async (attempts = 3) => {
+      let lastErr: any = null;
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const orgs = await listOrgs();
+          if (cancelled) return;
+          const next = new Map<string, string>();
+          orgs.forEach((org) => {
+            if (org?.id) {
+              next.set(org.id, org.name ?? org.id);
+            }
+          });
+          setOrgNameMap(next);
+          return;
+        } catch (err) {
+          lastErr = err;
+          const backoff = Math.min(1000 * Math.pow(2, i), 5000);
+          console.warn(`[AdminSurveys] listOrgs attempt ${i + 1} failed, retrying in ${backoff}ms`, err);
+          // small delay before retrying
+          await new Promise((res) => setTimeout(res, backoff));
+        }
+      }
+      if (!cancelled) {
+        console.warn('[AdminSurveys] Failed to load organization names after retries', lastErr);
+      }
+    };
+
+    fetchWithRetry();
+
     return () => {
       cancelled = true;
     };

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
 import {
@@ -234,6 +234,8 @@ const ClientDashboard = () => {
   );
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const [analyticsRefreshToken, setAnalyticsRefreshToken] = useState(0);
+  const hasResolvedSessionRef = useRef(false);
+  const hasResolvedMembershipRef = useRef(false);
   const courseStoreAdapter = useMemo(buildCourseStoreAdapter, []);
   // Track learner catalog load status so we can show a targeted empty-state when the
   // server confirms there are genuinely no courses available (status === 'empty'), rather
@@ -251,7 +253,15 @@ const ClientDashboard = () => {
   }, [courseStoreAdapter]);
 
   useEffect(() => {
+    if (sessionStatus === 'authenticated') {
+      hasResolvedSessionRef.current = true;
+    } else if (sessionStatus === 'unauthenticated') {
+      hasResolvedSessionRef.current = false;
+    }
     if (sessionStatus === 'loading') {
+      if (hasResolvedSessionRef.current) {
+        return;
+      }
       updateBootStep('session', 'running');
     } else if (sessionStatus === 'authenticated') {
       updateBootStep('session', 'success');
@@ -261,7 +271,15 @@ const ClientDashboard = () => {
   }, [sessionStatus, updateBootStep]);
 
   useEffect(() => {
+    if (membershipStatus === 'ready' || membershipStatus === 'degraded') {
+      hasResolvedMembershipRef.current = true;
+    } else if (membershipStatus === 'error') {
+      hasResolvedMembershipRef.current = false;
+    }
     if (membershipStatus === 'idle' || membershipStatus === 'loading') {
+      if (hasResolvedMembershipRef.current) {
+        return;
+      }
       updateBootStep('membership', 'running');
       return;
     }
@@ -394,7 +412,7 @@ const ClientDashboard = () => {
         setSurveyAssignmentsError(null);
       }
       try {
-        const rows = await fetchAssignedSurveysForLearner();
+        const rows = await fetchAssignedSurveysForLearner({ forceRefresh: reason !== 'boot' });
         if (!cancelled) {
           setSurveyAssignments(rows);
           setSurveyAssignmentsError(null);

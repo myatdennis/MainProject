@@ -202,16 +202,28 @@ import { resolveApiUrl } from '../config/apiBase';
 const ORG_LIST_CACHE_TTL_MS = 60 * 1000;
 type OrgListCacheEntry = { timestamp: number; data: Org[] };
 const orgListCache = new Map<string, OrgListCacheEntry>();
+type OrgPageCacheEntry = { timestamp: number; data: OrgListResponse };
+const orgPageCache = new Map<string, OrgPageCacheEntry>();
+const orgProfileCache = new Map<string, { timestamp: number; data: OrgProfileDetails | null }>();
+const orgPageInflight = new Map<string, Promise<OrgListResponse>>();
+const orgProfileInflight = new Map<string, Promise<OrgProfileDetails | null>>();
 const buildOrgListCacheKey = (params?: OrgListParams) => JSON.stringify(params ?? {});
 
 export const invalidateOrgListCache = (predicate?: (key: string) => boolean) => {
   if (!predicate) {
     orgListCache.clear();
+    orgPageCache.clear();
+    orgProfileCache.clear();
     return;
   }
   for (const key of Array.from(orgListCache.keys())) {
     if (predicate(key)) {
       orgListCache.delete(key);
+    }
+  }
+  for (const key of Array.from(orgPageCache.keys())) {
+    if (predicate(key)) {
+      orgPageCache.delete(key);
     }
   }
 };
@@ -451,7 +463,21 @@ const buildOrgQuery = (params?: OrgListParams) => {
   return qs ? `?${qs}` : '';
 };
 
-export const listOrgPage = async (params?: OrgListParams): Promise<OrgListResponse> => {
+export const listOrgPage = async (
+  params?: OrgListParams,
+  options?: { forceRefresh?: boolean },
+): Promise<OrgListResponse> => {
+  const cacheKey = buildOrgListCacheKey(params);
+  const cached = orgPageCache.get(cacheKey);
+  if (!options?.forceRefresh && cached && Date.now() - cached.timestamp < ORG_LIST_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const existing = orgPageInflight.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const run = (async () => {
   const query = buildOrgQuery(params);
   if (import.meta.env.DEV) {
     console.info('[orgService] GET /api/admin/organizations →', resolveApiUrl(`/api/admin/organizations${query}`));
@@ -459,7 +485,7 @@ export const listOrgPage = async (params?: OrgListParams): Promise<OrgListRespon
   const json = await apiRequest<{ data: any[]; pagination?: any; progress?: Record<string, any> }>(
     `/api/admin/organizations${query}`
   );
-  return {
+  const response = {
     data: (json.data || []).map(mapOrgRecord),
     pagination: {
       page: json.pagination?.page ?? params?.page ?? 1,
@@ -469,6 +495,14 @@ export const listOrgPage = async (params?: OrgListParams): Promise<OrgListRespon
     },
     progress: json.progress ?? {},
   };
+  orgPageCache.set(cacheKey, { timestamp: Date.now(), data: response });
+  orgListCache.set(cacheKey, { timestamp: Date.now(), data: response.data });
+  return response;
+  })();
+  orgPageInflight.set(cacheKey, run);
+  return run.finally(() => {
+    orgPageInflight.delete(cacheKey);
+  });
 };
 
 export const listOrgs = async (
@@ -491,16 +525,33 @@ export const listOrgs = async (
 };
 
 export const getOrgProfileDetails = async (id: string): Promise<OrgProfileDetails | null> => {
+  const cached = orgProfileCache.get(id);
+  if (cached && Date.now() - cached.timestamp < ORG_LIST_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const existing = orgProfileInflight.get(id);
+  if (existing) {
+    return existing;
+  }
+  const run = (async () => {
   try {
     const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${id}`);
     if (!json?.data) return null;
-    return mapOrgProfileResponse(json.data);
+    const response = mapOrgProfileResponse(json.data);
+    orgProfileCache.set(id, { timestamp: Date.now(), data: response });
+    return response;
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
+      orgProfileCache.set(id, { timestamp: Date.now(), data: null });
       return null;
     }
     throw error;
   }
+  })();
+  orgProfileInflight.set(id, run);
+  return run.finally(() => {
+    orgProfileInflight.delete(id);
+  });
 };
 
 export const getOrg = async (id: string): Promise<Org | null> => {
@@ -521,6 +572,7 @@ export const createOrg = async (payload: CreateOrgPayload): Promise<Org> => {
     method: 'POST',
     body: payload
   });
+  invalidateOrgListCache();
   return mapOrgRecord(json.data);
 };
 
@@ -529,6 +581,8 @@ export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> =
     method: 'PUT',
     body: patch
   });
+  invalidateOrgListCache();
+  orgProfileCache.delete(id);
   return mapOrgRecord(json.data);
 };
 
@@ -536,6 +590,7 @@ export const deleteOrg = async (id: string): Promise<void> => {
   await apiRequest(`/api/admin/organizations/${id}`, { method: 'DELETE' });
   // Invalidate org list cache so the deleted org can't reappear from stale cached list
   invalidateOrgListCache();
+  orgProfileCache.delete(id);
 };
 
 export const bulkUpdateOrgs = async (updates: Array<{ id: string; data: Partial<Org> }>): Promise<Org[]> => {
@@ -607,6 +662,7 @@ export const removeOrgMember = async (organizationId: string, membershipId: stri
     expectedStatus: [200, 204],
     rawResponse: true
   });
+  invalidateOrgListCache();
 };
 
 export type OrgInviteInput = {

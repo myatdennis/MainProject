@@ -11,6 +11,28 @@ let assignmentsTableUnavailable = false;
 let assignmentsTableWarningLogged = false;
 let assignmentsProgressColumnMissing = false;
 let assignmentsProgressWarningLogged = false;
+const ASSIGNMENTS_API_CACHE_TTL_MS = 10_000;
+const ASSIGNMENT_PERSIST_SIZE_THRESHOLD = (() => {
+  try {
+    const metaValue =
+      typeof import.meta !== 'undefined'
+        ? (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_ASSIGNMENT_PERSIST_SIZE_THRESHOLD
+        : undefined;
+    const processValue =
+      typeof process !== 'undefined' ? process.env?.ASSIGNMENT_PERSIST_SIZE_THRESHOLD : undefined;
+    const parsed = Number(metaValue ?? processValue ?? 200_000);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 200_000;
+  } catch {
+    return 200_000;
+  }
+})();
+let assignmentsApiCache:
+  | {
+      expiresAt: number;
+      rows: CourseAssignment[];
+    }
+  | null = null;
+let assignmentsApiInflight: Promise<{ rows: CourseAssignment[]; failed: boolean }> | null = null;
 
 const isAssignmentsTableMissingError = (error: unknown): boolean => {
   if (!error) {
@@ -193,7 +215,21 @@ const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => 
 
 const loadLocalAssignments = (): CourseAssignment[] => {
   try {
-    const parsed = secureGet<CourseAssignment[]>(STORAGE_KEY) ?? [];
+    let parsed = secureGet<CourseAssignment[]>(STORAGE_KEY) ?? [];
+    // If grouped payload missing or empty, attempt chunked load
+    if ((!parsed || parsed.length === 0) && secureGet<string[]>(STORAGE_INDEX_KEY)) {
+      const ids = secureGet<string[]>(STORAGE_INDEX_KEY) ?? [];
+      const reconstructed: CourseAssignment[] = [];
+      for (const id of ids) {
+        try {
+          const rec = secureGet<CourseAssignment>(`${STORAGE_KEY}_${id}`);
+          if (rec) reconstructed.push(rec);
+        } catch (e) {
+          console.warn('[assignmentStorage] Failed to load individual assignment', id, e);
+        }
+      }
+      parsed = reconstructed;
+    }
     if (!Array.isArray(parsed)) return [];
     const sanitized: CourseAssignment[] = [];
     parsed.forEach((record) => {
@@ -243,12 +279,53 @@ const loadLocalAssignments = (): CourseAssignment[] => {
   }
 };
 
+const STORAGE_INDEX_KEY = STORAGE_KEY + '_index';
+
 const persistLocalAssignments = (records: CourseAssignment[]) => {
-  secureSet(STORAGE_KEY, records);
+  try {
+    const serialized = JSON.stringify(records || []);
+    // If payload is large, avoid writing a single huge item to localStorage which may hit quota.
+    // Instead, persist an index and individual records to reduce single-key size.
+    if (serialized.length > ASSIGNMENT_PERSIST_SIZE_THRESHOLD) {
+      try {
+        // store index of IDs
+        const ids = records.map((r) => r.id);
+        secureSet(STORAGE_INDEX_KEY, ids);
+        // store each record individually
+        for (const rec of records) {
+          try {
+            secureSet(`${STORAGE_KEY}_${rec.id}`, rec);
+          } catch (e) {
+            // best-effort: if individual store fails, continue
+            console.warn('[assignmentStorage] Failed to persist individual assignment', rec.id, e);
+          }
+        }
+        // remove any legacy grouped storage
+        try {
+          secureRemove(STORAGE_KEY);
+        } catch (e) {
+          // ignore
+        }
+        return;
+      } catch (e) {
+        console.warn('[assignmentStorage] Chunked persist failed, falling back to single-key persist', e);
+      }
+    }
+
+    // Normal path: small payload
+    secureSet(STORAGE_KEY, records);
+  } catch (error) {
+    console.warn('[assignmentStorage] Failed to persist assignments to secure storage:', error);
+  }
 };
 
 const clearLocalAssignments = () => {
+  invalidateAssignmentsApiCache();
   secureRemove(STORAGE_KEY);
+};
+
+const invalidateAssignmentsApiCache = () => {
+  assignmentsApiCache = null;
 };
 
 let inflightLocalSync: Promise<void> | null = null;
@@ -470,6 +547,7 @@ export async function legacyAddAssignments(
 
       try {
         const data = await executeAssignmentsMutation('legacyAddAssignments', runUpsert);
+        invalidateAssignmentsApiCache();
         return (data ?? []).map(mapSupabaseAssignment);
       } catch (error) {
         handleAssignmentsTableMissing('legacyAddAssignments', error);
@@ -549,6 +627,15 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
 };
 
 const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
+  const now = Date.now();
+  if (assignmentsApiCache && assignmentsApiCache.expiresAt > now) {
+    return { rows: assignmentsApiCache.rows, failed: false };
+  }
+  if (assignmentsApiInflight) {
+    return assignmentsApiInflight;
+  }
+
+  const request = (async (): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
   try {
     const params = new URLSearchParams({
       include_completed: 'true',
@@ -560,9 +647,18 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
       ? response.data
       : [];
     if (!rows.length) {
+      assignmentsApiCache = {
+        expiresAt: Date.now() + ASSIGNMENTS_API_CACHE_TTL_MS,
+        rows: [],
+      };
       return { rows: [], failed: false };
     }
-    return { rows: mapAssignmentsFromApiRows(rows), failed: false };
+    const mappedRows = mapAssignmentsFromApiRows(rows);
+    assignmentsApiCache = {
+      expiresAt: Date.now() + ASSIGNMENTS_API_CACHE_TTL_MS,
+      rows: mappedRows,
+    };
+    return { rows: mappedRows, failed: false };
   } catch (error) {
     if (error instanceof RequestError && (error.status === 401 || error.status === 403)) {
       console.warn('[assignmentStorage] Remote assignments request rejected (unauthorized).');
@@ -570,7 +666,13 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
     }
     console.warn('[assignmentStorage] Failed to load assignments via API:', error);
     return { rows: [], failed: true };
+  } finally {
+    assignmentsApiInflight = null;
   }
+  })();
+
+  assignmentsApiInflight = request;
+  return request;
 };
 
 /**
@@ -779,6 +881,7 @@ export const updateAssignmentProgress = async (
 
         const record = Array.isArray(data) ? data[0] : data;
         const assignment = record ? mapSupabaseAssignment(record as SupabaseAssignmentRow) : undefined;
+        invalidateAssignmentsApiCache();
         return assignment;
       } catch (error) {
         if (handleAssignmentsTableMissing('updateAssignmentProgress', error)) {

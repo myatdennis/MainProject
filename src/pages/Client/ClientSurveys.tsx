@@ -91,14 +91,14 @@ const ClientSurveys = () => {
   const portalPath = getLearnerPortalBasePath(location.pathname);
   const highlightAssignmentId = useMemo(() => new URLSearchParams(location.search).get('assignment'), [location.search]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { forceRefresh?: boolean }) => {
     console.info('[learner-surveys] surveyListLoadStarted', {
       route: location.pathname,
     });
     setLoading(true);
     setError(null);
     try {
-      const rows = await fetchAssignedSurveysForLearner();
+      const rows = await fetchAssignedSurveysForLearner({ forceRefresh: options?.forceRefresh === true });
       console.info('[learner-surveys] surveyListLoadSucceeded', {
         fetchedCount: rows.length,
         assignedSurveyIds: rows.map((entry) => getEntrySurveyId(entry)).filter(Boolean),
@@ -137,7 +137,7 @@ const ClientSurveys = () => {
   useEffect(() => {
     const unsubscribe = subscribeSurveyAssignmentsChanged((event) => {
       console.info('[learner-surveys] assignments invalidated', event);
-      void refresh();
+      void refresh({ forceRefresh: true });
     });
     return unsubscribe;
   }, [refresh]);

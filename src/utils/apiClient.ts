@@ -17,6 +17,7 @@ import { logAuthRedirect } from './logAuthRedirect';
 import { isAdminSurface, resolveLoginPath } from './surface';
 import { getCSRFToken } from './csrfToken';
 import { isAuthBootstrapping } from '../lib/authBootstrapState';
+import { startApiRequest, endApiRequest } from './apiInstrumentation';
 
 export class ApiError extends Error {
   status: number;
@@ -57,6 +58,10 @@ type ApiRequestOptions = {
    * to satisfy TypeScript typings at call sites that still pass it.
    */
   rawResponse?: boolean;
+  /**
+   * If true (default for GET), dedupe identical in-flight requests and return the same Promise.
+   */
+  dedupe?: boolean;
 };
 
 type InternalRequestOptions = ApiRequestOptions & {};
@@ -95,6 +100,9 @@ const shouldPreserveKey = (key: string) => {
   const normalized = key.toLowerCase();
   return CAMEL_PRESERVE_KEYS.has(normalized) || normalized.endsWith('_json');
 };
+
+// Simple in-flight dedupe cache for identical requests within a short window.
+const IN_FLIGHT_REQUESTS = new Map<string, Promise<any>>();
 
 const toCamelKey = (key: string) => key.replace(/_([a-z])/g, (_, c) => (c ? c.toUpperCase() : ''));
 const toSnakeKey = (key: string) =>
@@ -831,38 +839,66 @@ const internalAuthorizedFetch = async (
 };
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const { skipAdminGateCheck, rawResponse, ...rest } = options;
-  const res = await internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
+  const { skipAdminGateCheck, rawResponse, dedupe = true, ...rest } = options;
 
-  if (rawResponse) {
-    return res as unknown as T;
+  const method = (rest.method ?? 'GET') as string;
+  const shouldDedupe = Boolean(dedupe) && method.toUpperCase() === 'GET';
+  const dedupeKey = shouldDedupe ? `${path}|${method}|${JSON.stringify(rest.body ?? null)}` : null;
+
+  if (dedupeKey && IN_FLIGHT_REQUESTS.has(dedupeKey)) {
+    return IN_FLIGHT_REQUESTS.get(dedupeKey) as Promise<T>;
   }
 
-  const contentType = res.headers.get('content-type');
+  const run = (async (): Promise<T> => {
+    const apiEntry = startApiRequest(path, method);
+    const res = await internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
+    try {
+      endApiRequest(apiEntry, res.status);
 
-  // No content
-  if (res.status === 204) return undefined as T;
-
-  // Parse JSON if possible, otherwise return text
-  if (isJsonResponse(contentType)) {
-    const envelope = await safeParseJson(res);
-    const transformed = options.noTransform ? envelope : transformKeysDeep(envelope, 'camel');
-    // Enforce envelope contract
-    if (typeof transformed === 'object' && transformed !== null) {
-      if ('ok' in transformed) {
-        if (transformed.ok) {
-          return transformed.data as T;
-        } else {
-          throw new ApiError(transformed.message || 'API error', res.status, path, transformed);
-        }
+      if (rawResponse) {
+        return res as unknown as T;
       }
+
+      const contentType = res.headers.get('content-type');
+
+      // No content
+      if (res.status === 204) return undefined as T;
+
+      // Parse JSON if possible, otherwise return text
+      if (isJsonResponse(contentType)) {
+        const envelope = await safeParseJson(res);
+        const transformed = options.noTransform ? envelope : transformKeysDeep(envelope, 'camel');
+        // Enforce envelope contract
+        if (typeof transformed === 'object' && transformed !== null) {
+          if ('ok' in transformed) {
+            if (transformed.ok) {
+              return transformed.data as T;
+            } else {
+              throw new ApiError(transformed.message || 'API error', res.status, path, transformed);
+            }
+          }
+        }
+        // Fallback for legacy responses
+        return transformed as T;
+      }
+
+      const text = await safeReadText(res);
+      return text as unknown as T;
+    } finally {
+      // cleanup handled in outer finally
     }
-    // Fallback for legacy responses
-    return transformed as T;
+  })();
+
+  if (dedupeKey) {
+    IN_FLIGHT_REQUESTS.set(dedupeKey, run);
   }
 
-  const text = await safeReadText(res);
-  return text as unknown as T;
+  try {
+    const result = await run;
+    return result;
+  } finally {
+    if (dedupeKey) IN_FLIGHT_REQUESTS.delete(dedupeKey);
+  }
 }
 
 export async function safeApiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T | null> {
@@ -970,7 +1006,6 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
       return normalized;
     } catch (error) {
       console.warn('[apiClient] Admin access check failed', error);
-      clearAuth();
       if (error instanceof ApiError) {
         throw error;
       }

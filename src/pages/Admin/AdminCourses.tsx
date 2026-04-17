@@ -52,6 +52,7 @@ import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
+import { apiRequestRaw } from '../../utils/apiClient';
 
 
 const AdminCourses = () => {
@@ -236,11 +237,9 @@ const AdminCourses = () => {
   const handleBulkDelete = useCallback(async () => {
     setDeleteLoading(true);
     try {
-      const resp = await fetch('/api/admin/courses/bulk-delete', {
+      const resp = await apiRequestRaw('/api/admin/courses/bulk-delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseIds: selectedCourses }),
-        credentials: 'include',
+        body: { courseIds: selectedCourses },
       });
       const result = await resp.json();
       if (!resp.ok || !result.success) {

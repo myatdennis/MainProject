@@ -211,7 +211,25 @@ const getBrowserOrigin = () => {
 
 const getNodeOrigin = () => {
   const fromEnv = readNodeEnv('API_ORIGIN') || readNodeEnv('API_BASE_URL');
-  if (fromEnv) return trimTrailingSlash(fromEnv);
+  if (fromEnv) {
+    // Protect against accidentally pointing the API origin at Supabase Functions
+    // (e.g. https://<project>.supabase.co/functions/v1) which would cause
+    // client requests like /api/auth/login to resolve to
+    // https://<project>.supabase.co/functions/v1/api/auth/login and trigger
+    // failing CORS preflights. Treat such values as invalid and fall back.
+    try {
+      if (isSupabaseFunctionsApiBase(fromEnv)) {
+        console.error(
+          `[apiBase] Ignoring node env API origin pointing to Supabase Functions (${fromEnv}). Falling back to ${DEFAULT_NODE_ORIGIN}`,
+        );
+        return trimTrailingSlash(DEFAULT_NODE_ORIGIN);
+      }
+    } catch (e) {
+      // If validation fails, continue and return the raw configured value below.
+    }
+    return trimTrailingSlash(fromEnv);
+  }
+
   return trimTrailingSlash(DEFAULT_NODE_ORIGIN);
 };
 

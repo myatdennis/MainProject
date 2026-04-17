@@ -1,8 +1,8 @@
 import { supabase } from './supabaseClient';
-import { getAccessToken as getStoredAccessToken } from './secureStorage';
+import { getAccessToken as getStoredAccessToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
-
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? '';
+import { buildApiUrl } from '../config/apiBase';
+import buildAuthHeaders from '../utils/requestContext';
 
 export class NotAuthenticatedError extends Error {
   constructor(message = '[apiFetch] No Supabase session/access_token available') {
@@ -32,19 +32,6 @@ export class ApiResponseError extends Error {
 
 type ApiFetchOptions = {
   timeoutMs?: number;
-};
-
-const requireApiBase = (): string => {
-  if (!API_BASE) {
-    throw new Error('[apiFetch] Missing VITE_API_BASE_URL');
-  }
-  return API_BASE;
-};
-
-const joinUrl = (base: string, path: string) => {
-  const normalizedBase = base.replace(/\/+$/, '');
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${normalizedBase}${normalizedPath}`;
 };
 
 const createAbortController = (timeoutMs?: number, upstream?: AbortSignal | null) => {
@@ -85,16 +72,13 @@ const createAbortController = (timeoutMs?: number, upstream?: AbortSignal | null
 };
 
 export async function getAccessToken(): Promise<string | null> {
-  // In E2E/dev-bypass mode, use the token stored in secureStorage instead
-  // of attempting a real Supabase session lookup (placeholder URL would fail).
-  // IMPORTANT: return null when no stored token exists; callers must use
-  // explicit x-e2e-bypass headers instead of synthetic bearer tokens.
   const isE2EBypass =
     typeof window !== 'undefined' &&
     (Boolean((window as any).__E2E_BYPASS) ||
       Boolean((window as any).__E2E_SUPABASE_CLIENT));
-  if (isE2EBypass) {
-    return getStoredAccessToken() ?? null;
+  const storedToken = getStoredAccessToken() ?? null;
+  if (isE2EBypass || storedToken) {
+    return storedToken;
   }
   const { data, error } = await supabase.auth.getSession();
   if (error) {
@@ -149,12 +133,27 @@ const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit =
 };
 
 export async function apiFetchRaw(path: string, init: RequestInit = {}, options: ApiFetchOptions = {}) {
-  const url = joinUrl(requireApiBase(), path);
+  const url = buildApiUrl(path);
   let attempt = 0;
-  let token = await ensureAccessToken();
+  let authHeaders = await buildAuthHeaders();
+  let token = authHeaders.Authorization?.replace(/^Bearer\s+/i, '') ?? null;
+  if (!token) {
+    token = await ensureAccessToken();
+    authHeaders = {
+      ...authHeaders,
+      Authorization: `Bearer ${token}`,
+    };
+  }
 
   while (attempt < 2) {
-    let requestInit = withAuthHeaders(init, token);
+    let requestInit: RequestInit = {
+      ...init,
+      headers: new Headers({
+        ...(authHeaders as Record<string, string>),
+        ...(init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : (init.headers as Record<string, string> | undefined) ?? {}),
+      }),
+    };
+    requestInit = withAuthHeaders(requestInit, token);
     requestInit = applyOrgHeadersIfNeeded(requestInit, path);
     const { controller, cleanup } = createAbortController(options.timeoutMs, init.signal ?? null);
 
@@ -187,6 +186,14 @@ export async function apiFetchRaw(path: string, init: RequestInit = {}, options:
     if (!token) {
       throw new AuthExpiredError('[apiFetch] refreshSession returned no access_token');
     }
+    setAccessToken(token, 'libApiClient:refresh');
+    if (data?.session?.refresh_token) {
+      setRefreshToken(data.session.refresh_token, 'libApiClient:refresh');
+    }
+    authHeaders = {
+      ...authHeaders,
+      Authorization: `Bearer ${token}`,
+    };
   }
 
   throw new AuthExpiredError('[apiFetch] Unable to satisfy request');

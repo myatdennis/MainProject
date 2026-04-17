@@ -199,7 +199,7 @@ const AdminOrgWorkspace = () => {
   }, [loadCrmData]);
 
   const fetchOrganizations = useCallback(
-    async (targetPage = 1) => {
+    async (targetPage = 1, options?: { forceRefresh?: boolean }) => {
       console.info('[AdminOrgWorkspace] fetch orgs', { targetPage, search: debouncedSearch, statusFilter, subscriptionFilter });
       setFetching(true);
       setLoadError(null);
@@ -213,7 +213,7 @@ const AdminOrgWorkspace = () => {
           includeProgress: true,
           status: statusFilter === 'all' ? undefined : [statusFilter],
           subscription: subscriptionFilter === 'all' ? undefined : [subscriptionFilter],
-        });
+        }, options);
         if (cancelled) return;
         setOrganizations(response.data);
         setProgressMap(response.progress ?? {});
@@ -247,7 +247,7 @@ const AdminOrgWorkspace = () => {
   }, [fetchOrganizations]);
 
   const handleRefreshOrgs = useCallback(() => {
-    fetchOrganizations(paginationMeta.page || 1);
+    fetchOrganizations(paginationMeta.page || 1, { forceRefresh: true });
   }, [fetchOrganizations, paginationMeta.page]);
 
   const loadSelectedOrgProfile = useCallback(
@@ -374,7 +374,7 @@ const AdminOrgWorkspace = () => {
 
   const handleOrganizationAdded = (organization?: Org) => {
     setShowAddOrgModal(false);
-    fetchOrganizations(1);
+    fetchOrganizations(1, { forceRefresh: true });
     void loadCrmData();
     if (organization?.id) {
       navigate(`/admin/organizations/${organization.id}`);
@@ -391,7 +391,7 @@ const AdminOrgWorkspace = () => {
   const handleOrganizationUpdated = () => {
     setShowEditOrgModal(false);
     setOrgToEdit(null);
-    fetchOrganizations(paginationMeta.page || 1);
+    fetchOrganizations(paginationMeta.page || 1, { forceRefresh: true });
     if (selectedOrgId) {
       void loadSelectedOrgProfile(selectedOrgId);
     }
@@ -438,7 +438,7 @@ const AdminOrgWorkspace = () => {
         setSelectedOrgProfile(null);
       }
 
-      await fetchOrganizations(nextPage);
+      await fetchOrganizations(nextPage, { forceRefresh: true });
 
       showToast?.('Organization deleted successfully', 'success');
       setShowDeleteModal(false);
@@ -458,7 +458,7 @@ const AdminOrgWorkspace = () => {
     try {
       console.info('[AdminOrgWorkspace] confirmArchiveOrganization', { orgToArchive });
       await orgService.updateOrg(orgToArchive, { status: 'inactive' });
-      await fetchOrganizations(paginationMeta.page || 1);
+      await fetchOrganizations(paginationMeta.page || 1, { forceRefresh: true });
       if (selectedOrgId === orgToArchive) {
         await loadSelectedOrgProfile(selectedOrgId);
       }
@@ -480,7 +480,7 @@ const AdminOrgWorkspace = () => {
     try {
       console.info('[AdminOrgWorkspace] confirmRestoreOrganization', { orgToRestore });
       await orgService.updateOrg(orgToRestore, { status: 'active' });
-      await fetchOrganizations(paginationMeta.page || 1);
+      await fetchOrganizations(paginationMeta.page || 1, { forceRefresh: true });
       if (selectedOrgId === orgToRestore) {
         await loadSelectedOrgProfile(selectedOrgId);
       }

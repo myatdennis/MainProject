@@ -5,6 +5,11 @@ import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
 import { buildOrgHeaders } from '../utils/orgHeaders';
 
 type SurveyApiRecord = any;
+const LEARNER_ASSIGNED_SURVEYS_CACHE_TTL_MS = 10_000;
+let learnerAssignedSurveysCache:
+  | { timestamp: number; data: LearnerSurveyAssignment[] }
+  | null = null;
+let learnerAssignedSurveysInFlight: Promise<LearnerSurveyAssignment[]> | null = null;
 
 const unwrapApiData = <T>(payload: T | { data?: T } | null | undefined): T | null => {
   if (payload == null) return null;
@@ -344,6 +349,7 @@ export async function assignSurvey(surveyId: string, payload: AssignSurveyPayloa
     method: 'POST',
     body,
   });
+  invalidateAssignedSurveysForLearnerCache();
   return Array.isArray(json.data) ? json.data : [];
 }
 
@@ -370,6 +376,7 @@ export async function deleteSurveyAssignment(surveyId: string, assignmentId: str
   if (opts?.hard) params.set('hard', 'true');
   const suffix = params.toString() ? `?${params.toString()}` : '';
   await request(`/api/admin/surveys/${surveyId}/assignments/${assignmentId}${suffix}`, { method: 'DELETE' });
+  invalidateAssignedSurveysForLearnerCache();
 }
 
 export type LearnerSurveyAssignment = {
@@ -377,7 +384,24 @@ export type LearnerSurveyAssignment = {
   survey: Survey | null;
 };
 
-export async function fetchAssignedSurveysForLearner(): Promise<LearnerSurveyAssignment[]> {
+export const invalidateAssignedSurveysForLearnerCache = () => {
+  learnerAssignedSurveysCache = null;
+  learnerAssignedSurveysInFlight = null;
+};
+
+export async function fetchAssignedSurveysForLearner(
+  options: { forceRefresh?: boolean } = {},
+): Promise<LearnerSurveyAssignment[]> {
+  if (!options.forceRefresh && learnerAssignedSurveysCache) {
+    const age = Date.now() - learnerAssignedSurveysCache.timestamp;
+    if (age < LEARNER_ASSIGNED_SURVEYS_CACHE_TTL_MS) {
+      return learnerAssignedSurveysCache.data;
+    }
+  }
+  if (!options.forceRefresh && learnerAssignedSurveysInFlight) {
+    return learnerAssignedSurveysInFlight;
+  }
+
   type AssignedResponse = {
     data: Array<{ assignment: any; survey?: any }>;
     meta?: { hydrationPending?: boolean };
@@ -387,29 +411,41 @@ export async function fetchAssignedSurveysForLearner(): Promise<LearnerSurveyAss
   const MAX_HYDRATION_RETRIES = 3;
   const HYDRATION_RETRY_MS = 600;
 
-  let lastJson: AssignedResponse | null = null;
-  for (let attempt = 0; attempt < MAX_HYDRATION_RETRIES; attempt += 1) {
-    const json = await request<AssignedResponse>('/api/client/surveys/assigned', {
-      headers: buildOrgHeaders(),
-    });
-    lastJson = json;
-    const entries = Array.isArray(json.data) ? json.data : [];
-    const hydrationPending = Boolean(json.meta?.hydrationPending);
-    if (entries.length > 0 || !hydrationPending || attempt === MAX_HYDRATION_RETRIES - 1) {
-      break;
+  const run = (async () => {
+    let lastJson: AssignedResponse | null = null;
+    for (let attempt = 0; attempt < MAX_HYDRATION_RETRIES; attempt += 1) {
+      const json = await request<AssignedResponse>('/api/client/surveys/assigned', {
+        headers: buildOrgHeaders(),
+      });
+      lastJson = json;
+      const entries = Array.isArray(json.data) ? json.data : [];
+      const hydrationPending = Boolean(json.meta?.hydrationPending);
+      if (entries.length > 0 || !hydrationPending || attempt === MAX_HYDRATION_RETRIES - 1) {
+        break;
+      }
+      await sleep(HYDRATION_RETRY_MS);
     }
-    await sleep(HYDRATION_RETRY_MS);
-  }
 
-  const entries = Array.isArray(lastJson?.data) ? lastJson!.data : [];
-  return entries
-    .map((entry) => {
-      const assignment = mapAssignmentsFromApiRows(entry.assignment ? [entry.assignment] : [])?.[0];
-      const survey = entry.survey ? mapSurveyRecord(entry.survey) : null;
-      if (!assignment) return null;
-      return { assignment, survey };
-    })
-    .filter((entry): entry is LearnerSurveyAssignment => Boolean(entry));
+    const entries = Array.isArray(lastJson?.data) ? lastJson!.data : [];
+    const normalized = entries
+      .map((entry) => {
+        const assignment = mapAssignmentsFromApiRows(entry.assignment ? [entry.assignment] : [])?.[0];
+        const survey = entry.survey ? mapSurveyRecord(entry.survey) : null;
+        if (!assignment) return null;
+        return { assignment, survey };
+      })
+      .filter((entry): entry is LearnerSurveyAssignment => Boolean(entry));
+    learnerAssignedSurveysCache = {
+      timestamp: Date.now(),
+      data: normalized,
+    };
+    return normalized;
+  })();
+
+  learnerAssignedSurveysInFlight = run.finally(() => {
+    learnerAssignedSurveysInFlight = null;
+  });
+  return learnerAssignedSurveysInFlight;
 }
 
 export async function fetchHdiParticipantReport(
@@ -486,6 +522,7 @@ export async function submitLearnerSurveyResponse(
     body,
     headers: buildOrgHeaders(),
   });
+  invalidateAssignedSurveysForLearnerCache();
   return json.data ?? null;
 }
 

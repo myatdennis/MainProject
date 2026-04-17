@@ -63,6 +63,12 @@ type RefreshDeps = {
   isNavigatorOffline: () => boolean;
 };
 
+export let REFRESH_MANAGER_ACTIVE = false;
+
+export const setRefreshManagerActive = (active: boolean) => {
+  REFRESH_MANAGER_ACTIVE = active;
+};
+
 export const runRefreshTokenCallback = async (
   options: RefreshOptions = {},
   deps: RefreshDeps,

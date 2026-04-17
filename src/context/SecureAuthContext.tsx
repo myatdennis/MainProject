@@ -42,7 +42,7 @@ import {
   type ActiveOrgSource,
   type OrgResolutionStatus,
 } from './organizationResolution';
-import { runRefreshTokenCallback } from './tokenRefresh';
+import { runRefreshTokenCallback, setRefreshManagerActive } from './tokenRefresh';
 import { createAuthActions } from './authActions';
 import {
   buildUserSessionFromPayload,
@@ -295,6 +295,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastAppliedActiveOrgIdRef = useRef<string | null>(null);
   const membershipFetchRequestIdRef = useRef(0);
   const membershipCacheRef = useRef<UserMembership[]>([]);
+  const rawRequestInflightRef = useRef<Map<string, Promise<unknown>>>(new Map());
   const membershipRetryTimerRef = useRef<number | null>(null);
   const membershipRetryAttemptRef = useRef(0);
   type FetchServerSessionFn = (options?: {
@@ -640,6 +641,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const requestJsonWithClock = useCallback(
     async <T,>(path: string, options: Parameters<typeof apiRequestRaw>[1] = {}): Promise<T> => {
+      const method = String(options?.method ?? 'GET').toUpperCase();
+      const shouldDedupe =
+        method === 'GET' &&
+        (path === '/auth/session' || path === '/api/auth/session' || path === '/api/admin/me');
+
+      const execute = async (): Promise<T> => {
       let response: Response;
       try {
         response = await apiRequestRaw(path, options);
@@ -677,6 +684,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       return payload as T;
+      };
+
+      if (!shouldDedupe) {
+        return execute();
+      }
+
+      const inflightKey = `${method}:${path}`;
+      const existing = rawRequestInflightRef.current.get(inflightKey);
+      if (existing) {
+        return existing as Promise<T>;
+      }
+
+      const requestPromise = execute().finally(() => {
+        rawRequestInflightRef.current.delete(inflightKey);
+      });
+      rawRequestInflightRef.current.set(inflightKey, requestPromise as Promise<unknown>);
+      return requestPromise;
     },
     [captureServerClock],
   );
@@ -1147,6 +1171,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     refreshTokenCallbackRef.current = refreshTokenCallback;
+    // Mark this context as the central refresh manager so lower-level
+    // HTTP helpers defer refresh attempts to us and avoid duplicate
+    // concurrent /api/auth/refresh requests.
+    try {
+      setRefreshManagerActive(true);
+    } catch (e) {
+      // ignore in test environments where module mocks may differ
+    }
+    return () => {
+      try {
+        setRefreshManagerActive(false);
+      } catch (e) {
+        // ignore
+      }
+    };
   }, [refreshTokenCallback]);
 
   const runBootstrap = useCallback(

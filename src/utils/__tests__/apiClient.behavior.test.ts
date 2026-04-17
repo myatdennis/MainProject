@@ -161,6 +161,21 @@ describe('apiClient', () => {
     );
   });
 
+  it('never resolves auth requests through a Supabase functions base URL', async () => {
+    __setApiBaseUrlOverride('https://eprsgmfzqjptfywoecuy.supabase.co/functions/v1');
+    const { apiRequest } = await loadApiClient();
+    fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
+
+    await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'test@example.com', password: 'secret' },
+    });
+
+    const [url] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain('/api/auth/login');
+    expect(String(url)).not.toContain('/functions/v1/api/auth/login');
+  });
+
   it('falls back to /api proxy in dev when base URL missing', async () => {
   vi.stubEnv('MODE', 'development');
   vi.stubEnv('DEV', true as any);

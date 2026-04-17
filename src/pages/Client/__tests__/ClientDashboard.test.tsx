@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import ClientDashboard from '../ClientDashboard';
 
 const mockNavigate = vi.fn();
 const {
+  secureAuthState,
   getCourseMock,
   getAllCoursesMock,
   getLearnerCatalogStateMock,
@@ -12,6 +13,14 @@ const {
   buildLearnerProgressSnapshotMock,
   loadStoredCourseProgressMock,
 } = vi.hoisted(() => ({
+  secureAuthState: {
+    value: {
+      sessionStatus: 'authenticated',
+      membershipStatus: 'ready',
+      membershipCount: 0,
+      activeOrgId: 'org-1',
+    },
+  },
   getCourseMock: vi.fn(),
   getAllCoursesMock: vi.fn(() => []),
   getLearnerCatalogStateMock: vi.fn(() => ({
@@ -51,11 +60,7 @@ vi.mock('../../../hooks/useUserProfile', () => ({
 }));
 
 vi.mock('../../../context/SecureAuthContext', () => ({
-  useSecureAuth: () => ({
-    sessionStatus: 'authenticated',
-    membershipStatus: 'ready',
-    membershipCount: 0,
-  }),
+  useSecureAuth: () => secureAuthState.value,
 }));
 
 vi.mock('../../../utils/assignmentStorage', () => ({
@@ -106,6 +111,12 @@ describe('ClientDashboard', () => {
 
   beforeEach(() => {
     mockNavigate.mockReset();
+    secureAuthState.value = {
+      sessionStatus: 'authenticated',
+      membershipStatus: 'ready',
+      membershipCount: 0,
+      activeOrgId: 'org-1',
+    };
     getAssignmentsForUserMock.mockClear();
     getCourseMock.mockReset();
     getAllCoursesMock.mockReset();
@@ -134,6 +145,31 @@ describe('ClientDashboard', () => {
 
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
+  });
+
+  it('keeps the dashboard shell mounted after auth and membership have already resolved once', async () => {
+    const view = renderDashboard();
+
+    expect(await screen.findByRole('button', { name: /Go to full learning hub/i })).toBeInTheDocument();
+
+    secureAuthState.value = {
+      ...secureAuthState.value,
+      sessionStatus: 'loading',
+      membershipStatus: 'loading',
+    };
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/client/dashboard']}>
+        <Routes>
+          <Route path="/client/dashboard" element={<ClientDashboard />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Go to full learning hub/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Preparing your portal/i)).not.toBeInTheDocument();
   });
 
   it('treats a 100% snapshot as completed even if assignment status is still in-progress', async () => {

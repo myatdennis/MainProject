@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-16T18:59:31.172Z",
+        "published_at": "2026-04-17T01:14:10.177Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -154,49 +154,292 @@
     ]
   ],
   "documents": [],
-  "surveys": [],
-  "surveyAssignments": [],
-  "lessonReflections": [],
-  "huddlePosts": [
+  "surveys": [
     [
-      "a551b230-c6ff-44c2-b983-ba847c703583",
+      "pulse-2025",
       {
-        "id": "a551b230-c6ff-44c2-b983-ba847c703583",
-        "organization_id": "demo-sandbox-org",
-        "user_id": "00000000-0000-0000-0000-000000000002",
-        "title": "Launch readiness huddle",
-        "body": "Smoke test post body",
-        "topics": [
-          "launch"
+        "id": "pulse-2025",
+        "title": "2025 DEI Pulse Check",
+        "description": "Quick quarterly sentiment survey for the leadership cohort.",
+        "type": "pulse-check",
+        "status": "published",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
         ],
-        "locked_at": null,
-        "locked_by_user_id": null,
-        "pinned_at": null,
-        "pinned_by_user_id": null,
-        "hidden_at": null,
-        "hidden_by_user_id": null,
-        "created_at": "2026-04-16T19:24:07.958Z",
-        "updated_at": "2026-04-16T19:24:07.958Z",
-        "deleted_at": null
+        "assigned_to": {
+          "organizationIds": [
+            "org-huddle",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-04-17T01:14:20.210Z",
+        "updated_at": "2026-04-17T01:14:20.210Z"
       }
-    ]
-  ],
-  "huddleComments": [
+    ],
     [
-      "42db23ae-1202-47b5-9b8d-cd6556bb0e5f",
+      "climate-2025-q1",
       {
-        "id": "42db23ae-1202-47b5-9b8d-cd6556bb0e5f",
-        "post_id": "a551b230-c6ff-44c2-b983-ba847c703583",
-        "organization_id": "demo-sandbox-org",
-        "parent_comment_id": null,
-        "user_id": "00000000-0000-0000-0000-000000000002",
-        "body": "First reply",
-        "created_at": "2026-04-16T19:24:08.009Z",
-        "updated_at": "2026-04-16T19:24:08.009Z",
-        "deleted_at": null
+        "id": "climate-2025-q1",
+        "title": "Q1 2025 Climate Assessment",
+        "description": "Quarterly organizational climate and culture assessment",
+        "type": "climate-assessment",
+        "status": "active",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "1",
+            "4",
+            "5",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-04-17T01:14:20.211Z",
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "inclusion-index-2025",
+      {
+        "id": "inclusion-index-2025",
+        "title": "Annual Inclusion Index",
+        "description": "Comprehensive inclusion measurement with benchmarking",
+        "type": "inclusion-index",
+        "status": "draft",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-04-17T01:14:20.211Z",
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "equity-lens-pilot",
+      {
+        "id": "equity-lens-pilot",
+        "title": "Equity Lens Pilot Study",
+        "description": "Pilot assessment of equity in organizational practices",
+        "type": "equity-lens",
+        "status": "completed",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "3",
+            "2",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-04-17T01:14:20.211Z",
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "leadership-360",
+      {
+        "id": "leadership-360",
+        "title": "Leadership 360 Assessment",
+        "description": "Multi-rater feedback for inclusive leadership development",
+        "type": "custom",
+        "status": "paused",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "1",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-04-17T01:14:20.211Z",
+        "updated_at": "2026-04-17T01:14:20.211Z"
       }
     ]
   ],
+  "surveyAssignments": [
+    [
+      "pulse-2025",
+      {
+        "survey_id": "pulse-2025",
+        "organization_ids": [
+          "org-huddle",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "climate-2025-q1",
+      {
+        "survey_id": "climate-2025-q1",
+        "organization_ids": [
+          "1",
+          "4",
+          "5",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "inclusion-index-2025",
+      {
+        "survey_id": "inclusion-index-2025",
+        "organization_ids": [
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "equity-lens-pilot",
+      {
+        "survey_id": "equity-lens-pilot",
+        "organization_ids": [
+          "3",
+          "2",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ],
+    [
+      "leadership-360",
+      {
+        "survey_id": "leadership-360",
+        "organization_ids": [
+          "1",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-04-17T01:14:20.211Z"
+      }
+    ]
+  ],
+  "lessonReflections": [],
+  "huddlePosts": [],
+  "huddleComments": [],
   "huddleReactions": [],
   "huddleReports": [],
   "organizations": []

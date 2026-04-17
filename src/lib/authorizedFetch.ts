@@ -1,5 +1,6 @@
 import { getSupabase } from './supabaseClient';
 import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
+import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 import { resolveApiUrl } from '../config/apiBase';
 
@@ -273,12 +274,19 @@ export default async function authorizedFetch(
       const isRefreshEndpoint = extractPathname(url).startsWith('/api/auth/refresh');
 
       if (!isRefreshEndpoint) {
-        // Always attempt a refresh on first 401 for authenticated requests.
-        const refreshed = await refreshAuthToken();
-        if (refreshed) {
-          attempt += 1;
-          console.info('[authorizedFetch] token refreshed after 401, retrying request', { url: extractPathname(url) });
-          continue;
+        // If a central refresh manager (SecureAuthContext) is active, do not
+        // initiate a refresh here to avoid duplicate concurrent refresh calls.
+        // Let the auth context manage refresh and retry logic.
+        if (!REFRESH_MANAGER_ACTIVE) {
+          // Always attempt a refresh on first 401 for authenticated requests.
+          const refreshed = await refreshAuthToken();
+          if (refreshed) {
+            attempt += 1;
+            console.info('[authorizedFetch] token refreshed after 401, retrying request', { url: extractPathname(url) });
+            continue;
+          }
+        } else {
+          if (devMode) console.debug('[authorizedFetch] refresh manager active — deferring refresh to auth context');
         }
       }
 

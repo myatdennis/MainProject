@@ -45,11 +45,14 @@ const createAuthState = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const renderGuard = (authOverrides: Record<string, unknown> = {}) => {
+const renderGuard = (
+  authOverrides: Record<string, unknown> = {},
+  options: { mode?: 'admin' | 'lms' | 'client'; initialEntries?: string[] } = {},
+) => {
   mockUseSecureAuth.mockReturnValue(createAuthState(authOverrides));
   render(
-    <MemoryRouter initialEntries={['/client-portal']}>
-      <RequireAuth mode="lms">
+    <MemoryRouter initialEntries={options.initialEntries ?? ['/client-portal']}>
+      <RequireAuth mode={options.mode ?? 'lms'}>
         <div data-testid="protected-content">allowed</div>
       </RequireAuth>
     </MemoryRouter>,
@@ -101,20 +104,25 @@ describe('RequireAuth guard', () => {
     expect(reloadSession).toHaveBeenCalledWith({ surface: 'lms', force: true });
   });
 
-  it('refreshes session for new surface auth when landing on a new surface', async () => {
+  it('does not reload session when auth and org resolution are already ready for the surface', async () => {
     const loadSession = vi.fn().mockResolvedValue(true);
-    renderGuard({
+    renderGuard(
+      {
       authStatus: 'authenticated',
       sessionStatus: 'authenticated',
-      isAuthenticated: { admin: true, lms: false, client: false },
-      surfaceAuthStatus: { admin: 'ready', lms: 'idle', client: 'ready' },
+      isAuthenticated: { admin: false, lms: false, client: true },
+      surfaceAuthStatus: { admin: 'ready', lms: 'ready', client: 'idle' },
       loadSession,
-      user: { id: 'user-1', role: 'admin', email: 'admin@example.com' },
-      memberships: [],
-      hasActiveMembership: false,
-    });
+      user: { id: 'user-1', role: 'learner', email: 'learner@example.com' },
+      memberships: [{ orgId: 'org-1', status: 'active' }],
+      activeOrgId: 'org-1',
+      hasActiveMembership: true,
+    },
+      { mode: 'client', initialEntries: ['/client/dashboard'] },
+    );
 
-    await waitFor(() => expect(loadSession).toHaveBeenCalledWith({ surface: 'lms' }));
+    await waitFor(() => expect(screen.getByTestId('protected-content')).toBeInTheDocument());
+    expect(loadSession).not.toHaveBeenCalled();
   });
 
   it('does not request session load while auth bootstrap is still in progress', async () => {

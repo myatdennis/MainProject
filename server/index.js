@@ -106,6 +106,7 @@ import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQu
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
 import { getSupabaseConfig } from './config/supabaseConfig.js';
+import { AsyncLocalStorage } from 'async_hooks';
 import {
   normalizeModuleLessonPayloads,
   normalizeLessonOrder,
@@ -1081,6 +1082,42 @@ const app = express();
 app.use((req, res, next) => {
   logger.info('[global-entry] request', { method: req.method, url: req.url, requestId: req.requestId || null });
   next();
+});
+// AsyncLocalStorage to attach per-request metrics (query count, timings)
+const asyncLocalStorage = new AsyncLocalStorage();
+
+// Middleware to initialize per-request metrics and log them on response finish.
+app.use((req, res, next) => {
+  const store = {
+    requestId: req.headers['x-request-id'] || `local-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+    startAt: Date.now(),
+    metrics: {
+      queries: 0,
+      queryDetails: [],
+    },
+  };
+
+  asyncLocalStorage.run(store, () => {
+    res.on('finish', () => {
+      try {
+        const s = asyncLocalStorage.getStore();
+        if (s && s.metrics) {
+          const durationMs = Date.now() - (s.startAt || Date.now());
+          console.info('[request.metrics]', {
+            path: req.path,
+            method: req.method,
+            status: res.statusCode,
+            durationMs,
+            queries: s.metrics.queries || 0,
+            queryTop: (s.metrics.queryDetails || []).slice(0,5),
+          });
+        }
+      } catch (err) {
+        console.warn('[request.metrics] logging failed', err?.message ?? err);
+      }
+    });
+    next();
+  });
 });
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
@@ -5956,8 +5993,27 @@ const withSupabaseTimeout = (promise, label = 'supabase_query', timeoutMs = SUPA
 /** Runs a Supabase query builder fn with timeout + schema retry.
  *  Returns the full PostgREST result object { data, error, count }.
  *  Throws on error or timeout. */
-const runTimedQuery = (label, buildQuery, timeoutMs = SUPABASE_QUERY_TIMEOUT_MS) =>
-  withSupabaseTimeout(runSupabaseQueryWithRetry(label, buildQuery), label, timeoutMs);
+const runTimedQuery = async (label, buildQuery, timeoutMs = SUPABASE_QUERY_TIMEOUT_MS) => {
+  const store = asyncLocalStorage.getStore?.() ?? null;
+  const start = Date.now();
+  try {
+    const result = await withSupabaseTimeout(runSupabaseQueryWithRetry(label, buildQuery), label, timeoutMs);
+    return result;
+  } finally {
+    const duration = Date.now() - start;
+    try {
+      if (store && store.metrics) {
+        store.metrics.queries = (store.metrics.queries || 0) + 1;
+        (store.metrics.queryDetails = store.metrics.queryDetails || []).push({ label, durationMs: duration });
+      } else {
+        // log isolated query if no request context
+        console.info('[timed.query]', { label, durationMs: duration });
+      }
+    } catch (err) {
+      console.warn('[timed.query] metrics update failed', err?.message ?? err);
+    }
+  }
+};
 
 const SUPABASE_TRANSIENT_MAX_ATTEMPTS = Math.min(
   Math.max(Number(process.env.SUPABASE_TRANSIENT_MAX_ATTEMPTS || 2), 1),

@@ -243,7 +243,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   const requestSessionLoad = useCallback(
     (reason: 'initial' | 'retry' | 'surface_transition', options?: { force?: boolean }) => {
-      if (!options?.force && sessionStatus === 'authenticated') {
+      if (!options?.force && (sessionStatus === 'authenticated' || hasSession)) {
         return;
       }
       if (sessionRequestRef.current) {
@@ -259,7 +259,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
           sessionRequestRef.current = false;
         });
     },
-    [loadSession, logGuardEvent, mode, sessionStatus],
+    [hasSession, loadSession, logGuardEvent, mode, sessionStatus],
   );
 
   useEffect(() => {
@@ -705,7 +705,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     logGuardEvent,
   ]);
 
-  const surfaceCheckPending = sessionAuthenticated && hasSession && surfaceState === 'idle';
+  const surfaceCheckPending = sessionAuthenticated && hasSession && effectiveSurfaceState === 'idle';
 
   useEffect(() => {
     if (!surfaceCheckPending) {

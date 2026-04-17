@@ -20,6 +20,20 @@ const devLogEnabled =
   typeof process !== 'undefined'
     ? process.env.NODE_ENV !== 'production'
     : Boolean((import.meta as any)?.env?.DEV);
+const NOTIFICATION_CACHE_TTL_MS = 10_000;
+
+type NotificationCacheEntry = {
+  expiresAt: number;
+  items: Notification[];
+};
+
+const learnerNotificationCache = new Map<string, NotificationCacheEntry>();
+const learnerNotificationInflight = new Map<string, Promise<Notification[]>>();
+const adminNotificationCache = new Map<string, { expiresAt: number; result: { notifications: Notification[]; notificationsDisabled: boolean } }>();
+const adminNotificationInflight = new Map<
+  string,
+  Promise<{ notifications: Notification[]; notificationsDisabled: boolean }>
+>();
 
 const logNotificationFetch = (label: string, path: string) => {
   if (!devLogEnabled) return;
@@ -48,6 +62,18 @@ const handleSchemaMissing = <T>(error: unknown, label: string, fallback: T) => {
 const apiFetch = async <T>(label: string, path: string, options: any = {}) => {
   logNotificationFetch(label, path);
   return apiRequest<T>(path, options);
+};
+
+const buildCacheKey = (prefix: string, params?: URLSearchParams) => {
+  const suffix = params?.toString() ?? '';
+  return `${prefix}:${suffix}`;
+};
+
+const invalidateNotificationCaches = () => {
+  learnerNotificationCache.clear();
+  learnerNotificationInflight.clear();
+  adminNotificationCache.clear();
+  adminNotificationInflight.clear();
 };
 
 const mapNotification = (record: any): Notification => ({
@@ -79,8 +105,18 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
   if (opts?.userId) params.set('user_id', opts.userId);
 
   const path = `/api/admin/notifications${params.toString() ? `?${params.toString()}` : ''}`;
+  const cacheKey = buildCacheKey('admin', params);
+  const cached = adminNotificationCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
+  }
+  const inflight = adminNotificationInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
 
-  try {
+  const request = (async () => {
+    try {
   const json = await apiFetch<any[]>('admin.list', path);
     if (devLogEnabled) {
       try {
@@ -93,10 +129,15 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
     const srcArr = (Array.isArray(raw) ? raw : Array.isArray((raw as any)?.data) ? (raw as any).data : []) as any[];
     const items: Notification[] = (srcArr ?? []).map(mapNotification);
 
-    return {
+    const result = {
       notifications: items.sort((a: Notification, b: Notification) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
       notificationsDisabled: false,
     };
+    adminNotificationCache.set(cacheKey, {
+      expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
+      result,
+    });
+    return result;
   } catch (error) {
     if (devLogEnabled) {
       try {
@@ -106,11 +147,22 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
       }
     }
     const fallback = handleSchemaMissing(error, 'admin.list', [] as Notification[]);
-    return {
+    const result = {
       notifications: fallback,
       notificationsDisabled: true,
     };
+    adminNotificationCache.set(cacheKey, {
+      expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
+      result,
+    });
+    return result;
+  } finally {
+    adminNotificationInflight.delete(cacheKey);
   }
+  })();
+
+  adminNotificationInflight.set(cacheKey, request);
+  return request;
 };
 
 export const listNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
@@ -130,6 +182,7 @@ export const addNotification = async (notification: Omit<Notification, 'id' | 'c
     }
   });
   const raw = (json as any)?.data ?? json;
+  invalidateNotificationCaches();
   return mapNotification(raw);
 };
 
@@ -141,6 +194,7 @@ export const markNotificationRead = async (id: string, read = true) => {
   const raw = (json as any)?.data ?? json;
 
   if (!raw) {
+    invalidateNotificationCaches();
     return mapNotification({
       id,
       title: 'Notification',
@@ -149,6 +203,7 @@ export const markNotificationRead = async (id: string, read = true) => {
     });
   }
 
+  invalidateNotificationCaches();
   return mapNotification(raw);
 };
 
@@ -158,6 +213,7 @@ export const deleteNotification = async (id: string) => {
     expectedStatus: [200, 204],
     rawResponse: true
   });
+  invalidateNotificationCaches();
 };
 
 export const clearNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
@@ -185,16 +241,55 @@ const buildLearnerNotificationsPath = (opts?: { limit?: number; unreadOnly?: boo
 };
 
 export const listLearnerNotifications = async (opts?: { limit?: number; unreadOnly?: boolean }) => {
-  const path = buildLearnerNotificationsPath(opts);
-  try {
-  const json = await apiFetch<any[]>('learner.list', path);
-  if (json && (json as any).notificationsDisabled) return [] as Notification[];
-  const raw = (json as any)?.data ?? json;
-    const srcArr = (Array.isArray(raw) ? raw : Array.isArray((raw as any)?.data) ? (raw as any).data : []) as any[];
-    return (srcArr ?? []).map(mapNotification);
-  } catch (error) {
-    return handleSchemaMissing(error, 'learner.list', [] as Notification[]);
+  const params = new URLSearchParams();
+  if (opts?.limit && Number.isFinite(opts.limit)) {
+    params.set('limit', String(opts.limit));
   }
+  if (opts?.unreadOnly) {
+    params.set('unread_only', 'true');
+  }
+  const cacheKey = buildCacheKey('learner', params);
+  const cached = learnerNotificationCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.items;
+  }
+  const inflight = learnerNotificationInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+  const path = buildLearnerNotificationsPath(opts);
+  const request = (async () => {
+    try {
+      const json = await apiFetch<any[]>('learner.list', path);
+      if (json && (json as any).notificationsDisabled) {
+        learnerNotificationCache.set(cacheKey, {
+          expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
+          items: [],
+        });
+        return [] as Notification[];
+      }
+      const raw = (json as any)?.data ?? json;
+      const srcArr = (Array.isArray(raw) ? raw : Array.isArray((raw as any)?.data) ? (raw as any).data : []) as any[];
+      const items = (srcArr ?? []).map(mapNotification);
+      learnerNotificationCache.set(cacheKey, {
+        expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
+        items,
+      });
+      return items;
+    } catch (error) {
+      const fallback = handleSchemaMissing(error, 'learner.list', [] as Notification[]);
+      learnerNotificationCache.set(cacheKey, {
+        expiresAt: Date.now() + NOTIFICATION_CACHE_TTL_MS,
+        items: fallback,
+      });
+      return fallback;
+    } finally {
+      learnerNotificationInflight.delete(cacheKey);
+    }
+  })();
+
+  learnerNotificationInflight.set(cacheKey, request);
+  return request;
 };
 
 export const markLearnerNotificationRead = async (id: string) => {
@@ -207,10 +302,12 @@ export const markLearnerNotificationRead = async (id: string) => {
       },
     );
     if (json && (json as any).notificationsDisabled) {
+      invalidateNotificationCaches();
       return mapNotification({ id, title: 'Notification', created_at: new Date().toISOString(), read: true });
     }
     const raw = (json as any)?.data ?? json;
     if (!raw) {
+      invalidateNotificationCaches();
       return mapNotification({
         id,
         title: 'Notification',
@@ -218,6 +315,7 @@ export const markLearnerNotificationRead = async (id: string) => {
         read: true,
       });
     }
+    invalidateNotificationCaches();
     return mapNotification(raw);
   } catch (error) {
     return handleSchemaMissing(
@@ -238,6 +336,7 @@ export const deleteLearnerNotification = async (id: string) => {
     expectedStatus: [200, 204],
     rawResponse: true,
   });
+  invalidateNotificationCaches();
 };
 
 export default {
