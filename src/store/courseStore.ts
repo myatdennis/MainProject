@@ -1413,6 +1413,40 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+// Lightweight instrumentation helper used to time and log awaited steps.
+// Keeps logs compact and avoids leaking secrets — only logs safe metadata.
+async function instrumentStep<T>(
+  name: string,
+  meta: Record<string, unknown>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    if (import.meta.env?.DEV) {
+      console.debug('[courseStore.instrument] start', { step: name, meta, ts: startedAt });
+    } else {
+      console.info('[courseStore.instrument] start', { step: name, meta });
+    }
+    const result = await fn();
+    const durationMs = Date.now() - startedAt;
+    // coarse emptiness check
+    let empty = false as boolean | null;
+    if (result === null || result === undefined) empty = true;
+    else if (Array.isArray(result)) empty = result.length === 0;
+    else if (typeof result === 'object' && result && Object.keys(result).length === 0) empty = true;
+    if (import.meta.env?.DEV) {
+      console.debug('[courseStore.instrument] success', { step: name, durationMs, empty, meta });
+    } else {
+      console.info('[courseStore.instrument] success', { step: name, durationMs, empty });
+    }
+    return result;
+  } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    console.warn('[courseStore.instrument] failure', { step: name, durationMs, meta, error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
+}
+
 const LEARNER_SESSION_WAIT_DELAYS_MS = [50, 100, 200, 400, 800, 1200] as const;
 
 const normalizeIdentityValue = (value: unknown): string | null => {
@@ -1439,7 +1473,7 @@ const waitForLearnerApiSession = async (userId: string | null, reason: string): 
     let token = getStoredAccessToken();
     if (!token) {
       try {
-        token = await getApiAccessToken();
+        token = await instrumentStep('getApiAccessToken', { attempt, userId: normalizedUserId }, () => getApiAccessToken());
       } catch (error) {
         if (import.meta.env?.DEV) {
           console.debug('[courseStore] learner_session_token_probe_failed', { reason, attempt, error });
@@ -1931,11 +1965,19 @@ const FALLBACK_RUNTIME_STATUS = {
   lastError: null as string | null,
 };
 
+// Maximum time to allow a single init run before force-unblocking the UI.
+// Defensive: prevents the admin page from hanging indefinitely if an awaited
+// helper (network call, bridge) never resolves. The inner init still runs
+// in the background, but the UI will be transitioned to a terminal state so
+// users can continue interacting and trigger retries.
+const INIT_TIMEOUT_MS = 15_000;
+
 // Store management functions
 export const courseStore = {
   setEditingCourseId: (id: string | null): void => {
     editingCourseId = id ?? null;
   },
+
   init: (options?: { reason?: string | null; surface?: SessionSurface }): Promise<void> => {
     const reason = options?.reason ?? null;
     const initReason = reason ?? 'unknown';
@@ -1970,7 +2012,9 @@ export const courseStore = {
   // reuse the same in-flight operation. Assigning to initPromise before
   // the async work avoids a tiny race window that could spawn two in-flight
   // initializations under heavy concurrency.
-  initPromise = (async () => {
+  // We wrap the real init IIFE in a race against a timeout so the UI cannot
+  // remain stuck in 'loading' forever if a helper never resolves.
+  const actualInit = (async () => {
     let restrictToOrg = true;
     let canUseAdminApi = false;
     let adminLoadStatus: AdminLoadStatus = 'skipped';
@@ -1998,7 +2042,7 @@ export const courseStore = {
       }
       let orgContext = resolveOrgContext();
       if (orgContext.status === 'loading') {
-        orgContext = await waitForOrgContextResolution(orgContext, initReason);
+        orgContext = await instrumentStep('waitForOrgContextResolution', { initialStatus: orgContext.status, reason: initReason }, () => waitForOrgContextResolution(orgContext, initReason));
       }
       if (orgContext.status === 'error') {
         adminLoadStatus = 'error';
@@ -2021,7 +2065,7 @@ export const courseStore = {
             ? options.surface === 'admin'
             : isAdminSurface();
       if (adminSurfaceDetected && !orgContext.role) {
-        orgContext = await waitForRoleResolution(orgContext, initReason);
+        orgContext = await instrumentStep('waitForRoleResolution', { reason: initReason }, () => waitForRoleResolution(orgContext, initReason));
         if (!orgContext.role) {
           adminLoadStatus = 'error';
           adminLoadError = 'role_context_unavailable';
@@ -2042,7 +2086,7 @@ export const courseStore = {
           lastError: null,
           detail: null,
         });
-        const learnerSessionReady = await waitForLearnerApiSession(orgContext.userId, 'catalog_init');
+  const learnerSessionReady = await instrumentStep('waitForLearnerApiSession', { userId: orgContext.userId, reason: 'catalog_init' }, () => waitForLearnerApiSession(orgContext.userId, 'catalog_init'));
         if (!learnerSessionReady) {
           adminLoadStatus = 'error';
           adminLoadError = 'auth_session_unavailable';
@@ -2058,14 +2102,26 @@ export const courseStore = {
       }
       // Org scoping is determined directly from the resolved context — no deferred bootstrap needed.
       let runtimeStatus = getRuntimeStatus() ?? FALLBACK_RUNTIME_STATUS;
-      try {
-        const refreshedStatus = await refreshRuntimeStatus();
-        if (refreshedStatus) {
-          runtimeStatus = refreshedStatus;
-        }
-      } catch (statusError) {
-        console.warn('[courseStore.init] Runtime status refresh failed; using last known snapshot.', statusError);
-      }
+      // Runtime status is diagnostic-only for the course catalog.  The real
+      // course endpoints are the source of truth for availability/auth, so the
+      // /health probe must never sit on the first-render critical path for
+      // either admin or learner surfaces.
+      void instrumentStep(
+        'refreshRuntimeStatus',
+        {
+          reason: initReason,
+          mode: adminMode && adminSurfaceDetected ? 'background_admin' : 'background_noncritical',
+        },
+        () => refreshRuntimeStatus(),
+      )
+        .then((refreshedStatus) => {
+          if (refreshedStatus) {
+            runtimeStatus = refreshedStatus;
+          }
+        })
+        .catch((statusError) => {
+          console.warn('[courseStore.init] Background runtime status refresh failed; continuing with course catalog fetch.', statusError);
+        });
       runtimeStatus = runtimeStatus ?? FALLBACK_RUNTIME_STATUS;
       // supabaseOperational is checked implicitly through apiReachable/supabaseHealthy downstream
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
@@ -2081,7 +2137,8 @@ export const courseStore = {
       // perfectly healthy.
       //
       // For admin surfaces: always attempt the API call.
-      // For learner surfaces: respect the health probe (network gating).
+      // For learner surfaces: do not block the first fetch on the health probe;
+      // the actual course/assignment requests are the authoritative signal.
       canUseAdminApi = adminMode && (adminSurfaceDetected ? true : apiReachable);
       if (import.meta.env?.DEV) {
         console.info('[courseStore.init] runtime_status_snapshot', { apiReachable, apiAuthRequired, adminMode, canUseAdminApi });
@@ -2129,7 +2186,7 @@ export const courseStore = {
               endpoint: '/api/admin/courses?includeStructure=true&includeLessons=true',
             });
           }
-          dbCourses = await getAllCoursesFromDatabase();
+          dbCourses = await instrumentStep<Course[]>('getAllCoursesFromDatabase', { adminSurfaceDetected, orgId: orgContext.orgId ?? null }, () => getAllCoursesFromDatabase());
           const rawApiCount = dbCourses.length;
           console.info('[courseStore.init] admin_courses_raw_response', {
             rawCount: rawApiCount,
@@ -2260,16 +2317,14 @@ export const courseStore = {
         const degradedCatalogSnapshot = { ...courses };
         try {
           console.debug('[COURSE RESET]', { caller: 'courseStore.init/degraded-pre-fetch-flush', beforeCount: Object.keys(courses).length });
-          dbCourses = await getAllCoursesFromDatabase();
+          dbCourses = await instrumentStep<Course[]>('getAllCoursesFromDatabase', { degradedMode: true, orgId: orgContext.orgId ?? null }, () => getAllCoursesFromDatabase());
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
         } catch (healthDegradedFetchErr) {
           adminLoadStatus = 'api_unreachable';
           adminLoadError = healthDegradedFetchErr instanceof Error
             ? healthDegradedFetchErr.message
             : runtimeStatus.lastError || 'api_unreachable';
-          console.warn('[courseStore.init] admin_courses_api_unreachable (fetch confirmed)', {
-            reason: adminLoadError,
-          });
+          console.warn('[courseStore.init] admin_courses_api_unreachable (fetch confirmed)', { reason: adminLoadError });
           // Restore snapshot so the UI keeps showing the last-known-good catalog
           // instead of an empty page after a transient network failure.
           if (Object.keys(degradedCatalogSnapshot).length > 0) {
@@ -2281,6 +2336,7 @@ export const courseStore = {
             });
           }
         }
+
       } else if (!adminMode) {
         console.warn('[courseStore.init] Skipping admin course load for non-admin role.');
       }
@@ -2604,6 +2660,30 @@ export const courseStore = {
     }
   })();
 
+  // Race the real init against a defensive timeout. If the timeout fires,
+  // set a terminal catalog state so the UI stops showing the infinite
+  // 'Syncing the admin catalog…' gate. The inner actualInit continues in the
+  // background and may later update the store as usual.
+  const timeoutPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      try {
+        console.warn('[courseStore.init] init_timeout_triggered', { timeoutMs: INIT_TIMEOUT_MS, reason: initReason });
+        setAdminCatalogState({
+          phase: 'ready',
+          adminLoadStatus: 'api_unreachable',
+          lastUpdatedAt: monotonicNow(),
+          lastError: `init_timeout_${INIT_TIMEOUT_MS}`,
+        });
+      } catch (e) {
+        // Non-fatal: timeout handler must not throw.
+        console.warn('[courseStore.init] timeout_handler_error', e);
+      }
+      resolve();
+    }, INIT_TIMEOUT_MS);
+  });
+
+  initPromise = Promise.race([actualInit, timeoutPromise]);
+
   // Ensure the stored promise is cleared when complete.
   initPromise.finally(() => {
     initPromise = null;
@@ -2614,7 +2694,7 @@ export const courseStore = {
 
   // Force a fresh catalog fetch, bypassing the ready-guard.
   // Use this for explicit user-triggered retries when the catalog is in error.
-  forceInit: (options?: { newOrgId?: string | null; flushCache?: boolean }): Promise<void> => {
+  forceInit: (options?: { newOrgId?: string | null; flushCache?: boolean; reason?: string | null }): Promise<void> => {
     // If caller signals an org switch, flush the stale catalog cache for the old org
     // so the fresh init doesn't serve a 30-minute-old snapshot from a different workspace.
     const incomingOrgId = options?.newOrgId ?? null;

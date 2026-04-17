@@ -185,7 +185,22 @@ describe('ClientCourses', () => {
     expect(progressBar).toHaveAttribute('aria-valuenow', '75');
   });
 
-  it('shows completed status with a review CTA for completed learners', async () => {
+  it('renders store-backed course cards before assignment refresh completes', async () => {
+    getAssignmentsForUserMock.mockImplementation(
+      () =>
+        new Promise(() => {
+          // Intentionally unresolved: the learner course card should still render
+          // from the store-backed catalog instead of waiting on page-local assignments.
+        }) as Promise<any>,
+    );
+
+    renderCourses();
+
+    expect(await screen.findByText('Course 1')).toBeInTheDocument();
+    expect(screen.queryByText('No programs assigned yet')).not.toBeInTheDocument();
+  });
+
+  it('shows completed status with a continue CTA for completed learners', async () => {
     getAssignmentsForUserMock.mockResolvedValueOnce([
       {
         id: 'assignment-1',
@@ -209,7 +224,70 @@ describe('ClientCourses', () => {
     const card = courseTitle.closest('[data-test="client-course-card"]') as HTMLElement | null;
     expect(card).not.toBeNull();
     expect(within(card as HTMLElement).getByText('Completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Review course' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+  });
+
+  it('keeps a stable continue CTA for assigned course cards after store render', async () => {
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-4',
+        courseId: 'course-1',
+        userId: 'user-123',
+        status: 'assigned',
+        progress: 0,
+      },
+    ] as any);
+
+    buildLearnerProgressSnapshotMock.mockReturnValue({ overallProgress: 0 });
+    loadStoredCourseProgressMock.mockReturnValue({
+      completedLessonIds: [],
+      lessonProgress: {},
+      lessonPositions: {},
+    } as any);
+
+    renderCourses();
+
+    const courseTitle = await screen.findByText('Course 1');
+    const card = courseTitle.closest('[data-test="client-course-card"]') as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+  });
+
+  it('uses store-backed assignment metadata when assignment refresh does not map by course id', async () => {
+    getAllCoursesMock.mockReturnValue([
+      {
+        id: 'course-1',
+        slug: 'course-1',
+        title: 'Course 1',
+        description: 'Course description',
+        duration: '1 hour',
+        assignmentStatus: 'completed',
+        assignmentProgress: 100,
+        chapters: [
+          {
+            id: 'chapter-1',
+            lessons: [{ id: 'lesson-1' }],
+          },
+        ],
+      },
+    ] as any);
+    getAssignmentsForUserMock.mockResolvedValueOnce([
+      {
+        id: 'assignment-5',
+        courseId: 'legacy-course-id',
+        userId: 'user-123',
+        status: 'assigned',
+        progress: 0,
+      },
+    ] as any);
+
+    renderCourses();
+
+    const courseTitle = await screen.findByText('Course 1');
+    const card = courseTitle.closest('[data-test="client-course-card"]') as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByText('Completed')).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByRole('button', { name: 'Continue' })).toBeInTheDocument();
   });
 
   it('resolves assigned courses by slug when courseId is a legacy slug', async () => {
@@ -226,6 +304,36 @@ describe('ClientCourses', () => {
     renderCourses();
 
     expect(await screen.findByText('Course 1')).toBeInTheDocument();
+  });
+
+  it('uses the authenticated session identity instead of a stale cached profile when loading assignments', async () => {
+    getAssignmentsForUserMock.mockImplementation(async (userId?: string | null) => {
+      if (userId !== 'user-123') {
+        return [];
+      }
+      return [
+        {
+          id: 'assignment-3',
+          courseId: 'course-1',
+          userId: 'user-123',
+          status: 'assigned',
+          progress: 0,
+        },
+      ] as any;
+    });
+
+    secureAuthState.value = {
+      ...secureAuthState.value,
+      user: {
+        id: 'user-123',
+        email: 'user@example.com',
+      },
+    } as any;
+
+    renderCourses();
+
+    expect(await screen.findByText('Course 1')).toBeInTheDocument();
+    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
   });
 
   it('does not start learner catalog loading before auth is ready', async () => {

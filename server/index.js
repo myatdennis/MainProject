@@ -1079,8 +1079,30 @@ function savePersistedData(data) {
 
 const app = express();
 // GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
+// Also record presence/shape of the E2E bypass signal (header / cookie / query)
+// so we can confirm whether Playwright-injected bypass tokens reach the server.
 app.use((req, res, next) => {
-  logger.info('[global-entry] request', { method: req.method, url: req.url, requestId: req.requestId || null });
+  try {
+    const headerBypass = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
+    const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+    const cookieBypassPresent = cookieHeader.includes('x-e2e-bypass=');
+    const queryBypass = req.query && (typeof req.query.e2e_bypass !== 'undefined' || typeof req.query.e2eBypass !== 'undefined');
+
+    logger.info('[global-entry] request', {
+      method: req.method,
+      url: req.url,
+      requestId: req.requestId || null,
+      e2eBypass: {
+        headerPresent: Boolean(headerBypass),
+        headerValuePreview: headerBypass ? `${headerBypass}`.slice(0, 64) : null,
+        cookiePresent: cookieBypassPresent,
+        queryPresent: Boolean(queryBypass),
+      },
+    });
+  } catch (err) {
+    // Keep global entry logging resilient
+    logger.warn('[global-entry] request logging failed', { err: err?.message ?? err });
+  }
   next();
 });
 // AsyncLocalStorage to attach per-request metrics (query count, timings)
@@ -1138,6 +1160,15 @@ app.use(cookieParser());
 // Ensure the csrf_token cookie exists early so api clients can attach it via X-CSRF-Token.
 app.use(setDoubleSubmitCSRF);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+// Temporary probe endpoint to echo presence of E2E bypass signals.
+// Returns whether the X-E2E-Bypass header, x-e2e-bypass cookie, or e2e_bypass query param are present.
+app.get('/api/_probe_echo', (req, res) => {
+  const header = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
+  const cookie = typeof req.cookies === 'object' && req.cookies ? req.cookies['x-e2e-bypass'] || req.cookies['e2e_bypass'] : null;
+  const query = req.query && (typeof req.query.e2e_bypass !== 'undefined' || typeof req.query.e2eBypass !== 'undefined');
+  return res.json({ ok: true, data: { headerPresent: Boolean(header), headerValue: header ? header.slice(0,64) : null, cookiePresent: Boolean(cookie), cookieValue: cookie ? String(cookie).slice(0,64) : null, queryPresent: Boolean(query), queryValues: req.query } });
+});
 
 // ---------------------------------------------------------------------------
 // API Response Normalizer — ensures every /api/* response includes the

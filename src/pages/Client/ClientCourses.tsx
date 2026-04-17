@@ -21,7 +21,6 @@ import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
-import { shouldIncludeCourseForLearner } from './clientCoursesUtils';
 import { getUserSession } from '../../lib/secureStorage';
 import { loadCourse } from '../../dal/courseData';
 import { useSecureAuth } from '../../context/SecureAuthContext';
@@ -34,7 +33,7 @@ const ClientCourses = () => {
     '/client/profile',
   ]);
   const { user } = useUserProfile();
-  const { authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId } = useSecureAuth();
+  const { user: authUser, authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId } = useSecureAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const learnerAuthReady =
     sessionStatus === 'authenticated' &&
@@ -55,11 +54,6 @@ const ClientCourses = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const learnerId = useMemo(() => {
-    if (user?.id) return String(user.id).toLowerCase();
-    if (user?.email) return user.email.toLowerCase();
-    return 'local-user';
-  }, [user]);
   const sessionLearnerId = useMemo(() => {
     try {
       const session = getUserSession();
@@ -67,7 +61,24 @@ const ClientCourses = () => {
     } catch {
       return null;
     }
-  }, [learnerId]);
+  }, []);
+  const sessionLearnerEmail = useMemo(() => {
+    try {
+      const session = getUserSession();
+      return session?.email ? String(session.email).toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  }, []);
+  const learnerId = useMemo(() => {
+    if (sessionLearnerId) return sessionLearnerId;
+    if (sessionLearnerEmail) return sessionLearnerEmail;
+    if (authUser?.id) return String(authUser.id).toLowerCase();
+    if (authUser?.email) return authUser.email.toLowerCase();
+    if (user?.id) return String(user.id).toLowerCase();
+    if (user?.email) return user.email.toLowerCase();
+    return 'local-user';
+  }, [sessionLearnerId, sessionLearnerEmail, authUser?.id, authUser?.email, user]);
   const effectiveSyncUserId = useMemo(() => {
     if (!sessionLearnerId) return learnerId;
     if (sessionLearnerId === learnerId) return learnerId;
@@ -86,6 +97,7 @@ const ClientCourses = () => {
   const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
   const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
   const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
+  const normalizedCoursesAll = useMemo(() => allCourses.map(normalizeCourse), [allCourses]);
 
   useEffect(() => {
     if (!learnerAuthReady) {
@@ -102,37 +114,32 @@ const ClientCourses = () => {
     });
   }, [adminCatalogState.phase, learnerCatalogState.status, learnerAuthReady]);
 
-  const normalizedCoursesAll = useMemo(
-    () => allCourses.map((course) => normalizeCourse(course)),
-    [allCourses],
-  );
-
-  // Learners see published + assigned only
-  const assignmentByCourseId = useMemo(() => {
-    const map = new Map<string, CourseAssignment>();
-    assignments
-      .filter((a): a is CourseAssignment & { courseId: string } => typeof a.courseId === 'string' && a.courseId.length > 0)
-      .forEach((a) => {
-        const resolvedCourse = courseStore.resolveCourse(a.courseId);
-        const courseIdKey = resolvedCourse?.id ?? a.courseId;
-        map.set(courseIdKey, a);
-        if (resolvedCourse?.id && resolvedCourse.id !== a.courseId) {
-          map.set(a.courseId, a);
-        }
-      });
-    return map;
-  }, [assignments]);
-  const normalizedCourses = useMemo(
-    () => normalizedCoursesAll.filter((c) => shouldIncludeCourseForLearner(c.id, assignmentByCourseId)),
-    [normalizedCoursesAll, assignmentByCourseId],
+  const resolvedAssignments = useMemo(
+    () =>
+      assignments
+        .map((assignment) => {
+          const resolvedCourseId =
+            assignment.courseId ??
+            ((assignment as unknown as { course_id?: string | null }).course_id ?? null);
+          return {
+            ...assignment,
+            courseId: typeof resolvedCourseId === 'string' && resolvedCourseId.length > 0 ? resolvedCourseId : null,
+          };
+        })
+        .filter((assignment): assignment is CourseAssignment & { courseId: string } => typeof assignment.courseId === 'string' && assignment.courseId.length > 0),
+    [assignments],
   );
 
   useEffect(() => {
     let isMounted = true;
     const syncProgress = async () => {
-      if (!normalizedCourses.length) return;
+      const progressCourses = resolvedAssignments
+        .map((assignment) => courseStore.resolveCourse(assignment.courseId))
+        .filter((course): course is NonNullable<typeof course> => Boolean(course))
+        .map((course) => normalizeCourse(course));
+      if (!progressCourses.length) return;
       const results = await Promise.all(
-        normalizedCourses.map(async (course) => {
+        progressCourses.map(async (course) => {
           const lessonIds =
             course.chapters?.flatMap((chapter) => chapter.lessons?.map((lesson) => lesson.id) ?? []) ?? [];
           if (lessonIds.length === 0) return null;
@@ -156,7 +163,7 @@ const ClientCourses = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalizedCourses, effectiveSyncUserId]);
+  }, [resolvedAssignments, effectiveSyncUserId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -220,45 +227,94 @@ const ClientCourses = () => {
     };
   }, [learnerId, learnerAuthReady]);
 
-  const courseCardModels = useMemo(
-    () =>
-      normalizedCourses.map((course) => {
-        const stored = loadStoredCourseProgress(course.slug);
-        const snapshot = buildLearnerProgressSnapshot(course, new Set(stored.completedLessonIds), stored.lessonProgress || {});
-        const assignment = assignments.find((record) => record.courseId === course.id);
-        const assignmentProgress = Number(assignment?.progress ?? 0);
-        const snapshotProgress = Math.round((snapshot.overallProgress || 0) * 100);
-        const progress = Math.max(assignmentProgress, snapshotProgress);
-        const status =
-          assignment?.status === 'completed' || progress >= 100
-            ? 'completed'
-            : progress > 0
-              ? 'in-progress'
-              : 'not-started';
-        const reason =
-          assignment?.status === 'completed'
-            ? 'assignment_status_completed'
-            : snapshotProgress > assignmentProgress
-              ? 'snapshot_wins'
-              : assignmentProgress > snapshotProgress
-                ? 'assignment_wins'
-                : 'equal';
+  const courseCardModels = useMemo(() => {
+    const assignmentLookup = new Map<string, CourseAssignment & { courseId: string }>();
+    resolvedAssignments.forEach((assignment) => {
+      assignmentLookup.set(assignment.courseId, assignment);
+      const resolvedCourse = courseStore.resolveCourse(assignment.courseId);
+      if (resolvedCourse?.id) assignmentLookup.set(resolvedCourse.id, assignment);
+      if (resolvedCourse?.slug) assignmentLookup.set(resolvedCourse.slug, assignment);
+    });
 
-        return {
-          course,
-          snapshot,
-          assignment,
-          stored,
-          preferredLessonId: getPreferredLessonId(course, stored) ?? getFirstLessonId(course),
-          assignmentProgress,
-          snapshotProgress,
-          progress,
-          status,
-          reason,
-        };
-      }),
-    [normalizedCourses, assignments, progressRefreshToken],
-  );
+    const courseModels = allCourses.map((rawCourse) => {
+      const course = normalizeCourse(rawCourse);
+      const assignment =
+        assignmentLookup.get(course.id) ??
+        assignmentLookup.get(course.slug) ??
+        null;
+      const storeBackedAssignmentStatus =
+        typeof (rawCourse as { assignmentStatus?: unknown }).assignmentStatus === 'string'
+          ? String((rawCourse as { assignmentStatus?: string }).assignmentStatus)
+          : null;
+      const storeBackedAssignmentProgress = Number(
+        (rawCourse as { assignmentProgress?: number | null }).assignmentProgress ?? 0,
+      );
+      const stored = loadStoredCourseProgress(course.slug);
+      const snapshot = buildLearnerProgressSnapshot(course, new Set(stored.completedLessonIds), stored.lessonProgress || {});
+      const assignmentProgress = Number(assignment?.progress ?? storeBackedAssignmentProgress);
+      const snapshotProgress = Math.round((snapshot.overallProgress || 0) * 100);
+      const progress = Math.max(assignmentProgress, snapshotProgress);
+      const effectiveAssignmentStatus = assignment?.status ?? storeBackedAssignmentStatus;
+      const status =
+        effectiveAssignmentStatus === 'completed' || progress >= 100
+          ? 'completed'
+          : progress > 0
+            ? 'in-progress'
+            : 'not-started';
+      const reason =
+        effectiveAssignmentStatus === 'completed'
+          ? 'assignment_status_completed'
+          : snapshotProgress > assignmentProgress
+            ? 'snapshot_wins'
+            : assignmentProgress > snapshotProgress
+              ? 'assignment_wins'
+              : assignment
+                ? 'equal'
+                : 'catalog_only';
+
+      return {
+        key: course.id,
+        course,
+        snapshot,
+        assignment,
+        stored,
+        preferredLessonId: getPreferredLessonId(course, stored) ?? getFirstLessonId(course),
+        assignmentProgress,
+        snapshotProgress,
+        progress,
+        status,
+        reason,
+      };
+    });
+
+    const unresolvedAssignmentModels = resolvedAssignments
+      .filter((assignment) => !assignmentLookup.get(assignment.courseId)?.id || !courseStore.resolveCourse(assignment.courseId))
+      .map((assignment) => ({
+        key: assignment.id,
+        course: null,
+        assignment,
+        stored: null,
+        snapshot: null,
+        preferredLessonId: null,
+        assignmentProgress: Number(assignment.progress ?? 0),
+        snapshotProgress: 0,
+        progress: Number(assignment.progress ?? 0),
+        status:
+          assignment.status === 'completed'
+            ? 'completed'
+            : Number(assignment.progress ?? 0) > 0
+              ? 'in-progress'
+              : 'not-started',
+        reason: 'assignment_only',
+      }));
+
+    const deduped = new Map<string, (typeof courseModels)[number] | (typeof unresolvedAssignmentModels)[number]>();
+    [...courseModels, ...unresolvedAssignmentModels].forEach((entry) => {
+      const dedupeKey = entry.course?.id ?? entry.assignment?.courseId ?? entry.assignment?.id ?? entry.key;
+      deduped.set(dedupeKey, entry);
+    });
+    return Array.from(deduped.values());
+  }, [allCourses, resolvedAssignments, progressRefreshToken]);
 
   useEffect(() => {
     if (!showProgressDebug) return;
@@ -270,9 +326,9 @@ const ClientCourses = () => {
     });
     courseCardModels.forEach((entry) => {
       console.info('[ClientCourses.progress_debug] card_model', {
-        title: entry.course.title,
-        courseId: entry.course.id,
-        courseSlug: entry.course.slug,
+        title: entry.course?.title ?? 'Assigned course',
+        courseId: entry.course?.id ?? null,
+        courseSlug: entry.course?.slug ?? null,
         assignmentCourseId: entry.assignment?.courseId ?? null,
         assignmentProgress: entry.assignmentProgress,
         snapshotProgress: entry.snapshotProgress,
@@ -283,7 +339,8 @@ const ClientCourses = () => {
   }, [showProgressDebug, courseCardModels, learnerId, sessionLearnerId, effectiveSyncUserId]);
 
   const filtered = courseCardModels.filter(({ course, status }) => {
-    const searchMatch = course.title.toLowerCase().includes(searchTerm.toLowerCase());
+    const courseTitle = course?.title ?? 'Assigned course';
+    const searchMatch = courseTitle.toLowerCase().includes(searchTerm.toLowerCase());
     if (!searchMatch) return false;
     if (filterStatus === 'all') return true;
     if (filterStatus === 'in-progress') return status === 'in-progress';
@@ -291,6 +348,17 @@ const ClientCourses = () => {
     if (filterStatus === 'not-started') return status === 'not-started';
     return true;
   });
+
+  useEffect(() => {
+    if (!import.meta.env?.DEV) return;
+    console.info('[ClientCourses.visibility]', {
+      assignments: resolvedAssignments.length,
+      coursesInStore: allCourses.length,
+      visibleCourses: courseCardModels.length,
+      filteredCourses: filtered.length,
+      learnerCatalogStatus: learnerCatalogState.status,
+    });
+  }, [resolvedAssignments.length, allCourses.length, courseCardModels.length, filtered.length, learnerCatalogState.status]);
 
   const handleLaunchCourse = async (courseSlug: string, fallbackLessonId?: string | null) => {
     if (fallbackLessonId) {
@@ -333,7 +401,7 @@ const ClientCourses = () => {
     !coursesLoading &&
     Boolean(catalogErrorMessage) &&
     (learnerCatalogState.status === 'error' || learnerAuthFailed || normalizedCoursesAll.length === 0);
-  const noCoursesAvailable = !coursesLoading && normalizedCourses.length === 0;
+  const noCoursesAvailable = !coursesLoading && courseCardModels.length === 0;
   const asyncState = coursesLoading ? 'loading' : showCatalogError ? 'error' : 'ready';
 
   return (
@@ -414,7 +482,38 @@ const ClientCourses = () => {
           ) : (
             <>
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {filtered.map(({ course, progress, status, preferredLessonId }) => {
+                {filtered.map(({ course, progress, status, preferredLessonId, assignment }) => {
+                  if (!course) {
+                    const a = assignment as CourseAssignment;
+                    return (
+                      <Card key={a.id} className="flex h-full flex-col gap-4" data-test="client-course-card">
+                        <div className="rounded-2xl bg-cloud p-6">
+                          <Badge tone="info" className="bg-white/90 text-skyblue">
+                            Assigned
+                          </Badge>
+                          <h3 className="mt-4 font-heading text-xl font-semibold text-charcoal">
+                            {(a.metadata as Record<string, unknown> | null)?.courseTitle as string ?? 'Assigned course'}
+                          </h3>
+                          <p className="mt-2 text-sm text-slate/80">
+                            Your assignment is ready. Course details are syncing now.
+                          </p>
+                        </div>
+                        <div className="space-y-3">
+                          <ProgressBar value={progress} srLabel="Assigned course progress" />
+                          <p className="text-xs text-slate/70">Assignment ID: {a.id}</p>
+                        </div>
+                      </Card>
+                    );
+                  }
+                  const hasAssignmentContext = Boolean(
+                    assignment ||
+                    (course as { assignmentStatus?: unknown }).assignmentStatus ||
+                    Number((course as { assignmentProgress?: number | null }).assignmentProgress ?? 0) > 0,
+                  );
+                  const primaryLabel =
+                    !hasAssignmentContext && progress <= 0 && status === 'not-started'
+                      ? 'Start course'
+                      : 'Continue';
                   return (
                     <Card key={course.id} className="flex h-full flex-col gap-4" data-test="client-course-card">
                       <div className="relative overflow-hidden rounded-2xl">
@@ -451,7 +550,7 @@ const ClientCourses = () => {
                             }}
                             data-test="client-course-primary"
                           >
-                            {status === 'completed' ? 'Review course' : status === 'not-started' ? 'Start course' : 'Continue'}
+                            {primaryLabel}
                           </Button>
                           <Button variant="ghost" size="sm" asChild>
                             <Link to={`/client/courses/${course.slug}`}>Details</Link>

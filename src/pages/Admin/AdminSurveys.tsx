@@ -375,18 +375,20 @@ const AdminSurveys = () => {
 
   return (
     <>
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-      <div className="mb-6">
+      <div className="container-page section page-shell section-stack">
+      <div>
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Surveys', to: '/admin/surveys' }]} />
       </div>
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">DEI Survey Platform</h1>
-        <p className="text-gray-600">Create, manage, and analyze DEI surveys with advanced analytics and insights</p>
+      <div className="page-header">
+        <div className="page-header__content">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">DEI Survey Platform</h1>
+          <p className="text-gray-600">Create, manage, and analyze DEI surveys with advanced analytics and insights.</p>
+        </div>
       </div>
 
       {errorMessage && (
-        <div className="mb-6 flex items-start space-x-3 rounded-lg border border-red-200 bg-red-50 p-4">
+        <div className="flex items-start space-x-3 rounded-lg border border-red-200 bg-red-50 p-4">
           <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5" />
           <div>
             <p className="text-sm font-medium text-red-700">
@@ -419,7 +421,7 @@ const AdminSurveys = () => {
       )}
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
         <div className="card-lg">
           <div className="flex items-center justify-between">
             <div>
@@ -475,7 +477,7 @@ const AdminSurveys = () => {
       </div>
 
       {/* Search and Filter Bar */}
-      <div className="card-lg card-hover mb-8">
+      <div className="card-lg card-hover">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 flex-1">
             <div className="relative flex-1 max-w-md">
@@ -565,7 +567,7 @@ const AdminSurveys = () => {
           <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
           {filteredSurveys.map((survey) => (
             <div
               key={survey.id}

@@ -17,6 +17,28 @@ vi.mock('../../dal/clientCourses', () => ({
   fetchCourse: vi.fn(),
 }));
 
+const secureStorageState = vi.hoisted(() => ({
+  session: { id: 'user-1', email: 'user-1@example.com' } as { id?: string; email?: string } | null,
+  accessToken: 'token-1' as string | null,
+}));
+vi.mock('../../lib/secureStorage', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/secureStorage')>('../../lib/secureStorage');
+  return {
+    ...actual,
+    getUserSession: vi.fn(() => secureStorageState.session),
+    getAccessToken: vi.fn(() => secureStorageState.accessToken),
+  };
+});
+
+const apiAccessTokenMock = vi.hoisted(() => vi.fn(async () => secureStorageState.accessToken));
+vi.mock('../../lib/apiClient', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/apiClient')>('../../lib/apiClient');
+  return {
+    ...actual,
+    getAccessToken: apiAccessTokenMock,
+  };
+});
+
 const getAssignmentsForUserMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock('../../utils/assignmentStorage', () => ({
   getAssignmentsForUser: getAssignmentsForUserMock,
@@ -63,6 +85,9 @@ vi.mock('../courseStoreOrgBridge', () => ({
 const resetMocks = () => {
   fetchPublishedCoursesMock.mockResolvedValue([]);
   getAssignmentsForUserMock.mockResolvedValue([]);
+  secureStorageState.session = { id: 'user-1', email: 'user-1@example.com' };
+  secureStorageState.accessToken = 'token-1';
+  apiAccessTokenMock.mockImplementation(async () => secureStorageState.accessToken);
   runtimeStatusMock.getRuntimeStatus.mockReturnValue({
     supabaseConfigured: true,
     supabaseHealthy: true,

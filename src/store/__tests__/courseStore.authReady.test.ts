@@ -262,6 +262,48 @@ describe('courseStore bridge snapshot synchronization', () => {
     });
   });
 
+  it('does not block learner catalog fetches on a slow runtime status probe', async () => {
+    let deferredResolve: ((value: any) => void) | undefined;
+    const deferredPromise = new Promise((resolve) => {
+      deferredResolve = resolve;
+    });
+    runtimeStatusMock.refreshRuntimeStatus.mockImplementation(() => deferredPromise as any);
+    fetchPublishedCoursesMock.mockResolvedValueOnce([
+      {
+        id: 'course-slow-health',
+        title: 'Published Course',
+        status: 'published',
+        modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1' }] }],
+      },
+    ]);
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-1',
+      orgId: 'org-1',
+      role: 'member',
+      userId: 'user-123',
+    };
+
+    const initPromise = courseStore.forceInit({ flushCache: true, reason: 'test_slow_runtime_probe' });
+
+    await vi.waitFor(() => {
+      expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ orgId: 'org-1' });
+    });
+
+    if (deferredResolve) {
+      deferredResolve({
+        supabaseConfigured: true,
+        supabaseHealthy: true,
+        apiReachable: true,
+        apiAuthRequired: false,
+      });
+    }
+    await initPromise;
+
+    expect(courseStore.getLearnerCatalogState().status).toBe('empty');
+  });
+
   it('hydrates missing learner-assigned courses without includeDrafts', async () => {
     fetchPublishedCoursesMock.mockResolvedValueOnce([]);
     getAssignmentsForUserWithOutcomeMock.mockResolvedValueOnce({

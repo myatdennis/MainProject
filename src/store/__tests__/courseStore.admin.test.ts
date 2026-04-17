@@ -20,8 +20,14 @@ vi.mock('../../dal/clientCourses', () => clientCoursesMock);
 const secureStorageMock = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   getActiveOrgPreference: vi.fn(),
+  getAccessToken: vi.fn(),
 }));
 vi.mock('../../lib/secureStorage', () => secureStorageMock);
+
+const apiAccessTokenMock = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/apiClient', () => ({
+  getAccessToken: apiAccessTokenMock,
+}));
 
 const runtimeStatusMock = vi.hoisted(() => ({
   getRuntimeStatus: vi.fn(),
@@ -54,6 +60,7 @@ vi.mock('../../utils/courseNormalization', () => courseNormalizationMock);
 
 const assignmentStorageMock = vi.hoisted(() => ({
   getAssignmentsForUser: vi.fn(),
+  getAssignmentsForUserWithOutcome: vi.fn(),
 }));
 vi.mock('../../utils/assignmentStorage', () => assignmentStorageMock);
 
@@ -136,6 +143,13 @@ const adminSession = {
   memberships: [{ orgId: 'org-1', status: 'active' }],
 };
 
+const learnerSession = {
+  id: 'learner-101',
+  role: 'learner',
+  activeOrgId: 'org-learner',
+  memberships: [{ orgId: 'org-learner', status: 'active' }],
+};
+
 const createCourse = (overrides: Partial<Course> = {}): Course => ({
   id: 'course-1',
   slug: 'course-1',
@@ -193,6 +207,11 @@ beforeEach(() => {
   clientCoursesMock.fetchPublishedCourses.mockResolvedValue([]);
   clientCoursesMock.fetchCourse.mockResolvedValue(null);
   assignmentStorageMock.getAssignmentsForUser.mockResolvedValue([]);
+  assignmentStorageMock.getAssignmentsForUserWithOutcome.mockResolvedValue({
+    outcome: 'empty',
+    assignments: [],
+    error: null,
+  });
   courseProgressMock.loadStoredCourseProgress.mockReturnValue(null);
   courseAvailabilityMock.hasStoredProgressHistory.mockReturnValue(false);
   courseDraftsMock.saveDraftSnapshot.mockResolvedValue(undefined);
@@ -200,6 +219,8 @@ beforeEach(() => {
   courseDraftsMock.deleteDraftSnapshot.mockResolvedValue(undefined);
   secureStorageMock.getUserSession.mockReturnValue(adminSession);
   secureStorageMock.getActiveOrgPreference.mockReturnValue(null);
+  secureStorageMock.getAccessToken.mockReturnValue('token-123');
+  apiAccessTokenMock.mockResolvedValue('token-123');
   setRuntimeStatusSnapshot();
   setOrgContextSnapshot(buildOrgContextSnapshot());
 });
@@ -312,12 +333,9 @@ describe('courseStore admin catalog phase transitions', () => {
 describe('courseStore learner catalog fallbacks', () => {
   it('uses default catalog when assignments return 200 with empty payload', async () => {
     window.history.pushState({}, '', '/lms/courses');
-    secureStorageMock.getUserSession.mockReturnValue({
-      id: 'learner-101',
-      role: 'learner',
-      activeOrgId: 'org-learner',
-      memberships: [{ orgId: 'org-learner', status: 'active' }],
-    });
+    secureStorageMock.getUserSession.mockReturnValue(learnerSession);
+    secureStorageMock.getAccessToken.mockReturnValue('learner-token-123');
+    apiAccessTokenMock.mockResolvedValue('learner-token-123');
     setOrgContextSnapshot(
       buildOrgContextSnapshot({
         orgId: 'org-learner',
@@ -327,6 +345,11 @@ describe('courseStore learner catalog fallbacks', () => {
       }),
     );
     assignmentStorageMock.getAssignmentsForUser.mockResolvedValue([]);
+    assignmentStorageMock.getAssignmentsForUserWithOutcome.mockResolvedValue({
+      outcome: 'empty',
+      assignments: [],
+      error: null,
+    });
     clientCoursesMock.fetchPublishedCourses.mockResolvedValue([]);
 
     const courseStore = await importCourseStore();

@@ -1060,9 +1060,12 @@ export async function authenticate(req, res, next) {
       return next();
     }
     const token = resolveAccessTokenFromRequest(req);
-    const explicitE2EHeader =
-      String(req?.headers?.['x-e2e-bypass'] || '').trim().toLowerCase() === 'true' ||
-      String(req?.headers?.['x-user-role'] || '').trim().length > 0;
+    // Consider any non-empty x-e2e-bypass header/cookie/query value as a valid local bypass
+    // (supports 'true', '1', or presence via cookie/query). Also accept x-user-role header.
+    const explicitE2EHeader = Boolean(
+      String(req?.headers?.['x-e2e-bypass'] || req?.cookies?.['x-e2e-bypass'] || req?.cookies?.['e2e_bypass'] || req?.query?.['e2e_bypass'] || '').trim().length > 0 ||
+      String(req?.headers?.['x-user-role'] || '').trim().length > 0,
+    );
     if (!token && (isTestMode || String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true') && explicitE2EHeader) {
       const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
       req.user = demo.user;

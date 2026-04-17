@@ -164,6 +164,10 @@ const allowHeaders = [
   'x-csrf-token',
   'X-Request-Id',
   'x-request-id',
+  // Allow our E2E bypass header so test harnesses can send it in browser requests.
+  'X-E2E-Bypass',
+  // Include the lowercase variant to be explicit for environments that preserve header casing.
+  'x-e2e-bypass',
 ];
 
 const setHeader = (res, key, value) => {

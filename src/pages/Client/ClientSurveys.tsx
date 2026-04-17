@@ -294,7 +294,7 @@ const ClientSurveys = () => {
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="container-page section page-shell section-stack max-w-5xl">
       <SEO title="My Surveys" description="View and complete assigned surveys." />
       <Breadcrumbs
         items={[
@@ -329,6 +329,7 @@ const ClientSurveys = () => {
         </div>
       ) : error ? (
         <Card tone="muted" className="space-y-3 text-center" padding="lg">
+          <h2 className="font-heading text-lg font-semibold text-charcoal">We couldn’t load your surveys</h2>
           <p className="text-sm text-slate/70">{error}</p>
           <div className="flex justify-center">
             <Button onClick={() => void refresh()}>Retry</Button>
