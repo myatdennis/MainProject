@@ -24,6 +24,7 @@ import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
 import { shouldIncludeCourseForLearner } from './clientCoursesUtils';
 import { getUserSession } from '../../lib/secureStorage';
 import { loadCourse } from '../../dal/courseData';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const ClientCourses = () => {
   // Prefetch critical user flows for fast navigation
@@ -33,7 +34,22 @@ const ClientCourses = () => {
     '/client/profile',
   ]);
   const { user } = useUserProfile();
+  const { authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId } = useSecureAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const learnerAuthReady =
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId);
+  const learnerAuthLoading =
+    authInitializing ||
+    authStatus === 'booting' ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
+  const learnerAuthFailed =
+    !learnerAuthLoading &&
+    (sessionStatus !== 'authenticated' || membershipStatus === 'error');
   const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'completed' | 'not-started'>('all');
   const [coursesError, setCoursesError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -72,6 +88,9 @@ const ClientCourses = () => {
   const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   useEffect(() => {
+    if (!learnerAuthReady) {
+      return;
+    }
     if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
       return;
     }
@@ -81,7 +100,7 @@ const ClientCourses = () => {
       const message = err instanceof Error ? err.message : 'Unable to load course catalog right now.';
       setCoursesError(message || 'Unable to load course catalog right now.');
     });
-  }, [adminCatalogState.phase, learnerCatalogState.status]);
+  }, [adminCatalogState.phase, learnerCatalogState.status, learnerAuthReady]);
 
   const normalizedCoursesAll = useMemo(
     () => allCourses.map((course) => normalizeCourse(course)),
@@ -142,6 +161,13 @@ const ClientCourses = () => {
   useEffect(() => {
     let isMounted = true;
 
+    if (!learnerAuthReady) {
+      setAssignments([]);
+      return () => {
+        isMounted = false;
+      };
+    }
+
     const refreshAssignments = async () => {
       if (assignmentsRefreshInFlightRef.current) {
         return assignmentsRefreshInFlightRef.current;
@@ -192,7 +218,7 @@ const ClientCourses = () => {
       unsubscribeUpdate?.();
       unsubscribeDelete?.();
     };
-  }, [learnerId]);
+  }, [learnerId, learnerAuthReady]);
 
   const courseCardModels = useMemo(
     () =>
@@ -287,9 +313,26 @@ const ClientCourses = () => {
   };
 
   const coursesLoading =
+    learnerAuthLoading ||
     adminCatalogState.phase === 'loading' ||
-    (learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0);
-  const showCatalogError = !coursesLoading && Boolean(coursesError) && normalizedCoursesAll.length === 0;
+    learnerCatalogState.status === 'loading' ||
+    (learnerAuthReady && learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0);
+  const catalogErrorMessage = (() => {
+    if (learnerAuthFailed) {
+      return 'Your learner session is not ready. Sign in again to load assigned courses.';
+    }
+    if (coursesError) {
+      return coursesError;
+    }
+    if (learnerCatalogState.lastError === 'auth_session_unavailable' || learnerCatalogState.detail === 'auth_session_unavailable') {
+      return 'We found your assignments, but your authenticated course session was not ready in time. Retry to load your courses.';
+    }
+    return learnerCatalogState.lastError;
+  })();
+  const showCatalogError =
+    !coursesLoading &&
+    Boolean(catalogErrorMessage) &&
+    (learnerCatalogState.status === 'error' || learnerAuthFailed || normalizedCoursesAll.length === 0);
   const noCoursesAvailable = !coursesLoading && normalizedCourses.length === 0;
   const asyncState = coursesLoading ? 'loading' : showCatalogError ? 'error' : 'ready';
 
@@ -297,9 +340,9 @@ const ClientCourses = () => {
     <div className="max-w-7xl px-6 py-10 lg:px-12">
       <AsyncStatePanel
         state={asyncState}
-        loadingLabel="Loading courses..."
+        loadingLabel={learnerAuthLoading ? 'Preparing your learner session...' : 'Loading courses...'}
         title="We couldn’t load your courses"
-        message={coursesError || undefined}
+        message={catalogErrorMessage || undefined}
         onRetry={() => {
           setCoursesError(null);
           void courseStore.init().catch((error) => {

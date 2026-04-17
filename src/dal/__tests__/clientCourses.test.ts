@@ -8,9 +8,13 @@ vi.mock('../../utils/apiClient', () => ({
   default: (...args: any[]) => apiClientMock(...args),
 }));
 
-vi.mock('../../lib/secureStorage', () => ({
-  getUserSession: vi.fn(() => ({ id: 'test-user' })),
-}));
+vi.mock('../../lib/secureStorage', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/secureStorage')>('../../lib/secureStorage');
+  return {
+    ...actual,
+    getUserSession: vi.fn(() => ({ id: 'test-user' })),
+  };
+});
 
 vi.mock('../../services/courseService', async () => {
   const actual = await vi.importActual<typeof import('../../services/courseService')>('../../services/courseService');
@@ -67,6 +71,22 @@ describe('clientCourses DAL', () => {
     expect(apiClientMock).toHaveBeenNthCalledWith(1, '/api/client/courses/Belonging 101', { noTransform: true });
     expect(apiClientMock).toHaveBeenNthCalledWith(2, '/api/client/courses/belonging-101', { noTransform: true });
     expect(course).toEqual({ id: 'course-2', title: 'Belonging 101' });
+  });
+
+  it('does not append includeDrafts for learner course detail requests by default', async () => {
+    apiClientMock.mockResolvedValueOnce({ data: { id: 'course-9', title: 'Published course' } });
+
+    await fetchCourse('course-9');
+
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses/course-9', { noTransform: true });
+  });
+
+  it('only appends includeDrafts when explicitly requested', async () => {
+    apiClientMock.mockResolvedValueOnce({ data: { id: 'course-10', title: 'Draft-aware course' } });
+
+    await fetchCourse('course-10', { includeDrafts: true });
+
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses/course-10?includeDrafts=true', { noTransform: true });
   });
 
   it('rethrows api errors so callers can handle auth/org failures', async () => {

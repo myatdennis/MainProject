@@ -61,11 +61,15 @@ export const LazyImage: React.FC<LazyImageProps & {
 
   const imageSrc = hasError && fallbackSrc ? fallbackSrc : src;
 
-  const [darkMode, setDarkMode] = useState(false);
   return (
-    <div ref={imgRef} className={`relative overflow-hidden rounded-2xl min-h-[280px] ${darkMode ? 'bg-gradient-to-br from-indigo-900 via-charcoal to-sunrise/10' : 'bg-gradient-to-br from-indigo-50 via-ivory to-sunrise/10'} ${className}`} aria-label={alt} role="img">
+    <div
+      ref={imgRef}
+      className={`relative min-h-[280px] overflow-hidden rounded-2xl bg-[linear-gradient(135deg,rgba(58,125,255,0.08),rgba(222,123,18,0.08),rgba(255,255,255,0.96))] ${className}`}
+      aria-label={alt}
+      role="img"
+    >
       {!isLoaded && placeholder && (
-        <div className={`absolute inset-0 flex items-center justify-center animate-pulse rounded-2xl ${darkMode ? 'bg-mutedgrey/40' : 'bg-mutedgrey'}`}>
+        <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-app-muted animate-pulse">
           {placeholder}
         </div>
       )}
@@ -79,7 +83,7 @@ export const LazyImage: React.FC<LazyImageProps & {
             alt={alt}
             onLoad={handleLoad}
             onError={handleError}
-            className={`transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} rounded-2xl shadow-card ${className} ${darkMode ? 'bg-charcoal' : ''}`}
+            className={`rounded-2xl shadow-card transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} ${className}`}
             loading="lazy"
             initial={{ opacity: 0 }}
             animate={{ opacity: isLoaded ? 1 : 0 }}
@@ -87,16 +91,6 @@ export const LazyImage: React.FC<LazyImageProps & {
           />
         </picture>
       )}
-      {/* Dark mode toggle for LazyImage */}
-      <div className="absolute bottom-2 right-2 z-10">
-        <button
-          onClick={() => setDarkMode(!darkMode)}
-          className="px-2 py-1 rounded bg-charcoal text-ivorywhite text-xs font-heading hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          {darkMode ? 'Light' : 'Dark'}
-        </button>
-      </div>
     </div>
   );
 };
@@ -112,9 +106,12 @@ export const ImageSkeleton: React.FC<ImageSkeletonProps> = ({
   width = 'w-full',
   height = 'h-48'
 }) => {
-  const [darkMode, setDarkMode] = useState(false);
   return (
-    <div className={`animate-pulse rounded-2xl shadow-card ${width} ${height} ${className} ${darkMode ? 'bg-gradient-to-r from-indigo-900/20 via-charcoal to-ivory' : 'bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory'}`} aria-label="Loading image" role="img">
+    <div
+      className={`animate-pulse rounded-2xl shadow-card ${width} ${height} ${className} bg-[linear-gradient(90deg,rgba(222,123,18,0.16),rgba(58,125,255,0.10),rgba(255,255,255,0.96))]`}
+      aria-label="Loading image"
+      role="img"
+    >
       <div className="flex items-center justify-center h-full">
         <svg
           className="w-10 h-10 text-mutedgrey"
@@ -124,21 +121,11 @@ export const ImageSkeleton: React.FC<ImageSkeletonProps> = ({
           <circle cx="10" cy="10" r="8" fill="url(#huddle-gradient)" />
           <defs>
             <linearGradient id="huddle-gradient" x1="0" y1="0" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-              <stop stopColor={darkMode ? '#3A7DFF' : '#3A7DFF'} />
-              <stop offset="1" stopColor={darkMode ? '#228B22' : '#228B22'} />
+              <stop stopColor="#3A7DFF" />
+              <stop offset="1" stopColor="#228B22" />
             </linearGradient>
           </defs>
         </svg>
-      </div>
-      {/* Dark mode toggle for ImageSkeleton */}
-      <div className="absolute bottom-2 right-2 z-10">
-        <button
-          onClick={() => setDarkMode(!darkMode)}
-          className="px-2 py-1 rounded bg-charcoal text-ivorywhite text-xs font-heading hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          {darkMode ? 'Light' : 'Dark'}
-        </button>
       </div>
     </div>
   );

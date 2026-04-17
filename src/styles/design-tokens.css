@@ -1,273 +1,191 @@
-:root{
-  --brand-1: #FF8895;
-  --brand-2: #D72638;
-  --brand-3: #3A7FFF;
-  --brand-4: #2D9B66;
-  --ui-bg: #ffffff;
-  --ui-muted: #6b7280;
-  --radius: 10px;
-  --gap: 16px;
-  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-head: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-}
-
-body{ font-family: var(--font-body); background: var(--ui-bg); color: #111827 }
-h1,h2,h3{ font-family: var(--font-heading); }
-.card{ background: white; border-radius: var(--radius); box-shadow: 0 1px 3px rgba(16,24,40,0.04); padding: 16px }
 :root {
-  /* The Huddle Co. Brand Palette — unified tokens */
-  /* Core brand (exact) */
-  --hud-orange: #de7b12; /* Sunrise Orange (updated to exact spec) */
-  --hud-red: #D72638;    /* Deep Red */
-  --hud-blue: #3A7DFF;   /* Sky Blue */
-  --hud-green: #228B22;  /* Forest Green */
-  --hud-navy: #1E1E22;   /* Dark Navy */
-  --hud-ink: #222222;    /* Ink / Headlines */
-  --hud-gray-600: #545454;
-  --hud-gray-100: #F8F9FB;
-  --hud-bg: #FFFDF9;     /* Soft off-white page bg */
+  color-scheme: light;
 
-  /* Legacy alias mapping for existing utilities/classes */
-  --color-sunrise: var(--hud-orange);
-  --color-deep-red: var(--hud-red);
-  --color-sky-blue: var(--hud-blue);
-  --color-forest: var(--hud-green);
-  --color-soft-white: #F9F9F1;
-  --color-charcoal: #1E1E1E;
-  --color-slate: #3F3F3F;
-  --color-mist: #E4E7EB;
-  --color-cloud: #F4F5F7;
-  --color-ink: var(--hud-ink);
-  --color-gold: #F6C87B;
+  /* Core brand */
+  --hud-orange: #de7b12;
+  --hud-red: #d72638;
+  --hud-blue: #3a7dff;
+  --hud-green: #228b22;
+  --hud-gold: #f6c87b;
+  --hud-ink: #16202f;
+  --hud-navy: #1e1e22;
 
-  /* Semantic palette (pairing rules) */
-  /* Default primary/secondary (non-CTA): Blue→Green for progress/info */
+  /* Neutral scale */
+  --hud-neutral-0: #ffffff;
+  --hud-neutral-25: #fffdf9;
+  --hud-neutral-50: #f8f9fb;
+  --hud-neutral-100: #f2f4f7;
+  --hud-neutral-200: #e4e7eb;
+  --hud-neutral-300: #cbd2dc;
+  --hud-neutral-400: #98a2b3;
+  --hud-neutral-500: #667085;
+  --hud-neutral-600: #475467;
+  --hud-neutral-700: #344054;
+  --hud-neutral-800: #1f2937;
+  --hud-neutral-900: #101828;
+
+  /* Semantic text */
+  --text-primary: var(--hud-neutral-900);
+  --text-secondary: var(--hud-neutral-700);
+  --text-muted: var(--hud-neutral-600);
+  --text-subtle: var(--hud-neutral-500);
+  --text-inverse: #ffffff;
+  --text-link: var(--hud-blue);
+  --text-success: #166534;
+  --text-warning: #92400e;
+  --text-danger: #b42318;
+  --text-info: #1d4ed8;
+
+  /* Semantic surfaces */
+  --surface-page: var(--hud-neutral-25);
+  --surface-card: var(--hud-neutral-0);
+  --surface-raised: #fcfcfd;
+  --surface-muted: var(--hud-neutral-50);
+  --surface-subtle: var(--hud-neutral-100);
+  --surface-contrast: #eef2f6;
+  --surface-glass: rgba(255, 255, 255, 0.84);
+  --surface-glow: rgba(58, 125, 255, 0.05);
+
+  /* Borders */
+  --border-subtle: rgba(16, 24, 40, 0.10);
+  --border-default: rgba(16, 24, 40, 0.14);
+  --border-strong: rgba(16, 24, 40, 0.22);
+
+  /* Interactive */
   --primary: var(--hud-blue);
   --secondary: var(--hud-green);
-  --accent: var(--hud-blue);
-  --accent-success: var(--hud-green);
+  --accent: var(--hud-orange);
   --accent-danger: var(--hud-red);
-  --accent-warning: var(--color-gold);
-  --highlight: rgba(255, 136, 149, 0.18);
+  --accent-warning: var(--hud-gold);
+  --accent-success: var(--hud-green);
   --button-bg: var(--primary);
-  --button-text: #ffffff;
-  --button-muted-bg: color-mix(in srgb, var(--hud-blue) 12%, transparent);
-  --button-muted-text: var(--hud-gray-600);
+  --button-text: var(--text-inverse);
+  --button-muted-bg: rgba(58, 125, 255, 0.08);
+  --button-muted-text: var(--text-secondary);
+  --cta-bg: var(--hud-orange);
+  --cta-text: var(--text-inverse);
+  --cta-hover: #c86d0d;
+  --cta-active: #aa5b08;
+  --cta-gradient: linear-gradient(135deg, #e98a1e 0%, #d72638 100%);
+  --cta-shadow: 0 10px 24px rgba(215, 38, 56, 0.18);
+  --link: var(--text-link);
+  --link-hover: #1f57d6;
 
-  /* Surfaces */
-  --surface-page: var(--hud-bg);
-  --surface-card: #ffffff;
-  --surface-contrast: #f0f2f5;
-  --surface-muted: rgba(248, 249, 251, 0.85);
-  --background-light: var(--surface-page);
-  --input-border: rgba(30, 30, 30, 0.08);
-  --border-mist: rgba(30, 30, 30, 0.06);
-  --card-border: var(--border-weak);
-  --surface-glow: color-mix(in srgb, var(--hud-blue) 4%, #ffffff);
-  --surface-glass: color-mix(in srgb, rgba(255, 255, 255, 0.75) 70%, transparent);
+  /* Feedback */
+  --badge-info-bg: rgba(58, 125, 255, 0.12);
+  --badge-info-text: #1d4ed8;
+  --badge-success-bg: rgba(34, 139, 34, 0.12);
+  --badge-success-text: #166534;
+  --badge-warn-bg: rgba(222, 123, 18, 0.14);
+  --badge-warn-text: #92400e;
+  --badge-danger-bg: rgba(215, 38, 56, 0.12);
+  --badge-danger-text: #b42318;
+  --badge-neutral-bg: var(--surface-subtle);
+  --badge-neutral-text: var(--text-secondary);
 
   /* Typography */
   --font-heading: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-weight-semibold: 600;
-  --font-weight-bold: 700;
+  --font-size-display: 2.5rem;
+  --font-size-h1: 2.125rem;
+  --font-size-h2: 1.625rem;
+  --font-size-h3: 1.25rem;
+  --font-size-body: 1rem;
+  --font-size-small: 0.875rem;
+  --line-height-tight: 1.2;
+  --line-height-heading: 1.25;
+  --line-height-body: 1.6;
 
-  /* Layout & Spacing */
-  --radius-card: 24px;   /* large surfaces */
+  /* Layout */
+  --radius-card: 24px;
   --radius-panel: 24px;
-  --radius-button: 14px; /* buttons/cards */
-  --radius-btn: var(--radius-button); /* alias used by some components */
+  --radius-button: 14px;
   --radius-pill: 999px;
-  --spacing-1: 8px;
-  --spacing-2: 16px;
-  --spacing-3: 24px;
-  --spacing-4: 32px;
-  --spacing-5: 40px;
-  --section-pad-desktop: 96px; /* 80–120px spec */
-  --section-pad-mobile: 56px;  /* 40–64px spec */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --container-max: 1200px;
+  --container-pad-mobile: 24px;
+  --container-pad-desktop: 48px;
+  --section-pad-mobile: 32px;
+  --section-pad-desktop: 48px;
+  --page-stack-gap: 32px;
+  --section-stack-gap: 24px;
+  --header-stack-gap: 12px;
+  --toolbar-gap: 16px;
+  --card-padding-sm: 20px;
+  --card-padding-md: 24px;
+  --card-padding-lg: 32px;
+  --table-cell-x: 24px;
+  --table-cell-y: 20px;
+  --control-height-sm: 40px;
+  --control-height-md: 44px;
+  --control-height-lg: 48px;
 
-  /* Shadows & Motion */
-  --shadow-card: 0 16px 32px rgba(0, 0, 0, 0.08);
-  --shadow-card-sm: 0 8px 20px rgba(0, 0, 0, 0.06);
+  /* Shadows */
+  --shadow-card: 0 18px 40px rgba(16, 24, 40, 0.08);
+  --shadow-card-sm: 0 8px 20px rgba(16, 24, 40, 0.06);
   --shadow-nav: 0 6px 24px rgba(16, 24, 40, 0.08);
-  --motion-medium: 300ms;
-  --motion-duration-base: 300ms;
+  --elevation-card: var(--shadow-card);
+  --elevation-modal: 0 24px 48px rgba(3, 7, 18, 0.22);
 
-  /* Gradients (pairing rules: Orange→Red, Blue→Green) */
-  --gradient-orange-red: linear-gradient(128deg,
-    color-mix(in srgb, var(--hud-orange) 82%, #fff3e7) 0%,
-    color-mix(in srgb, var(--hud-red) 70%, #ffe7eb) 52%,
-    color-mix(in srgb, var(--hud-red) 62%, var(--hud-blue) 18%) 100%
-  );
-  --gradient-blue-green: linear-gradient(135deg,
-    color-mix(in srgb, var(--hud-blue) 85%, #eef4ff) 0%,
-    color-mix(in srgb, var(--hud-green) 80%, #e5f7ec) 100%
-  );
-  --gradient-brand: linear-gradient(140deg,
-    color-mix(in srgb, var(--hud-orange) 90%, #fff1e7) 0%,
-    color-mix(in srgb, var(--hud-blue) 82%, #eaf1ff) 50%,
-    color-mix(in srgb, var(--hud-green) 70%, #e4f6ed) 100%
-  );
-  --gradient-card: linear-gradient(135deg,
-    color-mix(in srgb, var(--hud-orange) 6%, #ffffff) 0%,
-    color-mix(in srgb, var(--hud-blue) 7%, #ffffff) 55%,
-    color-mix(in srgb, var(--hud-green) 5%, #ffffff) 100%
-  );
-  --gradient-banner: linear-gradient(125deg,
-    color-mix(in srgb, var(--hud-orange) 18%, transparent) 0%,
-    color-mix(in srgb, var(--hud-blue) 15%, transparent) 55%,
-    color-mix(in srgb, var(--hud-green) 18%, transparent) 100%
-  );
-  --gradient-pill: linear-gradient(110deg, var(--hud-orange) 0%, color-mix(in srgb, var(--hud-red) 55%, var(--hud-blue) 20%) 52%, var(--hud-green) 100%);
-  --gradient-sunrise: linear-gradient(150deg, color-mix(in srgb, var(--hud-orange) 90%, #fff8ef) 0%, color-mix(in srgb, var(--hud-red) 60%, #ffe8ea) 100%);
-  --gradient-overlay-soft: linear-gradient(120deg, color-mix(in srgb, var(--hud-orange) 12%, transparent), color-mix(in srgb, var(--hud-blue) 10%, transparent));
-  --gradient-section: linear-gradient(145deg, color-mix(in srgb, var(--hud-orange) 10%, transparent), color-mix(in srgb, var(--hud-blue) 12%, transparent));
-  --primary-gradient: var(--gradient-pill);
+  /* Focus */
+  --focus-ring: 0 0 0 3px rgba(58, 125, 255, 0.24);
+  --focus-ring-strong: 0 0 0 3px rgba(215, 38, 56, 0.24);
 
-  /* CTA & interactive (Orange→Red as primary action) */
-  --cta-bg: var(--hud-orange);
-  --cta-text: #ffffff;
-  --cta-hover: color-mix(in srgb, var(--hud-orange) 85%, var(--hud-red) 15%);
-  --cta-active: color-mix(in srgb, var(--hud-orange) 75%, var(--hud-red) 25%);
-  --cta-gradient: var(--gradient-orange-red);
-  --cta-shadow: 0 10px 24px color-mix(in srgb, var(--hud-orange) 25%, transparent);
-
-  /* Links */
-  --link: var(--hud-blue);
-  --link-hover: color-mix(in srgb, var(--hud-blue) 88%, black);
-
-  /* On-color text */
-  --on-primary: #ffffff;
-  --on-secondary: #ffffff;
-  --on-accent: #ffffff;
-  --on-surface: var(--hud-ink);
-
-  /* Badges */
-  --badge-info-bg: color-mix(in srgb, var(--hud-blue) 14%, #f6f8ff);
-  --badge-info-text: color-mix(in srgb, var(--hud-blue) 92%, #142447);
-  --badge-success-bg: color-mix(in srgb, var(--hud-green) 14%, #f2fcf5);
-  --badge-success-text: color-mix(in srgb, var(--hud-green) 92%, #11381c);
-  --badge-warn-bg: color-mix(in srgb, var(--hud-orange) 18%, #fff8ef);
-  --badge-warn-text: color-mix(in srgb, var(--hud-orange) 90%, #4f2600);
-  --badge-danger-bg: color-mix(in srgb, var(--hud-red) 16%, #fff5f6);
-  --badge-danger-text: color-mix(in srgb, var(--hud-red) 90%, #47090d);
-  --badge-neutral-bg: color-mix(in srgb, var(--hud-gray-100) 80%, #ffffff);
-  --badge-neutral-text: color-mix(in srgb, var(--hud-gray-600) 92%, #1f1f1f);
-
-  /* Borders */
-  --border-weak: rgba(30, 30, 30, 0.08);
-  --border-strong: rgba(30, 30, 30, 0.16);
-  /* Toast system */
+  /* Toast */
   --toast-shadow: 0 25px 50px rgba(11, 18, 32, 0.18);
   --toast-blur: blur(18px);
-  --toast-border: color-mix(in srgb, var(--hud-ink) 10%, transparent);
-  --toast-surface-base: color-mix(in srgb, var(--surface-card) 80%, rgba(255, 255, 255, 0.92));
-  --toast-text-base: color-mix(in srgb, var(--hud-ink) 90%, #0f141c);
-  --toast-info-bg: color-mix(in srgb, var(--hud-blue) 10%, var(--toast-surface-base));
-  --toast-info-border: color-mix(in srgb, var(--hud-blue) 35%, transparent);
+  --toast-surface-base: rgba(255, 255, 255, 0.92);
+  --toast-text-base: var(--text-primary);
+  --toast-info-bg: rgba(58, 125, 255, 0.12);
+  --toast-info-border: rgba(58, 125, 255, 0.24);
   --toast-info-icon: var(--hud-blue);
-  --toast-success-bg: color-mix(in srgb, var(--hud-green) 12%, var(--toast-surface-base));
-  --toast-success-border: color-mix(in srgb, var(--hud-green) 35%, transparent);
+  --toast-success-bg: rgba(34, 139, 34, 0.12);
+  --toast-success-border: rgba(34, 139, 34, 0.24);
   --toast-success-icon: var(--hud-green);
-  --toast-warning-bg: color-mix(in srgb, var(--hud-orange) 18%, var(--toast-surface-base));
-  --toast-warning-border: color-mix(in srgb, var(--hud-orange) 45%, transparent);
-  --toast-warning-icon: color-mix(in srgb, var(--hud-orange) 95%, var(--hud-red) 10%);
-  --toast-danger-bg: color-mix(in srgb, var(--hud-red) 18%, var(--toast-surface-base));
-  --toast-danger-border: color-mix(in srgb, var(--hud-red) 45%, transparent);
+  --toast-warning-bg: rgba(222, 123, 18, 0.16);
+  --toast-warning-border: rgba(222, 123, 18, 0.28);
+  --toast-warning-icon: var(--hud-orange);
+  --toast-danger-bg: rgba(215, 38, 56, 0.14);
+  --toast-danger-border: rgba(215, 38, 56, 0.26);
   --toast-danger-icon: var(--hud-red);
-  --toast-info-text: color-mix(in srgb, var(--hud-blue) 60%, var(--toast-text-base));
-  --toast-success-text: color-mix(in srgb, var(--hud-green) 60%, var(--toast-text-base));
-  --toast-warning-text: color-mix(in srgb, var(--hud-orange) 62%, var(--toast-text-base));
-  --toast-danger-text: color-mix(in srgb, var(--hud-red) 65%, var(--toast-text-base));
-  --toast-close-bg: rgba(255, 255, 255, 0.16);
-  --toast-close-bg-hover: rgba(255, 255, 255, 0.26);
-  --toast-progress-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  --toast-info-text: var(--text-primary);
+  --toast-success-text: var(--text-primary);
+  --toast-warning-text: var(--text-primary);
+  --toast-danger-text: var(--text-primary);
+  --toast-close-bg: rgba(255, 255, 255, 0.22);
+  --toast-close-bg-hover: rgba(255, 255, 255, 0.38);
 
-  /* Elevation helpers */
-  --elevation-1: 0 4px 12px rgba(17, 24, 40, 0.08);
-  --elevation-2: 0 12px 28px rgba(17, 24, 40, 0.15);
-  --elevation-3: 0 30px 60px rgba(3, 7, 18, 0.22);
-  --elevation-card: var(--shadow-card);
-  --elevation-modal: 0 24px 48px rgba(3, 7, 18, 0.28);
-
-  /* Shade mixes (runtime) */
-  --hud-orange-600: color-mix(in srgb, var(--hud-orange) 85%, black);
-  --hud-orange-700: color-mix(in srgb, var(--hud-orange) 70%, black);
-  --hud-blue-600: color-mix(in srgb, var(--hud-blue) 85%, black);
-  --hud-blue-700: color-mix(in srgb, var(--hud-blue) 70%, black);
-  --hud-green-600: color-mix(in srgb, var(--hud-green) 85%, black);
-  --hud-green-700: color-mix(in srgb, var(--hud-green) 70%, black);
-
-  /* Disabled */
-  --disabled-bg: color-mix(in srgb, var(--hud-gray-100) 70%, white);
-  --disabled-text: color-mix(in srgb, var(--hud-gray-600) 60%, white);
-
-  /* Focus & Accessibility */
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--hud-blue) 32%, transparent);
-  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--hud-red) 35%, transparent);
-
-  /* Type scale */
-  --font-size-xxxl: 4.5rem; /* 72 */
-  --font-size-xxl: 3.5rem;  /* 56 */
-  --font-size-xl: 2.5rem;   /* 40 */
-  --font-size-lg: 1.75rem;  /* 28 */
-  --font-size-md: 1.375rem; /* 22 */
-  --font-size-base: 1rem;   /* 16 */
-  --font-size-sm: 0.875rem; /* 14 */
-  --line-height-tight: 1.2;
-  --line-height-relaxed: 1.6;
-
-  /* Legacy aliases */
+  /* Legacy aliases used across the app */
+  --color-sunrise: var(--hud-orange);
+  --color-deep-red: var(--hud-red);
+  --color-sky-blue: var(--hud-blue);
+  --color-forest: var(--hud-green);
+  --color-soft-white: #f9f9f1;
+  --color-charcoal: var(--text-primary);
+  --color-slate: var(--text-secondary);
+  --color-mist: var(--hud-neutral-200);
+  --color-cloud: var(--surface-muted);
+  --color-ink: var(--text-primary);
+  --color-gold: var(--hud-gold);
   --card-bg: var(--surface-card);
-  --neutral-text: var(--color-charcoal);
-  --subtext-muted: var(--color-slate);
-  --muted-text: var(--color-slate);
+  --neutral-text: var(--text-primary);
+  --subtext-muted: var(--text-secondary);
+  --muted-text: var(--text-muted);
   --muted-button-bg: var(--button-muted-bg);
   --muted-button-text: var(--button-muted-text);
   --danger: var(--accent-danger);
   --warning: var(--accent-warning);
   --success: var(--accent-success);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface-page: #0e1016;
-    --surface-card: #111827;
-    --surface-muted: rgba(17, 24, 39, 0.85);
-    --surface-glow: color-mix(in srgb, var(--hud-blue) 14%, #0e1016);
-    --surface-glass: color-mix(in srgb, rgba(15, 23, 42, 0.8) 80%, transparent);
-    --color-charcoal: #e5e7eb;
-    --color-slate: #9ca3af;
-    --color-mist: rgba(229, 231, 235, 0.18);
-    --shadow-card: 0 20px 38px rgba(3, 7, 18, 0.55);
-    --focus-ring: 0 0 0 3px color-mix(in srgb, var(--hud-blue) 50%, transparent);
-    --on-surface: #e5e7eb;
-    --button-muted-bg: color-mix(in srgb, var(--hud-blue) 24%, transparent);
-    --button-muted-text: #d1d5db;
-    --border-weak: rgba(255, 255, 255, 0.08);
-    --border-strong: rgba(255, 255, 255, 0.18);
-    --card-border: rgba(255, 255, 255, 0.1);
-    --badge-info-bg: color-mix(in srgb, var(--hud-blue) 22%, transparent);
-    --badge-success-bg: color-mix(in srgb, var(--hud-green) 22%, transparent);
-    --badge-warn-bg: color-mix(in srgb, var(--hud-orange) 24%, transparent);
-    --badge-danger-bg: color-mix(in srgb, var(--hud-red) 24%, transparent);
-    --badge-neutral-bg: color-mix(in srgb, var(--hud-gray-600) 35%, #131722);
-    --badge-neutral-text: #f4f5f7;
-    --toast-surface-base: color-mix(in srgb, #0f141c 80%, rgba(15, 23, 42, 0.85));
-    --toast-text-base: color-mix(in srgb, #f8fafc 82%, var(--hud-gray-600));
-    --toast-info-bg: color-mix(in srgb, var(--hud-blue) 24%, #0f141c);
-    --toast-success-bg: color-mix(in srgb, var(--hud-green) 24%, #0f141c);
-    --toast-warning-bg: color-mix(in srgb, var(--hud-orange) 28%, #140b02);
-    --toast-danger-bg: color-mix(in srgb, var(--hud-red) 28%, #190406);
-    --toast-close-bg: rgba(255, 255, 255, 0.12);
-    --toast-close-bg-hover: rgba(255, 255, 255, 0.28);
-    --cta-shadow: 0 8px 24px color-mix(in srgb, var(--hud-red) 35%, transparent);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --motion-medium: 0ms;
-    --motion-duration-base: 0ms;
-  }
+  --input-border: var(--border-default);
+  --border-weak: var(--border-subtle);
+  --card-border: var(--border-subtle);
 }

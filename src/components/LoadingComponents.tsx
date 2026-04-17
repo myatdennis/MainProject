@@ -25,7 +25,7 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
       <div className="flex flex-col items-center space-y-2">
         <Loader2 className={`animate-spin text-orange-500 ${sizeClasses[size]}`} aria-label="Loading" role="progressbar" />
         {text && (
-          <p className="text-sm text-gray-600">{text}</p>
+          <p className="text-sm text-app-secondary">{text}</p>
         )}
       </div>
     </div>
@@ -78,13 +78,13 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   height = 'h-4'
 }) => {
   return (
-    <div className={`animate-pulse bg-gray-200 rounded ${width} ${height} ${className}`} />
+    <div className={`animate-pulse rounded bg-app-muted ${width} ${height} ${className}`} />
   );
 };
 
 export const CourseCardSkeleton: React.FC = () => {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+    <div className="overflow-hidden rounded-lg border border-app-subtle bg-app-surface">
       <Skeleton className="aspect-video" width="w-full" height="h-48" />
       <div className="p-4 space-y-3">
         <Skeleton width="w-3/4" height="h-5" />

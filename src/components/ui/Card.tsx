@@ -13,15 +13,16 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
 
 const paddingMap = {
   none: 'p-0',
-  sm: 'p-4',
+  sm: 'p-5',
   md: 'p-6',
   lg: 'p-8',
 };
 
 const toneMap: Record<CardTone, string> = {
-  default: 'bg-white shadow-card border border-[rgba(31,41,51,0.08)]',
-  muted: 'bg-cloud border border-mist shadow-card-sm',
-  gradient: 'bg-white shadow-card border border-[rgba(31,41,51,0.08)] bg-[radial-gradient(circle_at_top,var(--color-soft-white)_0%,white_60%)]',
+  default: 'bg-[var(--surface-card)] text-[var(--text-primary)] shadow-card border border-[var(--border-subtle)]',
+  muted: 'bg-[var(--surface-muted)] text-[var(--text-primary)] border border-[var(--border-subtle)] shadow-card-sm',
+  gradient:
+    'bg-[var(--surface-card)] text-[var(--text-primary)] shadow-card border border-[var(--border-subtle)] bg-[linear-gradient(145deg,rgba(222,123,18,0.06),rgba(58,125,255,0.04),rgba(255,255,255,0.96))]',
 };
 
 export const Card = ({
@@ -45,9 +46,9 @@ export const Card = ({
       )}
       {...props}
     >
-      {header && <div className="mb-4">{header}</div>}
+      {header && <div className="mb-5">{header}</div>}
       {children}
-      {footer && <div className="mt-6 pt-4 border-t border-mist/60">{footer}</div>}
+      {footer && <div className="mt-6 border-t border-[var(--border-subtle)] pt-5">{footer}</div>}
     </div>
   );
 };

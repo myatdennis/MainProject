@@ -17,13 +17,15 @@ const Breadcrumbs: React.FC<BreadcrumbsProps> = ({ items, separator = '/', class
       {items.map((item, idx) => {
         const isLast = idx === items.length - 1;
         return (
-          <span key={idx} className="flex items-center gap-2">
+          <span key={idx} className="inline-flex items-center gap-2">
             {item.to && !isLast ? (
-              <Link to={item.to}>{item.label}</Link>
+              <Link to={item.to} className="transition-colors">
+                {item.label}
+              </Link>
             ) : (
               <span className="current" aria-current="page">{item.label}</span>
             )}
-            {!isLast && <span aria-hidden="true">{separator}</span>}
+            {!isLast && <span aria-hidden="true" className="text-[var(--text-subtle)]">{separator}</span>}
           </span>
         );
       })}

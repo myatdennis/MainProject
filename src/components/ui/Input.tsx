@@ -13,9 +13,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         ref={ref}
         disabled={disabled}
         className={cn(
-          'w-full rounded-lg border border-mist bg-white px-4 py-3 text-[15px] text-charcoal shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite placeholder:text-slate/60',
+          'h-11 w-full rounded-lg border border-[var(--border-default)] bg-[var(--surface-card)] px-4 text-[15px] text-[var(--text-primary)] shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-white placeholder:text-[var(--text-muted)]',
           hasError && 'border-deepred/70 focus-visible:ring-deepred/60',
-          disabled && 'cursor-not-allowed opacity-60',
+          disabled && 'cursor-not-allowed bg-[var(--surface-muted)] text-[var(--text-subtle)] opacity-100',
           className
         )}
         {...props}

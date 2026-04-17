@@ -317,9 +317,9 @@ const AdminDashboard = () => {
 
   const gateShell = useCallback(
     (content: ReactNode) => (
-      <div className="container-page section">
+      <div className="container-page section page-shell">
         <Breadcrumbs items={breadcrumbItems} />
-        <div className="mt-8">{content}</div>
+        <div>{content}</div>
       </div>
     ),
     [breadcrumbItems],
@@ -504,7 +504,7 @@ const AdminDashboard = () => {
     <>
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
       {gateShell(
-        <section className="space-y-10">
+        <section className="section-stack">
         {/* DEV state panel — visible in development only */}
         {import.meta.env.DEV && new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('devpanel') !== '0' && (
           <details

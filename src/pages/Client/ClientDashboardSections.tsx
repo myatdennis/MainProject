@@ -120,7 +120,7 @@ export const ClientDashboardStatsGrid = ({
   onBrowseCourses: () => void;
   onOpenLms: () => void;
 }) => (
-  <div className="mt-8 grid gap-4 md:grid-cols-4">
+  <div className="grid gap-4 md:grid-cols-4">
     <Card tone="muted" className="py-6 text-center transition-all duration-200 hover:shadow-card">
       <div className="font-heading text-3xl font-bold text-charcoal">{assignedCourseCount}</div>
       <p className="text-xs uppercase tracking-wide text-slate/70">Assigned courses</p>
@@ -156,7 +156,7 @@ export const ContinueLearningCard = ({
   progressPercent: number;
   onResume: () => void;
 }) => (
-  <section aria-label="Continue where you left off" className="mt-6">
+  <section aria-label="Continue where you left off">
     <Card className="border border-skyblue/20 bg-gradient-to-r from-white via-skyblue/5 to-indigo-50/60 shadow-card">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
@@ -190,7 +190,7 @@ export const OnboardingWelcomeCard = ({
   onViewSurveys: () => void;
   onViewResources: () => void;
 }) => (
-  <Card className="mt-6 space-y-3 border border-emerald-200 bg-emerald-50/70">
+  <Card className="space-y-4 border border-emerald-200 bg-emerald-50/70">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="text-xs uppercase tracking-wide text-emerald-700">Onboarding complete</p>
@@ -497,7 +497,7 @@ export const SurveyStatsGrid = ({
   nextDueTitle: string | null;
   nextDueDate?: string | null;
 }) => (
-  <div className="mt-6 grid gap-4 md:grid-cols-3">
+  <div className="grid gap-4 md:grid-cols-3">
     <Card tone="muted" className="py-6 text-center">
       <div className="font-heading text-3xl font-bold text-charcoal">{total}</div>
       <p className="text-xs uppercase tracking-wide text-slate/70">Assigned surveys</p>
@@ -544,7 +544,7 @@ export const AssignedSurveysSection = ({
   onViewAll: () => void;
   onReviewSurvey: (assignmentId?: string, surveyId?: string | null) => void;
 }) => (
-  <Card className="mt-8 space-y-4">
+  <Card className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h2 className="flex items-center gap-2 font-heading text-lg font-semibold text-charcoal">

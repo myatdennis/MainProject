@@ -607,17 +607,16 @@ const AdminCourses = () => {
 
   return (
     <>
-      <div className="container-page py-8">
-        <div className="mb-6">
+      <div className="container-page section page-shell">
+        <div>
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
         </div>
 
         {gateContent ? gateContent : (
 
           <>
-            <div className="mb-8">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-2">
+            <div className="page-header">
+              <div className="page-header__content">
                   <h1 className="text-3xl font-bold text-gray-900">Course catalog</h1>
                   <p className="text-sm text-slate-500 max-w-2xl">
                     Quickly review course status, progress, and the actions you need to take.
@@ -626,24 +625,23 @@ const AdminCourses = () => {
                     {filteredCourses.length} course{filteredCourses.length === 1 ? '' : 's'} available
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="page-header__actions">
                   {selectedCourses.length > 0 && (
-                    <div className="rounded-full bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">
+                    <div className="control-pill bg-slate-100 text-sm font-medium text-slate-700">
                       {selectedCourses.length} selected
                     </div>
                   )}
                   {isRefreshing && (
-                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    <div className="control-pill border border-slate-200 bg-slate-50 text-sm text-slate-600">
                       Refreshing course catalog…
                     </div>
                   )}
                 </div>
               </div>
-            </div>
 
-            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm mb-8">
-              <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-4 flex-1">
+            <div className="surface-panel">
+              <div className="toolbar-row">
+                <div className="toolbar-row__group flex-1">
                   <div className="relative flex-1 min-w-0">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <Input
@@ -658,7 +656,7 @@ const AdminCourses = () => {
                     <select
                       value={filterStatus}
                       onChange={(e) => setFilterStatus(e.target.value)}
-                      className="rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-skyblue focus:ring-2 focus:ring-skyblue/20"
+                      className="h-10 rounded-2xl border border-slate-300 bg-white px-4 text-sm text-slate-700 shadow-sm outline-none transition focus:border-skyblue focus:ring-2 focus:ring-skyblue/20"
                     >
                       <option value="all">All statuses</option>
                       <option value="published">Published</option>
@@ -681,7 +679,7 @@ const AdminCourses = () => {
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3 justify-end">
+                <div className="toolbar-row__group justify-end">
                   {selectedCourses.length > 0 && (
                     <>
                       <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
@@ -753,7 +751,7 @@ const AdminCourses = () => {
 
             {/* Empty state */}
             {filteredCourses.length === 0 && (
-              <div className="mb-8">
+              <div>
                 <EmptyState
                   title="No courses found"
                   description={
@@ -782,13 +780,13 @@ const AdminCourses = () => {
             )}
 
             {/* Course Table */}
-            <div className="rounded-[32px] border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-6 border-b border-slate-200 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="table-shell">
+              <div className="table-shell__header">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">Courses</h2>
                   <p className="text-sm text-slate-500 max-w-xl">A calm overview of active learning experiences and the next actions you can take.</p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="table-shell__meta">
                   <button
                     onClick={handleSelectAll}
                     type="button"
@@ -799,10 +797,10 @@ const AdminCourses = () => {
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm text-slate-700">
-                  <thead className="bg-slate-50">
+                <table className="min-w-full text-sm text-slate-700">
+                  <thead>
                     <tr>
-                      <th className="text-left py-5 px-6">
+                      <th className="text-left">
                         <input
                           type="checkbox"
                           checked={selectedCourses.length === filteredCourses.length && filteredCourses.length > 0}
@@ -810,17 +808,17 @@ const AdminCourses = () => {
                           className="h-4 w-4 border-slate-300 rounded focus:ring-skyblue"
                         />
                       </th>
-                      <th className="text-left py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Course</th>
-                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Enrollments</th>
-                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Progress</th>
-                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Status</th>
-                      <th className="text-center py-5 px-6 font-semibold uppercase tracking-[0.12em] text-slate-500">Actions</th>
+                      <th className="text-left">Course</th>
+                      <th className="text-center">Enrollments</th>
+                      <th className="text-center">Progress</th>
+                      <th className="text-center">Status</th>
+                      <th className="text-center">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-200 bg-white">
+                  <tbody className="bg-white">
                     {filteredCourses.map((course: Course) => (
-                      <tr key={course.id} className="border-b border-slate-200 transition-colors duration-150 hover:bg-slate-50">
-                        <td className="py-6 px-6 align-middle">
+                      <tr key={course.id}>
+                        <td className="align-middle">
                           <input
                             type="checkbox"
                             checked={selectedCourses.includes(course.id)}
@@ -828,7 +826,7 @@ const AdminCourses = () => {
                             className="h-4 w-4 border-slate-300 rounded focus:ring-skyblue"
                           />
                         </td>
-                        <td className="py-6 px-6 align-middle">
+                        <td className="align-middle">
                           <div className="flex items-center gap-4 min-w-0">
                             <LazyImage
                               src={course.thumbnail}
@@ -849,11 +847,11 @@ const AdminCourses = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="py-6 px-6 text-center align-middle">
+                        <td className="text-center align-middle">
                           <div className="text-sm font-semibold text-slate-900">{course.enrollments ?? 0}</div>
                           <div className="text-xs text-slate-500">learners</div>
                         </td>
-                        <td className="py-6 px-6 text-center align-middle">
+                        <td className="text-center align-middle">
                           <div className="mx-auto max-w-[180px] text-left">
                             <div className="mb-2 text-sm font-semibold text-slate-900">{course.completionRate ?? 0}%</div>
                             <div className="h-2 overflow-hidden rounded-full bg-slate-200">
@@ -864,12 +862,12 @@ const AdminCourses = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="py-6 px-6 text-center align-middle">
-                          <span className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${getStatusColor(course.status)}`}>
+                        <td className="text-center align-middle">
+                          <span className={`inline-status ${getStatusColor(course.status)}`}>
                             {course.status}
                           </span>
                         </td>
-                        <td className="py-6 px-6 text-center align-middle">
+                        <td className="text-center align-middle">
                           <div className="flex flex-wrap justify-center gap-2">
                             <Link
                               to={`/admin/courses/${course.id}/details?viewMode=learner`}

@@ -19,6 +19,12 @@ export default {
         hudbg: '#FFFDF9', // Soft site background
         gold: '#F6C87B', // Accent gold
         mutedgrey: '#9CA3AF',
+        surface: 'var(--surface-card)',
+        'surface-muted': 'var(--surface-muted)',
+        'text-primary': 'var(--text-primary)',
+        'text-secondary': 'var(--text-secondary)',
+        'text-muted': 'var(--text-muted)',
+        'border-subtle': 'var(--border-subtle)',
         gray: {
           50: '#F8F9FB',
           100: '#F4F5F7',

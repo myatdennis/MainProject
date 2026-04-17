@@ -4,11 +4,11 @@ import cn from '../../utils/cn';
 type BadgeTone = 'neutral' | 'positive' | 'attention' | 'danger' | 'info';
 
 const toneStyles: Record<BadgeTone, string> = {
-  neutral: 'bg-cloud text-slate',
-  positive: 'bg-forest/10 text-forest',
-  attention: 'bg-gold/15 text-gold',
-  danger: 'bg-deepred/10 text-deepred',
-  info: 'bg-skyblue/12 text-skyblue',
+  neutral: 'bg-[var(--badge-neutral-bg)] text-[var(--badge-neutral-text)]',
+  positive: 'bg-[var(--badge-success-bg)] text-[var(--badge-success-text)]',
+  attention: 'bg-[var(--badge-warn-bg)] text-[var(--badge-warn-text)]',
+  danger: 'bg-[var(--badge-danger-bg)] text-[var(--badge-danger-text)]',
+  info: 'bg-[var(--badge-info-bg)] text-[var(--badge-info-text)]',
 };
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -21,7 +21,7 @@ export const Badge = ({ tone = 'neutral', soft = false, className, children, ...
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold tracking-wide uppercase',
-        soft ? 'bg-cloud text-slate' : toneStyles[tone],
+        soft ? 'bg-[var(--surface-muted)] text-[var(--text-secondary)]' : toneStyles[tone],
         className
       )}
       {...props}

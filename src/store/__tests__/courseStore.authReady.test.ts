@@ -9,14 +9,19 @@ vi.mock('../../dal/adminCourses', () => ({
 }));
 
 const fetchPublishedCoursesMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const fetchCourseMock = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 vi.mock('../../dal/clientCourses', () => ({
   fetchPublishedCourses: fetchPublishedCoursesMock,
-  fetchCourse: vi.fn(),
+  fetchCourse: fetchCourseMock,
 }));
 
 const getAssignmentsForUserMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const getAssignmentsForUserWithOutcomeMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ outcome: 'empty', assignments: [], error: null }),
+);
 vi.mock('../../utils/assignmentStorage', () => ({
   getAssignmentsForUser: getAssignmentsForUserMock,
+  getAssignmentsForUserWithOutcome: getAssignmentsForUserWithOutcomeMock,
 }));
 
 // Use vi.hoisted so the mock refs are available at module evaluation time.
@@ -42,6 +47,29 @@ vi.mock('../../state/runtimeStatus', () => ({
   getRuntimeStatus: runtimeStatusMock.getRuntimeStatus,
 }));
 
+const secureStorageState = vi.hoisted(() => ({
+  session: { id: 'user-123', email: 'user@example.com' } as { id?: string; email?: string } | null,
+  accessToken: 'token-123' as string | null,
+}));
+
+vi.mock('../../lib/secureStorage', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/secureStorage')>('../../lib/secureStorage');
+  return {
+    ...actual,
+    getUserSession: vi.fn(() => secureStorageState.session),
+    getAccessToken: vi.fn(() => secureStorageState.accessToken),
+  };
+});
+
+const apiAccessTokenMock = vi.hoisted(() => vi.fn(async () => secureStorageState.accessToken));
+vi.mock('../../lib/apiClient', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/apiClient')>('../../lib/apiClient');
+  return {
+    ...actual,
+    getAccessToken: apiAccessTokenMock,
+  };
+});
+
 let resolverSnapshot = {
   status: 'loading' as 'loading' | 'ready' | 'error',
   membershipStatus: 'loading' as 'idle' | 'loading' | 'ready' | 'degraded' | 'error',
@@ -63,7 +91,10 @@ vi.mock('../courseStoreOrgBridge', () => ({
 /** Re-apply all stub implementations after vi.clearAllMocks() resets counts. */
 const resetMockImpls = () => {
   fetchPublishedCoursesMock.mockResolvedValue([]);
+  fetchCourseMock.mockResolvedValue(null);
   getAssignmentsForUserMock.mockResolvedValue([]);
+  getAssignmentsForUserWithOutcomeMock.mockResolvedValue({ outcome: 'empty', assignments: [], error: null });
+  apiAccessTokenMock.mockImplementation(async () => secureStorageState.accessToken);
   runtimeStatusMock.getRuntimeStatus.mockReturnValue({
     supabaseConfigured: true,
     supabaseHealthy: true,
@@ -88,7 +119,11 @@ describe('courseStore bridge snapshot synchronization', () => {
       role: 'member',
       userId: 'user-123',
     };
+    secureStorageState.session = { id: 'user-123', email: 'user@example.com' };
+    secureStorageState.accessToken = 'token-123';
     fetchPublishedCoursesMock.mockClear();
+    fetchCourseMock.mockClear();
+    getAssignmentsForUserWithOutcomeMock.mockClear();
   });
 
   afterEach(() => {
@@ -176,15 +211,19 @@ describe('courseStore bridge snapshot synchronization', () => {
         modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1' }] }],
       },
     ]);
-    getAssignmentsForUserMock.mockResolvedValueOnce([
-      {
-        id: 'assignment-1',
-        courseId: 'course-1',
-        userId: 'user-123',
-        status: 'assigned',
-        progress: 0,
-      },
-    ] as any);
+    getAssignmentsForUserWithOutcomeMock.mockResolvedValueOnce({
+      outcome: 'success',
+      assignments: [
+        {
+          id: 'assignment-1',
+          courseId: 'course-1',
+          userId: 'user-123',
+          status: 'assigned',
+          progress: 0,
+        },
+      ] as any,
+      error: null,
+    });
 
     resolverSnapshot = {
       status: 'ready',
@@ -198,6 +237,66 @@ describe('courseStore bridge snapshot synchronization', () => {
     await courseStore.forceInit({ newOrgId: 'org-restored', flushCache: true });
 
     expect(fetchPublishedCoursesMock).toHaveBeenCalled();
+    expect(courseStore.getLearnerCatalogState().status).toBe('ok');
+    expect(courseStore.getAllCourses()).toHaveLength(1);
+  });
+
+  it('blocks learner catalog loading until a usable bearer session exists', async () => {
+    secureStorageState.accessToken = null;
+    apiAccessTokenMock.mockResolvedValue(null);
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-1',
+      orgId: 'org-1',
+      role: 'member',
+      userId: 'user-123',
+    };
+
+    await courseStore.init({ reason: 'test_missing_learner_token' });
+
+    expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
+    expect(courseStore.getLearnerCatalogState()).toMatchObject({
+      status: 'error',
+      detail: 'auth_session_unavailable',
+    });
+  });
+
+  it('hydrates missing learner-assigned courses without includeDrafts', async () => {
+    fetchPublishedCoursesMock.mockResolvedValueOnce([]);
+    getAssignmentsForUserWithOutcomeMock.mockResolvedValueOnce({
+      outcome: 'success',
+      assignments: [
+        {
+          id: 'assignment-1',
+          courseId: 'course-42',
+          userId: 'user-123',
+          status: 'assigned',
+          progress: 0,
+        },
+      ] as any,
+      error: null,
+    });
+    fetchCourseMock.mockResolvedValueOnce({
+      id: 'course-42',
+      title: 'Assigned Course',
+      slug: 'assigned-course',
+      modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1' }] }],
+      lessonCount: 1,
+      structureLoaded: true,
+    } as any);
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-1',
+      orgId: 'org-1',
+      role: 'member',
+      userId: 'user-123',
+    };
+
+    await courseStore.init({ reason: 'test_assignment_hydration_without_drafts' });
+
+    expect(fetchCourseMock).toHaveBeenCalledWith('course-42', { includeDrafts: false });
     expect(courseStore.getLearnerCatalogState().status).toBe('ok');
     expect(courseStore.getAllCourses()).toHaveLength(1);
   });
@@ -221,6 +320,7 @@ describe('courseStore bridge snapshot synchronization', () => {
 
   it('admin capability on LMS surface', async () => {
     window.history.replaceState(null, '', '/lms/dashboard');
+    secureStorageState.session = { id: 'user-admin', email: 'admin@example.com' };
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',
@@ -230,15 +330,19 @@ describe('courseStore bridge snapshot synchronization', () => {
       userId: 'user-admin',
     };
 
-    getAssignmentsForUserMock.mockResolvedValueOnce([
-      {
-        id: 'assignment-1',
-        courseId: 'course-1',
-        userId: 'user-admin',
-        status: 'assigned',
-        progress: 0,
-      } as any,
-    ]);
+    getAssignmentsForUserWithOutcomeMock.mockResolvedValueOnce({
+      outcome: 'success',
+      assignments: [
+        {
+          id: 'assignment-1',
+          courseId: 'course-1',
+          userId: 'user-admin',
+          status: 'assigned',
+          progress: 0,
+        } as any,
+      ],
+      error: null,
+    });
     fetchPublishedCoursesMock.mockResolvedValueOnce([
       {
         id: 'course-1',
@@ -256,6 +360,7 @@ describe('courseStore bridge snapshot synchronization', () => {
   });
 
   it('admin role regression test', async () => {
+    secureStorageState.session = { id: 'user-admin', email: 'admin@example.com' };
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',
@@ -283,6 +388,7 @@ describe('courseStore init() defensive runtime-status guard', () => {
     // the getRuntimeStatus() call and the refreshRuntimeStatus() await inside
     // init().  The defensive guard in courseStore.init() should catch this and
     // fall back to safe defaults instead of throwing.
+    secureStorageState.session = { id: 'user-safe', email: 'user-safe@example.com' };
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',
@@ -320,6 +426,7 @@ describe('courseStore init() defensive runtime-status guard', () => {
   });
 
   it('does not crash when both getRuntimeStatus and refreshRuntimeStatus return undefined', async () => {
+    secureStorageState.session = { id: 'user-safe2', email: 'user-safe2@example.com' };
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',

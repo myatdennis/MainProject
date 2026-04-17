@@ -7,7 +7,7 @@ import {
 import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
-import { getActiveOrgPreference } from '../lib/secureStorage';
+import { getAccessToken as getStoredAccessToken, getActiveOrgPreference, getUserSession } from '../lib/secureStorage';
 import { getAssignmentsForUserWithOutcome } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
@@ -15,6 +15,7 @@ import { loadStoredCourseProgress } from '../utils/courseProgress';
 import { hasStoredProgressHistory } from '../utils/courseAvailability';
 import { saveDraftSnapshot, markDraftSynced, deleteDraftSnapshot } from '../dal/courseDrafts';
 import { ApiError } from '../utils/apiClient';
+import { getAccessToken as getApiAccessToken } from '../lib/apiClient';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
 import { nanoid } from 'nanoid';
 import { canonicalizeLessonContent } from '../utils/lessonContent';
@@ -1176,7 +1177,7 @@ let adminCatalogState: AdminCatalogState = {
   lastError: null,
 };
 
-type LearnerCatalogStatus = 'idle' | 'ok' | 'empty' | 'error';
+type LearnerCatalogStatus = 'idle' | 'loading' | 'ok' | 'empty' | 'error';
 interface LearnerCatalogState {
   status: LearnerCatalogStatus;
   lastUpdatedAt: number | null;
@@ -1412,6 +1413,58 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+const LEARNER_SESSION_WAIT_DELAYS_MS = [50, 100, 200, 400, 800, 1200] as const;
+
+const normalizeIdentityValue = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const waitForLearnerApiSession = async (userId: string | null, reason: string): Promise<boolean> => {
+  if (typeof window === 'undefined') {
+    return Boolean(userId);
+  }
+
+  const normalizedUserId = normalizeIdentityValue(userId);
+  for (let attempt = 0; attempt <= LEARNER_SESSION_WAIT_DELAYS_MS.length; attempt += 1) {
+    const session = getUserSession();
+    const sessionId = normalizeIdentityValue(session?.id);
+    const sessionEmail = normalizeIdentityValue(session?.email);
+    const userMatches =
+      !normalizedUserId || normalizedUserId === sessionId || normalizedUserId === sessionEmail;
+
+    let token = getStoredAccessToken();
+    if (!token) {
+      try {
+        token = await getApiAccessToken();
+      } catch (error) {
+        if (import.meta.env?.DEV) {
+          console.debug('[courseStore] learner_session_token_probe_failed', { reason, attempt, error });
+        }
+      }
+    }
+
+    if (userMatches && token) {
+      return true;
+    }
+
+    if (attempt < LEARNER_SESSION_WAIT_DELAYS_MS.length) {
+      await sleep(LEARNER_SESSION_WAIT_DELAYS_MS[attempt]);
+    }
+  }
+
+  console.warn('[courseStore] learner_api_session_unavailable', {
+    reason,
+    requestedUserId: normalizedUserId,
+    sessionUserId: normalizeIdentityValue(getUserSession()?.id),
+    pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+  });
+  return false;
+};
+
 const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
   const nextState = typeof update === 'function' ? update(adminCatalogState) : { ...adminCatalogState, ...update };
   if (shallowEqualState(adminCatalogState, nextState)) {
@@ -1631,12 +1684,19 @@ const ensureAssignmentScopedCatalog = async (
     }
 
     if (outcome.outcome === 'unauthenticated') {
-      // Can't reliably scope assignments for this user — keep current catalog.
+      // Once the learner catalog flow is running, an unauthenticated outcome is a
+      // real failure. Returning idle here caused the page to sit in loading UI
+      // indefinitely even though the request path could never succeed.
       if (!skipDiagnostics) {
         emitCatalogDiagnostic('assignment_scope_failed', { userId, orgId, phase: 'post_fetch', error: 'unauthenticated' });
       }
-      setLearnerCatalogState({ status: 'idle', lastUpdatedAt: Date.now(), lastError: null, detail: null });
-      return currentCourses;
+      setLearnerCatalogState({
+        status: 'error',
+        lastUpdatedAt: Date.now(),
+        lastError: 'auth_session_unavailable',
+        detail: 'auth_session_unavailable',
+      });
+      return {};
     }
 
     const assignments = outcome.assignments;
@@ -1699,15 +1759,35 @@ const ensureAssignmentScopedCatalog = async (
       }
     });
 
-    for (const courseId of missingCourseIds) {
-      try {
-        const fetched = await fetchCourse(courseId, { includeDrafts: true });
-        if (fetched) {
-          courseMap[fetched.id] = fetched as Course;
-        }
-      } catch (error) {
-        console.warn(`[courseStore] Failed to hydrate course ${courseId} for assignment filter`, error);
+    if (missingCourseIds.length > 0) {
+      const learnerSessionReady = await waitForLearnerApiSession(userId, 'assignment_course_hydration');
+      if (!learnerSessionReady) {
+        setLearnerCatalogState({
+          status: 'error',
+          lastUpdatedAt: Date.now(),
+          lastError: 'auth_session_unavailable',
+          detail: 'auth_session_unavailable',
+        });
+        return {};
       }
+
+      const hydrationResults = await Promise.allSettled(
+        missingCourseIds.map(async (courseId) => {
+          const fetched = await fetchCourse(courseId, { includeDrafts: false });
+          return { courseId, fetched };
+        }),
+      );
+
+      hydrationResults.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          const fetched = result.value.fetched;
+          if (fetched) {
+            courseMap[fetched.id] = fetched as Course;
+          }
+          return;
+        }
+        console.warn('[courseStore] Failed to hydrate assigned learner course', result.reason);
+      });
     }
 
     const filteredEntries = Object.entries(courseMap).filter(([id]) => assignmentByCourseId.has(id));
@@ -1955,6 +2035,27 @@ export const courseStore = {
       const treatAsAdmin = adminSurfaceDetected;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
+      if (restrictToOrg) {
+        setLearnerCatalogState({
+          status: 'loading',
+          lastUpdatedAt: Date.now(),
+          lastError: null,
+          detail: null,
+        });
+        const learnerSessionReady = await waitForLearnerApiSession(orgContext.userId, 'catalog_init');
+        if (!learnerSessionReady) {
+          adminLoadStatus = 'error';
+          adminLoadError = 'auth_session_unavailable';
+          courses = {};
+          setLearnerCatalogState({
+            status: 'error',
+            lastUpdatedAt: Date.now(),
+            lastError: 'auth_session_unavailable',
+            detail: 'auth_session_unavailable',
+          });
+          return;
+        }
+      }
       // Org scoping is determined directly from the resolved context — no deferred bootstrap needed.
       let runtimeStatus = getRuntimeStatus() ?? FALLBACK_RUNTIME_STATUS;
       try {
