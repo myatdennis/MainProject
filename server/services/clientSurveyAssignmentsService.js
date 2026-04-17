@@ -162,10 +162,26 @@ export const createClientSurveyAssignmentsService = ({
       let lastError;
       const maxAttempts = 2;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const attemptId = `${label}#${attempt}`;
+        const start = Date.now();
+        logger.info('client_assigned_surveys_query_start', { requestId, label, attempt, attemptId });
         try {
-          return await runTimedQuery(label, buildQuery, timeoutMs);
+          const result = await runTimedQuery(label, buildQuery, timeoutMs);
+          const duration = Date.now() - start;
+          logger.info('client_assigned_surveys_query_success', { requestId, label, attempt, attemptId, duration });
+          return result;
         } catch (error) {
           lastError = error;
+          const duration = Date.now() - start;
+          logger.warn('client_assigned_surveys_query_error', {
+            requestId,
+            label,
+            attempt,
+            attemptId,
+            duration,
+            code: error?.code ?? null,
+            message: error?.message ?? String(error),
+          });
           if (!isSupabaseTransientError(error) || attempt >= maxAttempts) {
             throw error;
           }
@@ -225,6 +241,7 @@ export const createClientSurveyAssignmentsService = ({
     try {
       assignments = await loadMergedUserAssignments();
     } catch (error) {
+      // Treat transient network/connection errors as hydrationPending and proceed.
       if (isSupabaseTransientError(error)) {
         logger.warn('client_assigned_surveys_load_transient', {
           requestId,
@@ -236,7 +253,26 @@ export const createClientSurveyAssignmentsService = ({
         hydrationPending = true;
         assignments = [];
       } else {
-        throw error;
+        // Handle common Postgres / PostgREST filters that occur when userId is not a UUID
+        // (for example: invalid input syntax for type uuid - code 22P02). These can happen
+        // when platform/admin users are present in learner-scoped flows. In such cases,
+        // return an empty assignment set instead of bubbling a raw 500.
+        const invalidUuidFilter =
+          error?.code === '22P02' ||
+          (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid')) ||
+          (typeof error?.message === 'string' && error.message.includes('invalid input syntax for type uuid'));
+        if (invalidUuidFilter) {
+          logger.warn('client_assigned_surveys_invalid_userid_filter', {
+            requestId,
+            userId: context.userId,
+            orgId: orgScope.orgId ?? null,
+            code: error?.code ?? null,
+            message: error?.message ?? String(error),
+          });
+          assignments = [];
+        } else {
+          throw error;
+        }
       }
     }
 

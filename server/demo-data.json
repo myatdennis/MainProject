@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-17T18:30:53.159Z",
+        "published_at": "2026-04-17T22:00:43.327Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -192,8 +192,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-17T18:31:00.277Z",
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "created_at": "2026-04-17T22:00:56.531Z",
+        "updated_at": "2026-04-17T22:00:56.531Z"
       }
     ],
     [
@@ -235,8 +235,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-17T18:31:00.277Z",
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "created_at": "2026-04-17T22:00:56.532Z",
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -275,8 +275,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-17T18:31:00.277Z",
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "created_at": "2026-04-17T22:00:56.532Z",
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -317,8 +317,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-17T18:31:00.277Z",
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "created_at": "2026-04-17T22:00:56.532Z",
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -358,8 +358,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-17T18:31:00.277Z",
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "created_at": "2026-04-17T22:00:56.532Z",
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ]
   ],
@@ -375,7 +375,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -391,7 +391,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -404,7 +404,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -419,7 +419,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ],
     [
@@ -433,7 +433,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-17T18:31:00.277Z"
+        "updated_at": "2026-04-17T22:00:56.532Z"
       }
     ]
   ],

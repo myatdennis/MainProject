@@ -116,6 +116,28 @@ const resolveConnectionSource = () => {
 
 const connectionSource = resolveConnectionSource()
 
+// Security: in production do not allow accidental direct DB host usage that
+// points at `db.<project>.supabase.co` unless explicitly configured.
+try {
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production' && connectionSource && connectionSource.value) {
+    try {
+      const parsed = new URL(connectionSource.value)
+      const host = parsed.hostname || ''
+      if (host.toLowerCase().startsWith('db.')) {
+        throw new Error(
+          '[server/db] Direct DB host usage detected in production. Set DATABASE_POOLER_URL or SUPABASE_DB_POOLER_URL to use the pooler, or explicitly provide DATABASE_URL/SUPABASE_DB_URL if you understand the implications.'
+        )
+      }
+    } catch (err) {
+      // If URL parsing fails, fall through — validation will catch it later.
+    }
+  }
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err))
+  // Re-throw so the process fails fast in CI/production.
+  throw err
+}
+
 const RELAX_POOLER_TLS =
   String(process.env.RELAX_POOLER_TLS ?? 'true').toLowerCase() === 'true'
 const autoAllowSelfSignedForPooler =
@@ -282,28 +304,12 @@ const buildDirectConnectionFallback = (rawConnectionString, source = {}) => {
       synthesized: false,
     }
   }
-  try {
-    const parsed = new URL(rawConnectionString)
-    const projectRef =
-      deriveProjectRefFromSupabaseUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '') ||
-      (parsed.username.includes('.') ? parsed.username.split('.').slice(1).join('.') : null)
-    if (!projectRef) {
-      return null
-    }
-    parsed.hostname = `db.${projectRef}.supabase.co`
-    parsed.port = '5432'
-    parsed.username = 'postgres'
-    return {
-      key: 'DATABASE_URL',
-      type: 'direct',
-      value: parsed.toString(),
-      derivedFrom: source.key,
-      synthesized: true,
-      projectRef,
-    }
-  } catch {
-    return null
-  }
+  // Do NOT synthesize a direct DB hostname from the pooler connection.
+  // Auto-deriving `db.<project>.supabase.co` caused production DNS resolution
+  // failures when the direct DB host is unreachable. Require an explicit
+  // direct DB URL via SUPABASE_DB_URL or DATABASE_URL if an operator
+  // intentionally wants to use a direct connection.
+  return null
 }
 
 const initialConnectionMetadata = await initializeConnectionMetadata(connectionSource.value, connectionSource)
