@@ -194,6 +194,11 @@ if (isDemoModeExplicit && configuredDemoUsers.length === 0 && !allowLegacyDemoUs
   );
 }
 
+// Startup-time diagnostic: warn when Supabase auth client is not configured in non-production
+if (!isProduction && !supabaseAuthClient && !demoLoginEnabled && !isE2ETestMode) {
+  console.warn('[AUTH ROUTES] Supabase auth client not configured and demo logins are disabled. To enable local/demo login set DEMO_MODE, ALLOW_DEMO, or ALLOW_LEGACY_DEMO_USERS in your environment.');
+}
+
 const findAnyDemoUserByEmail = (email) => {
   if (!email) return null;
   const normalized = normalizeEmail(email);
@@ -596,8 +601,51 @@ const loginHandler = async (req, res) => {
 };
 
 // Rate-limit login to reduce credential stuffing/account enumeration.
+// Register canonical login path relative to this router only. The router is mounted
+// at `/api/auth` by the main server — avoid duplicating the full path here.
 router.post('/login', authLimiter, loginHandler);
-router.post('/api/auth/login', authLimiter, loginHandler);
+
+// Dev-only debug endpoint: allow exercising the demo-login branch without
+// setting global DEMO flags. This endpoint is only enabled in non-production
+// when ALLOW_DEBUG_LOGIN=true. This minimizes accidental exposure.
+if (!isProduction && String(process.env.ALLOW_DEBUG_LOGIN || '').toLowerCase() === 'true') {
+  router.post('/_debug/demo-login', authLimiter, async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({ ok: false, error: 'missing_credentials', message: 'Email and password are required.' });
+      }
+      const normalizedEmail = typeof normalizeEmail === 'function' ? normalizeEmail(email) : String(email).trim().toLowerCase();
+      const matchingDemoUser = findAnyDemoUserByEmail(normalizedEmail);
+      if (!matchingDemoUser) {
+        return res.status(404).json({ ok: false, error: 'demo_user_not_found', message: 'No configured demo user found for that email.' });
+      }
+      const demoUser = matchingDemoUser;
+      const passwordMatches = demoUser.passwordHash ? await bcrypt.compare(password, demoUser.passwordHash) : password === demoUser.password;
+      if (!passwordMatches) {
+        return res.status(401).json({ ok: false, error: 'invalid_credentials', message: 'The email or password you entered is incorrect.' });
+      }
+      const tokens = generateTokens({
+        userId: demoUser.id,
+        email: normalizedEmail,
+        role: demoUser.role || 'user',
+        organizationId: demoUser.organizationId || null,
+        platformRole: demoUser.role === 'admin' ? 'platform_admin' : null,
+      });
+      const userPayload = buildDemoUserPayloadFromToken({ userId: demoUser.id, email: normalizedEmail, role: demoUser.role || 'user' });
+      attachAuthCookies(req, res, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
+      console.info('[DEBUG DEMO LOGIN]', { email: normalizedEmail, userId: demoUser.id });
+      return res.status(200).json(buildSessionResponse(userPayload, tokens));
+    } catch (err) {
+      console.error('[DEBUG DEMO LOGIN] error', err instanceof Error ? err.message : err);
+      return res.status(500).json({ ok: false, error: 'debug_demo_login_failed', message: 'Unable to complete demo login.' });
+    }
+  });
+} else {
+  if (!isProduction) {
+    console.info('[AUTH ROUTES] demo debug endpoint disabled; set ALLOW_DEBUG_LOGIN=true to enable /api/auth/_debug/demo-login (non-production only)');
+  }
+}
 
 // ============================================================================
 // Register
