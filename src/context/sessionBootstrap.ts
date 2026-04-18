@@ -258,6 +258,10 @@ export const buildE2EBootstrapPayload = (): {
     typeof window !== 'undefined' && typeof (window as any).__E2E_USER_ROLE === 'string'
       ? String((window as any).__E2E_USER_ROLE)
       : 'admin';
+  const e2eActiveOrgId =
+    typeof window !== 'undefined' && typeof (window as any).__E2E_ACTIVE_ORG_ID === 'string'
+      ? String((window as any).__E2E_ACTIVE_ORG_ID)
+      : 'demo-sandbox-org';
   const e2eRole = e2eRoleRaw.trim().toLowerCase();
   const isE2EAdmin = e2eRole === 'admin' || e2eRole === 'owner' || e2eRole === 'platform_admin';
 
@@ -266,13 +270,13 @@ export const buildE2EBootstrapPayload = (): {
       user: { id: e2eUserId, email: e2eEmail } as any,
       memberships: [
         {
-          orgId: 'demo-sandbox-org',
+          orgId: e2eActiveOrgId,
           role: isE2EAdmin ? 'admin' : e2eRole || 'learner',
           status: 'active',
           organizationName: 'Demo Sandbox Org',
         } as any,
       ],
-      organizationIds: ['demo-sandbox-org'],
+      organizationIds: [e2eActiveOrgId],
       accessToken: 'e2e-access-token',
       refreshToken: 'e2e-refresh-token',
       expiresAt: Math.floor(Date.now() / 1000) + 3600,

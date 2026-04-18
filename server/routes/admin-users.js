@@ -1,4 +1,5 @@
 import express from 'express';
+import { assertAdminQueryColumns, logAdminQuery } from '../utils/adminSchemaGuard.js';
 import supabaseClient, { supabaseAdminClient } from '../lib/supabaseClient.js';
 import { logger } from '../lib/logger.js';
 const supabase = supabaseClient || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
@@ -167,9 +168,14 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     let previousOrgId = null;
 
     if (!isPlatformAdminActor(actor)) {
+      assertAdminQueryColumns({
+        table: 'user_profiles',
+        columns: 'organization_id',
+        label: 'admin-users.transfer.loadProfile.orgAdmin',
+      });
       const { data: profileRow, error: profileRowError } = await supabaseAdmin
         .from('user_profiles')
-        .select('organization_id, active_organization_id')
+        .select('organization_id')
         .eq('id', targetUserId)
         .maybeSingle();
 
@@ -177,7 +183,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         throw new Error(`user_profile_load_failed: ${profileRowError.message}`);
       }
 
-      const sourceOrgId = (String(profileRow?.active_organization_id || profileRow?.organization_id || '').trim() || null);
+      const sourceOrgId = (String(profileRow?.organization_id || '').trim() || null);
       previousOrgId = sourceOrgId;
 
       logger.info('[USER TRANSFER] org_admin action', {
@@ -201,9 +207,14 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         return res.status(403).json({ ok: false, code: 'cross_org_transfer_forbidden', message: 'Organization admin cannot transfer users across organizations.' });
       }
     } else {
+      assertAdminQueryColumns({
+        table: 'user_profiles',
+        columns: 'organization_id',
+        label: 'admin-users.transfer.loadProfile.platformAdmin',
+      });
       const { data: profileRow, error: profileRowError } = await supabaseAdmin
         .from('user_profiles')
-        .select('organization_id, active_organization_id')
+        .select('organization_id')
         .eq('id', targetUserId)
         .maybeSingle();
 
@@ -211,7 +222,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         throw new Error(`user_profile_load_failed: ${profileRowError.message}`);
       }
 
-      previousOrgId = (String(profileRow?.active_organization_id || profileRow?.organization_id || '').trim() || null);
+      previousOrgId = (String(profileRow?.organization_id || '').trim() || null);
     }
 
     if (!orgId) {
@@ -292,9 +303,21 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     const activeMembership = activeMemberships[0];
 
     console.log('STEP 3: update profile', { userId: targetUserId, orgId });
+    assertAdminQueryColumns({
+      table: 'user_profiles',
+      columns: ['organization_id'],
+      label: 'admin-users.transfer.updateProfile',
+    });
+    logAdminQuery(logger, {
+      requestId: req.requestId ?? null,
+      route: '/api/admin/users/:userId',
+      table: 'user_profiles',
+      columns: ['organization_id'],
+      action: 'update',
+    });
     const { error: profileError } = await supabaseAdmin
       .from('user_profiles')
-      .update({ organization_id: orgId, active_organization_id: orgId })
+      .update({ organization_id: orgId })
       .eq('id', targetUserId);
 
     if (profileError) {

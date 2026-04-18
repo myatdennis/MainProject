@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
 import SurveyAssignmentModal from '../../components/Survey/SurveyAssignmentModal';
@@ -67,6 +68,7 @@ const AdminSurveys = () => {
   const { routeKey } = useRouteChangeReset();
   useNavTrace('AdminSurveys');
   const { showToast } = useToast();
+  const { activeOrgId } = useSecureAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
@@ -86,12 +88,13 @@ const AdminSurveys = () => {
   
   useEffect(() => {
     let cancelled = false;
+    if (!activeOrgId) return;
 
     const fetchWithRetry = async (attempts = 3) => {
       let lastErr: any = null;
       for (let i = 0; i < attempts; i++) {
         try {
-          const orgs = await listOrgs();
+          const orgs = await listOrgs(undefined, { preferredOrgId: activeOrgId });
           if (cancelled) return;
           const next = new Map<string, string>();
           orgs.forEach((org) => {
@@ -119,7 +122,7 @@ const AdminSurveys = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeOrgId]);
 
   useEffect(() => {
     if (orgNameMap.size === 0) return;
@@ -196,7 +199,18 @@ const AdminSurveys = () => {
       setIsRefreshing(true);
       setErrorMessage(null);
       try {
+        console.info('[AdminSurveys] request_dispatch', {
+          surface: 'admin_surveys',
+          route: '/api/admin/surveys',
+          requestedOrgId: activeOrgId ?? null,
+        });
         const data = await listSurveys();
+        console.info('[AdminSurveys] response_received', {
+          surface: 'admin_surveys',
+          route: '/api/admin/surveys',
+          requestedOrgId: activeOrgId ?? null,
+          rowCount: data.length,
+        });
         setSurveys(data.map(shapeSurveyRecord));
       } catch (err) {
         console.warn('Failed to load surveys', err);
@@ -207,7 +221,7 @@ const AdminSurveys = () => {
         setIsRefreshing(false);
       }
     },
-    [shapeSurveyRecord]
+    [activeOrgId, shapeSurveyRecord]
   );
 
   useEffect(() => {
@@ -230,6 +244,16 @@ const AdminSurveys = () => {
   useEffect(() => {
     setSelectedSurveys((prev) => prev.filter((id) => surveys.some((survey) => survey.id === id)));
   }, [surveys]);
+
+  useEffect(() => {
+    const uiState = isLoading ? 'loading' : errorMessage ? 'error' : surveys.length === 0 ? 'empty' : 'success';
+    console.info('[AdminSurveys] final_ui_state', {
+      route: '/admin/surveys',
+      requestedOrgId: activeOrgId ?? null,
+      uiState,
+      rowCount: surveys.length,
+    });
+  }, [activeOrgId, errorMessage, isLoading, surveys.length]);
 
   const openAssignModal = (surveyId: string) => {
     const survey = surveys.find((entry) => entry.id === surveyId);
@@ -708,7 +732,7 @@ const AdminSurveys = () => {
         </div>
       )}
 
-      {!isLoading && filteredSurveys.length === 0 && (
+      {!isLoading && !errorMessage && filteredSurveys.length === 0 && (
         <div className="mb-8">
           <EmptyState
             title="No surveys found"

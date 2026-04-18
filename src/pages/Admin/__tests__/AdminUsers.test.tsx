@@ -116,13 +116,13 @@ describe('AdminUsers page', () => {
     );
   };
 
-  it('platform admin fetches global user list by default', async () => {
+  it('platform admin fetches the active org user list by default', async () => {
     apiRequestMock.mockResolvedValueOnce(userResponse('org-1'));
 
     await renderPage();
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/users', { noTransform: true });
+      expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/users?orgId=org-1', { noTransform: true });
     });
   });
 
@@ -133,7 +133,7 @@ describe('AdminUsers page', () => {
     await renderPage();
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/users', { noTransform: true });
+      expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/users?orgId=org-1', { noTransform: true });
     });
 
     const orgSelect = document.querySelector('select[aria-label="Filter by organization"]');
@@ -159,6 +159,17 @@ describe('AdminUsers page', () => {
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/users?orgId=org-1', { noTransform: true });
     });
+  });
+
+  it('shows an error without rendering a false empty state when the user request fails', async () => {
+    apiRequestMock.mockRejectedValueOnce(new Error('survey_assignments.organization_id does not exist'));
+
+    const screen = await renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('survey_assignments.organization_id does not exist')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('EmptyState')).toBeNull();
   });
 
   it('produces transfer toast message when user is moved out of current org filter context', () => {

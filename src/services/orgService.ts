@@ -198,6 +198,7 @@ export type OrgProfileDetails = {
 
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { resolveApiUrl } from '../config/apiBase';
+import { appendAdminOrgIdQuery, requireExplicitAdminOrgId } from '../utils/adminOrgScope';
 
 // Reduce TTL to make admin lists refresh quickly when backend state changes.
 // Short TTL avoids long stale windows while still deduping rapid repeated requests.
@@ -492,7 +493,7 @@ const buildOrgQuery = (params?: OrgListParams) => {
 
 export const listOrgPage = async (
   params?: OrgListParams,
-  options?: { forceRefresh?: boolean },
+  options?: { forceRefresh?: boolean; preferredOrgId?: string | null },
 ): Promise<OrgListResponse> => {
   const cacheKey = buildOrgListCacheKey(params);
   const cached = orgPageCache.get(cacheKey);
@@ -505,13 +506,20 @@ export const listOrgPage = async (
   }
 
   const run = (async () => {
+  const explicitOrgId = requireExplicitAdminOrgId('admin organizations', options?.preferredOrgId);
   const query = buildOrgQuery(params);
+  const path = appendAdminOrgIdQuery(`/api/admin/organizations${query}`, explicitOrgId);
+  const clientTraceId = `admin-orgs-${Date.now().toString(36)}`;
   if (import.meta.env.DEV) {
-    console.info('[orgService] GET /api/admin/organizations →', resolveApiUrl(`/api/admin/organizations${query}`));
+    console.info('[orgService] request_dispatch', {
+      clientTraceId,
+      route: '/api/admin/organizations',
+      requestedOrgId: explicitOrgId,
+      url: resolveApiUrl(path),
+    });
   }
-  const json = await apiRequest<{ data: any[]; pagination?: any; progress?: Record<string, any> }>(
-    `/api/admin/organizations${query}`
-  );
+  try {
+    const json = await apiRequest<{ data: any[]; pagination?: any; progress?: Record<string, any> }>(path);
   const response = {
     data: (json.data || []).map(mapOrgRecord),
     pagination: {
@@ -522,9 +530,30 @@ export const listOrgPage = async (
     },
     progress: json.progress ?? {},
   };
+  if (import.meta.env.DEV) {
+    console.info('[orgService] response_received', {
+      clientTraceId,
+      route: '/api/admin/organizations',
+      requestedOrgId: explicitOrgId,
+      rowCount: response.data.length,
+      totalCount: response.pagination.total,
+      envelopeKeys: Object.keys(json ?? {}),
+    });
+  }
   orgPageCache.set(cacheKey, { timestamp: Date.now(), data: response });
   orgListCache.set(cacheKey, { timestamp: Date.now(), data: response.data });
   return response;
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('[orgService] response_failed', {
+        clientTraceId,
+        route: '/api/admin/organizations',
+        requestedOrgId: explicitOrgId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
+  }
   })();
   orgPageInflight.set(cacheKey, run);
   return run.finally(() => {
@@ -534,7 +563,7 @@ export const listOrgPage = async (
 
 export const listOrgs = async (
   params?: OrgListParams,
-  options?: { forceRefresh?: boolean }
+  options?: { forceRefresh?: boolean; preferredOrgId?: string | null }
 ): Promise<Org[]> => {
   const cacheKey = buildOrgListCacheKey(params);
   if (!options?.forceRefresh) {
@@ -546,7 +575,7 @@ export const listOrgs = async (
     invalidateOrgListCache((key) => key === cacheKey);
   }
 
-  const response = await listOrgPage(params);
+  const response = await listOrgPage(params, options);
   orgListCache.set(cacheKey, { timestamp: Date.now(), data: response.data });
   return response.data;
 };

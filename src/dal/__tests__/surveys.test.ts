@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { fetchAssignedSurveysForLearner, getAnalytics, invalidateAssignedSurveysForLearnerCache } from '../surveys';
+import { fetchAssignedSurveysForLearner, getAnalytics, invalidateAssignedSurveysForLearnerCache, listSurveys } from '../surveys';
 
 const requestMock = vi.fn();
 
@@ -9,6 +9,10 @@ vi.mock('../http', () => ({
 
 vi.mock('../../utils/orgHeaders', () => ({
   buildOrgHeaders: () => ({ 'X-Org-Id': 'org-1' }),
+}));
+
+vi.mock('../../utils/adminOrgScope', () => ({
+  appendAdminOrgIdQuery: (path: string) => `${path}?orgId=org-1`,
 }));
 
 vi.mock('../../utils/assignmentStorage', () => ({
@@ -132,5 +136,28 @@ describe('surveys DAL', () => {
       { questionId: 'belonging', avgScore: 3 },
     ]);
     expect(analytics.insights.some((entry) => entry.includes('mock'))).toBe(false);
+  });
+
+  it('requests admin surveys with explicit org context', async () => {
+    requestMock.mockResolvedValueOnce({ data: [] });
+
+    await listSurveys();
+
+    expect(requestMock).toHaveBeenCalledWith('/api/admin/surveys?orgId=org-1');
+  });
+
+  it('does not coerce admin analytics request failures into an empty dataset', async () => {
+    requestMock
+      .mockResolvedValueOnce({
+        data: {
+          id: 'survey-analytics',
+          title: 'Engagement pulse',
+        },
+      })
+      .mockRejectedValueOnce(new Error('column survey_assignments.organization_id does not exist'));
+
+    await expect(getAnalytics('survey-analytics', { organizationId: 'org-1' })).rejects.toThrow(
+      'column survey_assignments.organization_id does not exist',
+    );
   });
 });

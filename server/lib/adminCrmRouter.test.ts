@@ -46,4 +46,35 @@ describe('admin crm router', () => {
     expect(payload.ok).toBe(true);
     expect(payload.data.notifications[0].id).toBe('note-1');
   });
+
+  it('returns an error envelope when crm summary loading fails', async () => {
+    const app = express();
+    app.use((req, _res, next) => {
+      req.requestId = 'crm-req-err';
+      next();
+    });
+    app.use(
+      '/api/admin/crm',
+      createAdminCrmRouter({
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        loadCrmSummary: vi.fn(async () => {
+          throw new Error('column user_profiles.status does not exist');
+        }),
+        loadCrmActivity: vi.fn(async () => ({ notifications: [] })),
+      }),
+    );
+    const failingServer = app.listen(0);
+    await new Promise((resolve) => failingServer.once('listening', resolve));
+    const failingBaseUrl = `http://127.0.0.1:${failingServer.address().port}`;
+
+    try {
+      const response = await fetch(`${failingBaseUrl}/api/admin/crm/summary`);
+      const payload = await response.json();
+      expect(response.status).toBe(500);
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe('crm_summary_failed');
+    } finally {
+      await new Promise((resolve, reject) => failingServer.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
 });

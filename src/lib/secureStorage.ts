@@ -642,6 +642,10 @@ const buildE2EBypassSession = (): UserSession | null => {
     typeof (window as any).__E2E_USER_ROLE === 'string'
       ? String((window as any).__E2E_USER_ROLE).trim().toLowerCase()
       : 'learner';
+  const activeOrgId =
+    typeof (window as any).__E2E_ACTIVE_ORG_ID === 'string'
+      ? String((window as any).__E2E_ACTIVE_ORG_ID)
+      : 'demo-sandbox-org';
   const isAdmin = rawRole === 'admin' || rawRole === 'owner' || rawRole === 'platform_admin';
 
   return {
@@ -656,17 +660,17 @@ const buildE2EBypassSession = (): UserSession | null => {
         ? 'mya@the-huddle.co'
         : 'user@pacificcoast.edu',
     role: isAdmin ? 'admin' : rawRole || 'learner',
-    organizationId: 'demo-sandbox-org',
-    organizationIds: ['demo-sandbox-org'],
+    organizationId: activeOrgId,
+    organizationIds: [activeOrgId],
     memberships: [
       {
-        orgId: 'demo-sandbox-org',
+        orgId: activeOrgId,
         role: isAdmin ? 'admin' : rawRole || 'learner',
         status: 'active',
         organizationName: 'Demo Sandbox Org',
       },
     ],
-    activeOrgId: 'demo-sandbox-org',
+    activeOrgId,
     platformRole: isAdmin ? 'admin' : null,
     isPlatformAdmin: isAdmin,
   };

@@ -175,6 +175,7 @@ import supabaseJwtMiddleware, {
 } from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken, doubleSubmitCSRF } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
+import { assertAdminQueryColumns, logAdminQuery } from './utils/adminSchemaGuard.js';
 import mfaRoutes from './routes/mfa.js';
 import { attachRequestId, apiErrorHandler, createHttpError, withHttpError } from './middleware/apiErrorHandler.js';
 import adminCoursesRouter from './routes/admin-courses.js';
@@ -710,12 +711,29 @@ const runSchemaDoctor = async () => {
   }
   const checks = [
     { table: 'organization_memberships', column: 'organization_id', level: 'error' },
+    { table: 'organization_memberships', column: 'user_id', level: 'error' },
+    { table: 'organization_memberships', column: 'role', level: 'error' },
+    { table: 'organization_memberships', column: 'status', level: 'error' },
     { table: 'org_invites', column: 'organization_id|org_id', level: 'warn' },
     { table: 'organizations', column: 'id', level: 'error' },
     { table: 'organizations', column: 'name', level: 'warn' },
     { table: 'organizations', column: 'features', level: 'warn' },
     { table: 'user_profiles', column: 'id', level: 'error' },
     { table: 'user_profiles', column: 'email', level: 'warn' },
+    { table: 'surveys', column: 'id', level: 'error' },
+    { table: 'surveys', column: 'title', level: 'error' },
+    { table: 'surveys', column: 'status', level: 'error' },
+    { table: 'surveys', column: 'updated_at', level: 'error' },
+    { table: 'assignments', column: 'id', level: 'error' },
+    { table: 'assignments', column: 'survey_id', level: 'error' },
+    { table: 'assignments', column: 'assignment_type', level: 'error' },
+    { table: 'assignments', column: 'active', level: 'error' },
+    { table: 'survey_assignments', column: 'survey_id', level: 'error' },
+    { table: 'survey_assignments', column: 'organization_ids', level: 'error' },
+    { table: 'survey_assignments', column: 'user_ids', level: 'error' },
+    { table: 'survey_assignments', column: 'cohort_ids', level: 'warn' },
+    { table: 'survey_assignments', column: 'department_ids', level: 'warn' },
+    { table: 'survey_assignments', column: 'updated_at', level: 'warn' },
     { table: 'course_assignments', column: 'updated_at', level: 'warn' },
   ];
   try {
@@ -724,12 +742,18 @@ const runSchemaDoctor = async () => {
       from information_schema.columns
       where table_schema = 'public' and (
         (table_name = 'organization_memberships' and column_name = 'organization_id') or
+        (table_name = 'organization_memberships' and column_name = 'user_id') or
+        (table_name = 'organization_memberships' and column_name = 'role') or
+        (table_name = 'organization_memberships' and column_name = 'status') or
         (table_name = 'org_invites' and column_name in ('organization_id', 'org_id')) or
         (table_name = 'organizations' and column_name = 'id') or
         (table_name = 'organizations' and column_name = 'name') or
         (table_name = 'organizations' and column_name = 'features') or
         (table_name = 'user_profiles' and column_name = 'id') or
         (table_name = 'user_profiles' and column_name = 'email') or
+        (table_name = 'surveys' and column_name in ('id', 'title', 'status', 'updated_at')) or
+        (table_name = 'assignments' and column_name in ('id', 'survey_id', 'assignment_type', 'active')) or
+        (table_name = 'survey_assignments' and column_name in ('survey_id', 'organization_ids', 'user_ids', 'cohort_ids', 'department_ids', 'updated_at')) or
         (table_name = 'course_assignments' and column_name = 'updated_at')
       )
     `;
@@ -9313,24 +9337,25 @@ const countRows = async (table, applyFilters) => {
           query = modified;
         }
       } catch (err) {
-        // If the filter application throws (e.g. due to missing column
-        // identifier construction), treat as zero for safety.
         logger && logger.warn && logger.warn('countRows.applyFilters_failed', { table, message: err?.message || String(err) });
-        return 0;
+        throw err;
       }
     }
     const { count, error } = await query;
     if (error) {
-      // Schema drift (missing column/relation) should not crash summary generation.
-      if (isMissingRelationError(error) || isMissingColumnError(error)) {
-        return 0;
-      }
       throw error;
     }
+    logAdminQuery(logger, {
+      route: '/api/admin/crm/summary',
+      table,
+      columns: ['id'],
+      rowCount: count || 0,
+      shape: 'count',
+    });
     return count || 0;
   } catch (error) {
     logger && logger.warn && logger.warn('countRows_failed', { table, message: error?.message || String(error) });
-    return 0;
+    throw error;
   }
 };
 
@@ -9342,6 +9367,7 @@ const fetchRecentRecords = async ({
   label,
 }) => {
   if (!supabase) return [];
+  assertAdminQueryColumns({ table, columns, label: `crm.activity.${label || table}` });
   try {
     const { data, error } = await supabase
       .from(table)
@@ -9349,6 +9375,14 @@ const fetchRecentRecords = async ({
       .order(orderBy, { ascending: false, nullsLast: false })
       .limit(limit);
     if (error) throw error;
+    logAdminQuery(logger, {
+      route: '/api/admin/crm/activity',
+      table,
+      columns,
+      rowCount: Array.isArray(data) ? data.length : 0,
+      shape: Array.isArray(data) && data.length > 0 ? Object.keys(data[0] || {}) : [],
+      label: label || table,
+    });
     return data || [];
   } catch (error) {
     logger.warn('crm_activity_fetch_failed', {
@@ -9356,7 +9390,7 @@ const fetchRecentRecords = async ({
       label,
       message: error?.message || String(error),
     });
-    return [];
+    throw error;
   }
 };
 
@@ -9371,6 +9405,8 @@ async function loadCrmSummary() {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
 
   try {
+    assertAdminQueryColumns({ table: 'user_profiles', columns: ['id'], label: 'crm.summary.userProfiles.total' });
+    assertAdminQueryColumns({ table: 'organization_memberships', columns: ['status'], label: 'crm.summary.organizationMemberships.active' });
     const [
       orgTotal,
       orgActive,
@@ -9397,7 +9433,7 @@ async function loadCrmSummary() {
       ),
       countRows('organizations', (query) => query.gte('created_at', monthStart)),
   countRows('user_profiles'),
-  countRows('user_profiles', (query) => query.eq('status', 'active')),
+  countRows('organization_memberships', (query) => query.eq('status', 'active')),
       countRows('organization_memberships', (query) => query.eq('status', 'pending')),
   // NOTE: last_login_at may not exist in all schema variants; use created_at
   // as a safer proxy for 'recent activity' counts.
@@ -9458,6 +9494,7 @@ async function loadCrmSummary() {
     logger.warn('crm_summary_failed', {
       message: error?.message || String(error),
     });
+    throw error;
   }
 
   return summary;
@@ -9479,8 +9516,7 @@ async function loadCrmActivity() {
     }),
     fetchRecentRecords({
       table: 'user_profiles',
-      // Avoid selecting columns that may not exist in all schemas (status, last_login_at).
-      columns: 'id,email,first_name,last_name,role,created_at',
+      columns: 'id,email,first_name,last_name,role,created_at,updated_at',
       orderBy: 'created_at',
       label: 'users',
     }),
@@ -10808,7 +10844,7 @@ async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
   );
   await runOptionalCleanupMutation(
     'delete_user.survey_assignments',
-    () => supabase.from('survey_assignments').delete().eq('user_id', userId),
+    () => supabase.from('survey_assignments').delete().contains('user_ids', [userId]),
     { userId, requestId },
   );
   await runOptionalCleanupMutation(
@@ -13572,8 +13608,21 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   );
 
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
+  if (!requestedOrgId) {
+    logger.warn('admin_organizations_access_denied', {
+      requestId,
+      reason: 'missing_requested_orgid',
+      requestedOrgId: null,
+      resolvedRequestedOrgId: null,
+      userId: context?.user?.id ?? null,
+      isPlatformAdmin: Boolean(context?.isPlatformAdmin),
+      adminOrgIds,
+    });
+    res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' });
+    return;
+  }
   // Blocker 3: even platform admins must request a valid, resolvable org scope
-  if (requestedOrgId && (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim()))) {
+  if (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim())) {
     logger.warn('admin_organizations_access_denied', {
       requestId,
       reason: 'invalid_requested_orgid',
@@ -13654,15 +13703,16 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   logOrganizationsEvent('request_received', {
     requestId,
     status: 'ok',
-    metadata: {
-      includeProgress,
-      page,
-      pageSize,
-      search: search || null,
-      requestedOrgId: requestedOrgId ?? null,
-      isPlatformAdmin,
-      source: 'express',
-    },
+      metadata: {
+        includeProgress,
+        page,
+        pageSize,
+        search: search || null,
+        requestedOrgId: requestedOrgId ?? null,
+        resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+        isPlatformAdmin,
+        source: 'express',
+      },
   });
 
   if (isDemoOrTestMode) {
@@ -14171,12 +14221,7 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
     );
     await runOptionalCleanupMutation(
       'delete_org.survey_assignments',
-      () => supabase.from('survey_assignments').delete().eq('organization_id', id),
-      { orgId: id, requestId: req.requestId ?? null },
-    );
-    await runOptionalCleanupMutation(
-      'delete_org.survey_assignments.org_id',
-      () => supabase.from('survey_assignments').delete().eq('org_id', id),
+      () => supabase.from('survey_assignments').delete().contains('organization_ids', [id]),
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
@@ -16680,7 +16725,10 @@ const REQUIRED_ADMIN_SURVEY_TABLES = [
   },
 ];
 
-const OPTIONAL_ADMIN_SURVEY_TABLES = [{ table: 'survey_assignments', columns: ['survey_id', 'organization_id'] }];
+const OPTIONAL_ADMIN_SURVEY_TABLES = [
+  { table: 'survey_assignments', columns: ['survey_id', 'organization_ids', 'user_ids', 'cohort_ids', 'department_ids', 'updated_at'] },
+];
+const STRICT_ADMIN_SCHEMA_GUARDS = process.env.NODE_ENV !== 'production';
 const SURVEY_ASSIGNMENT_TYPE = 'survey';
 const SURVEY_ASSIGNMENT_SELECT = '*';
 const CLIENT_SURVEY_ASSIGNMENT_SELECT = 'id,survey_id,status,due_at,note,assigned_by,metadata,active';
@@ -16736,17 +16784,32 @@ const ensureAdminSurveySchemaOrRespond = async (res, label) => {
   try {
     const optionalStatus = await ensureTablesReady(label, OPTIONAL_ADMIN_SURVEY_TABLES);
     if (!optionalStatus.ok) {
-      logger.info('surveys_optional_schema_missing', {
+      logger.warn('surveys_optional_schema_missing', {
         label,
         table: optionalStatus.table ?? null,
         column: optionalStatus.column ?? null,
+        strict: STRICT_ADMIN_SCHEMA_GUARDS,
       });
+      if (STRICT_ADMIN_SCHEMA_GUARDS) {
+        respondSchemaUnavailable(res, label, optionalStatus);
+        return false;
+      }
     }
   } catch (error) {
-    logger.info('surveys_optional_schema_check_failed', {
+    logger.warn('surveys_optional_schema_check_failed', {
       label,
       message: error?.message ?? null,
+      strict: STRICT_ADMIN_SCHEMA_GUARDS,
     });
+    if (STRICT_ADMIN_SCHEMA_GUARDS) {
+      respondSchemaUnavailable(res, label, {
+        ok: false,
+        table: 'survey_assignments',
+        column: 'schema_check_failed',
+        message: error?.message ?? 'schema_check_failed',
+      });
+      return false;
+    }
   }
   logger.info('[ensureAdminSurveySchemaOrRespond] Success', { label });
   return true;

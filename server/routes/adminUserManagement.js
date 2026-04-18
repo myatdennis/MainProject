@@ -14,7 +14,6 @@ export const createAdminUserManagementRouter = (deps) => {
     requireUserContext,
     requireOrgAccess,
     runSupabaseTransientRetry,
-    fetchAllOrgMembersWithProfiles,
     fetchOrgMembersWithProfiles,
     logUsersStageError,
     createOrProvisionOrganizationUser,
@@ -97,7 +96,14 @@ export const createAdminUserManagementRouter = (deps) => {
   };
 
   router.get('/', async (req, res) => {
-    const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
+    const context = requireUserContext(req, res);
+    if (!context) return;
+    const orgId = pickOrgId(
+      req.query.orgId,
+      req.query.organizationId,
+      context.requestedOrgId,
+      context.activeOrganizationId,
+    );
 
     if (shouldUseAdminUsersFallback(req)) {
       const normalizedOrgId = normalizeOrgIdValue(orgId);
@@ -115,28 +121,38 @@ export const createAdminUserManagementRouter = (deps) => {
     }
 
     if (!ensureSupabase(res)) return;
-
-    const context = requireUserContext(req, res);
-    if (!context) return;
     const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
-
-    if (!isPlatformAdmin && !orgId) {
-      return sendError(res, 400, 'org_id_required', 'orgId query parameter is required.');
+    if (!orgId) {
+      return sendError(res, 400, 'org_id_required', 'orgId query parameter or X-Org-Id header is required.');
     }
 
     if (!isPlatformAdmin) {
       const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
       if (!access) return;
     }
+    logger.info('admin_users_request_context', {
+      requestId: req.requestId ?? null,
+      route: '/api/admin/users',
+      userId: context.userId ?? null,
+      requestedOrgId: orgId,
+      activeOrganizationId: context.activeOrganizationId ?? null,
+      isPlatformAdmin,
+    });
 
     try {
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
       const limit = Math.min(parseInt(req.query.limit, 10) || 500, 1000);
       const members = await runSupabaseTransientRetry('admin.users.list', async () =>
-        isPlatformAdmin && !orgId
-          ? fetchAllOrgMembersWithProfiles({ offset, limit })
-          : fetchOrgMembersWithProfiles(orgId),
+        fetchOrgMembersWithProfiles(orgId),
       );
+      logger.info('admin_users_response_ready', {
+        requestId: req.requestId ?? null,
+        route: '/api/admin/users',
+        requestedOrgId: orgId,
+        rowCount: Array.isArray(members) ? members.length : 0,
+        offset,
+        limit,
+      });
       return sendOk(res, members, { meta: { offset, limit } });
     } catch (error) {
       const normalized = logUsersStageError('memberships_fetch', error, {
@@ -411,4 +427,3 @@ export const createAdminUserManagementRouter = (deps) => {
 
   return router;
 };
-

@@ -1,0 +1,121 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - main [ref=e4]:
+    - generic [ref=e5]:
+      - complementary [ref=e6]:
+        - link "The Huddle Co. The Huddle Co. Admin Workspace Manage learning, analytics, and organization settings." [ref=e8] [cursor=pointer]:
+          - /url: /
+          - img "The Huddle Co." [ref=e9]
+          - generic [ref=e10]:
+            - paragraph [ref=e11]: The Huddle Co.
+            - paragraph [ref=e12]: Admin Workspace
+            - paragraph [ref=e13]: Manage learning, analytics, and organization settings.
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - generic [ref=e17]: System Online
+            - generic [ref=e18]:
+              - paragraph [ref=e19]: Welcome, Admin
+              - paragraph [ref=e20]: admin
+              - paragraph [ref=e21]: "Active org: Demo Sandbox Org"
+          - navigation [ref=e22]:
+            - link "Dashboard" [ref=e23] [cursor=pointer]:
+              - /url: /admin/dashboard
+              - img [ref=e25]
+              - generic [ref=e30]: Dashboard
+            - link "Users" [ref=e31] [cursor=pointer]:
+              - /url: /admin/users
+              - img [ref=e33]
+              - generic [ref=e38]: Users
+            - link "Organizations" [ref=e39] [cursor=pointer]:
+              - /url: /admin/organizations
+              - img [ref=e41]
+              - generic [ref=e45]: Organizations
+            - link "Courses" [ref=e46] [cursor=pointer]:
+              - /url: /admin/courses
+              - img [ref=e48]
+              - generic [ref=e51]: Courses
+            - link "Surveys" [ref=e52] [cursor=pointer]:
+              - /url: /admin/surveys
+              - img [ref=e54]
+              - generic [ref=e57]: Surveys
+            - link "Analytics" [ref=e58] [cursor=pointer]:
+              - /url: /admin/analytics
+              - img [ref=e60]
+              - generic [ref=e62]: Analytics
+            - link "Reports" [ref=e63] [cursor=pointer]:
+              - /url: /admin/reports
+              - img [ref=e65]
+              - generic [ref=e66]: Reports
+            - link "Team Huddle" [ref=e67] [cursor=pointer]:
+              - /url: /admin/team-huddle/moderation
+              - img [ref=e69]
+              - generic [ref=e74]: Team Huddle
+            - link "Documents" [ref=e75] [cursor=pointer]:
+              - /url: /admin/documents
+              - img [ref=e77]
+              - generic [ref=e80]: Documents
+            - link "Certificates" [ref=e81] [cursor=pointer]:
+              - /url: /admin/certificates
+              - img [ref=e83]
+              - generic [ref=e86]: Certificates
+            - link "Settings" [ref=e87] [cursor=pointer]:
+              - /url: /admin/settings
+              - img [ref=e89]
+              - generic [ref=e92]: Settings
+          - generic [ref=e93]:
+            - paragraph [ref=e94]: Quick actions
+            - link "Create course" [ref=e95] [cursor=pointer]:
+              - /url: /admin/courses/new
+            - link "Import courses" [ref=e96] [cursor=pointer]:
+              - /url: /admin/courses/import
+            - link "Survey queue" [ref=e97] [cursor=pointer]:
+              - /url: /admin/surveys/queue
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - generic [ref=e100]:
+            - generic [ref=e102]:
+              - img [ref=e103]
+              - textbox "Search reports, orgs, or learners" [ref=e106]
+            - generic [ref=e107]:
+              - button "Admin notifications" [ref=e109] [cursor=pointer]:
+                - img [ref=e110]
+              - generic [ref=e113]:
+                - generic [ref=e114]:
+                  - paragraph [ref=e115]: Organization
+                  - paragraph [ref=e116]: Demo Sandbox Org
+                - button "Sync organizations" [ref=e117] [cursor=pointer]:
+                  - img [ref=e118]
+              - button "New survey" [ref=e123] [cursor=pointer]:
+                - img [ref=e125]
+                - generic [ref=e128]: New survey
+              - button "Logout" [ref=e129] [cursor=pointer]:
+                - img [ref=e131]
+                - generic [ref=e134]: Logout
+              - button "mya@the-huddle.co" [ref=e136] [cursor=pointer]:
+                - generic [ref=e137]: mya@the-huddle.co
+                - img [ref=e138]
+          - generic [ref=e142]:
+            - img [ref=e144]
+            - generic [ref=e147]:
+              - paragraph [ref=e148]: All survey changes synced
+              - paragraph [ref=e149]: Up to date
+        - main [ref=e150]:
+          - generic [ref=e152]:
+            - navigation "Breadcrumb" [ref=e154]:
+              - generic [ref=e155]:
+                - link "Admin" [ref=e156] [cursor=pointer]:
+                  - /url: /admin
+                - generic [ref=e157]: /
+              - generic [ref=e159]: Courses
+            - status [ref=e161]:
+              - img [ref=e163]
+              - heading "No courses yet" [level=3] [ref=e166]
+              - paragraph [ref=e167]: Create your first course to start building the catalog for your organization.
+              - button "Create Course" [ref=e169] [cursor=pointer]:
+                - generic [ref=e170]: Create Course
+  - button "Troubleshooting Guide" [ref=e171] [cursor=pointer]:
+    - img [ref=e172]
+  - button "Show Dev Panel" [ref=e177] [cursor=pointer]
+```

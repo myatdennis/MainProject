@@ -251,7 +251,6 @@ describe('createOrProvisionOrganizationUser', () => {
       id: 'user-12',
       email: 'multi@user.com',
       organization_id: 'org-1',
-      active_organization_id: 'org-1',
     });
     const sendEmail = vi.fn(async () => ({ delivered: true, id: 'msg-4' }));
 
@@ -268,7 +267,7 @@ describe('createOrProvisionOrganizationUser', () => {
 
     const profile = store.profiles.get('user-12');
     expect(profile.organization_id).toBe('org-1');
-    expect(profile.active_organization_id).toBe('org-1');
+    expect(profile.active_organization_id).toBeUndefined();
     expect(store.memberships.has('org-2:user-12')).toBe(true);
   });
 

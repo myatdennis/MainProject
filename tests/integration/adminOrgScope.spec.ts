@@ -26,11 +26,10 @@ describe('Admin organization scoping', () => {
     return { res, body };
   };
 
-  it('allows listing organizations without orgId for platform admin', async () => {
+  it('requires explicit org scope when listing organizations', async () => {
     const { res, body } = await fetchJson('/api/admin/organizations');
-    expect(res.status).toBe(200);
-    expect(Array.isArray(body.data)).toBe(true);
-    expect(body.data.length).toBeGreaterThan(0);
+    expect(res.status).toBe(400);
+    expect(body).toHaveProperty('error', 'org_id_required');
   });
 
   it('allows listing all admin users without orgId for platform admin', async () => {
@@ -67,7 +66,7 @@ describe('Admin organization scoping', () => {
   it('applies the same org scoping rules to admin document listings', async () => {
     const unauthorized = await fetchJson('/api/admin/documents?orgId=unauthorized-org');
     expect(unauthorized.res.status).toBe(403);
-    expect(unauthorized.body).toHaveProperty('error', 'org_access_denied');
+    expect(unauthorized.body).toHaveProperty('error.code', 'org_access_denied');
 
     const authorized = await fetchJson(`/api/admin/documents?orgId=${DEMO_ORG_ID}`);
     expect(authorized.res.status).toBe(200);

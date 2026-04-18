@@ -603,7 +603,11 @@ const pickOrgId = (...candidates) => {
 
 const getRequestedOrgId = (req) => {
   if (!req) return null;
-  const headerOrg = process.env.NODE_ENV !== 'production' ? normalizeOrgId(req.headers?.['x-org-id']) : null;
+  const headerOrg = normalizeOrgId(
+    req.headers?.['x-organization-id'] ??
+    req.headers?.['x-org-id'] ??
+    null,
+  );
   const cookieOrg = getActiveOrgFromRequest(req);
   const candidates = [
     headerOrg,

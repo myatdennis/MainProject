@@ -435,8 +435,8 @@ describe('course catalog router', () => {
           userRole: 'platform_admin',
           memberships: [],
           organizationIds: [],
-          requestedOrgId: null,
-          activeOrganizationId: null,
+          requestedOrgId: 'org-1',
+          activeOrganizationId: 'org-1',
           platformRole: 'platform_admin',
           isPlatformAdmin: false,
         })),
@@ -482,7 +482,7 @@ describe('course catalog router', () => {
     const server = app.listen(0) as any;
     await new Promise((resolve) => server.once('listening', resolve));
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const response = await fetch(`${baseUrl}/api/admin/courses`);
+    const response = await fetch(`${baseUrl}/api/admin/courses?orgId=org-1`);
     const payload = await response.json();
     expect(response.status).toBe(200);
     expect(payload.data).toHaveLength(1);

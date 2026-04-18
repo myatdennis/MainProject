@@ -58,9 +58,46 @@ export const createAdminSurveysService = ({
   const listSurveys = async ({ req, res }) => {
     if (!ensureSupabase(res)) return null;
     if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.list'))) return null;
+    const context = requireUserContext(req, res);
+    if (!context) return null;
+    const requestedOrgId = pickOrgId(
+      req.query?.orgId,
+      req.query?.organizationId,
+      context.requestedOrgId,
+      context.activeOrganizationId,
+    );
+    if (!requestedOrgId) {
+      return {
+        status: 400,
+        error: { code: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' },
+      };
+    }
+    logger.info('admin_surveys_request_context', {
+      requestId: req.requestId ?? null,
+      route: '/api/admin/surveys',
+      userId: context.userId ?? null,
+      requestedOrgId,
+      activeOrganizationId: context.activeOrganizationId ?? null,
+      isPlatformAdmin: Boolean(context.isPlatformAdmin),
+    });
 
     if (!supabase) {
-      return { status: 200, data: listDemoSurveys() };
+      const demoData = listDemoSurveys().filter((survey) => {
+        const orgIds = coerceIdArray(
+          survey?.assignedTo?.organizationIds ??
+          survey?.assigned_to?.organization_ids ??
+          survey?.organizationIds ??
+          survey?.organization_ids,
+        );
+        return orgIds.length === 0 || orgIds.includes(requestedOrgId);
+      });
+      logger.info('admin_surveys_response_ready', {
+        requestId: req.requestId ?? null,
+        route: '/api/admin/surveys',
+        requestedOrgId,
+        rowCount: demoData.length,
+      });
+      return { status: 200, data: demoData };
     }
 
     const { data } = await runSupabaseReadQueryWithRetry('admin.surveys.list', () =>
@@ -69,7 +106,23 @@ export const createAdminSurveysService = ({
 
     const ids = (data || []).map((survey) => survey.id).filter(Boolean);
     const assignmentMap = await fetchSurveyAssignmentsMap(ids);
-    const shaped = (data || []).map((survey) => applyAssignmentToSurvey({ ...survey }, assignmentMap.get(survey.id)));
+    const shaped = (data || [])
+      .map((survey) => applyAssignmentToSurvey({ ...survey }, assignmentMap.get(survey.id)))
+      .filter((survey) => {
+        const orgIds = coerceIdArray(
+          survey?.assignedTo?.organizationIds ??
+          survey?.assigned_to?.organization_ids ??
+          survey?.organizationIds ??
+          survey?.organization_ids,
+        );
+        return orgIds.length === 0 || orgIds.includes(requestedOrgId);
+      });
+    logger.info('admin_surveys_response_ready', {
+      requestId: req.requestId ?? null,
+      route: '/api/admin/surveys',
+      requestedOrgId,
+      rowCount: shaped.length,
+    });
     return { status: 200, data: shaped };
   };
 

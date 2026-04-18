@@ -41,6 +41,8 @@ const createApp = () => {
     userId: 'admin-1',
     isPlatformAdmin: true,
     organizationIds: ['org-1'],
+    requestedOrgId: 'org-1',
+    activeOrganizationId: 'org-1',
     memberships: [{ orgId: 'org-1', role: 'admin' }],
   }));
 

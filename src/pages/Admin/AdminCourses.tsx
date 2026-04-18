@@ -530,6 +530,34 @@ const AdminCourses = () => {
     });
   }
 
+  useEffect(() => {
+    const uiState = isCatalogLoading
+      ? 'loading'
+      : isCatalogUnauthorized
+      ? 'unauthorized'
+      : isCatalogError
+      ? 'error'
+      : isCatalogEmpty
+      ? 'empty'
+      : 'success';
+    console.info('[AdminCourses] final_ui_state', {
+      route: '/admin/courses',
+      requestedOrgId: null,
+      uiState,
+      courseCount: courses.length,
+      filteredCount: filteredCourses.length,
+      catalogStatus,
+    });
+  }, [
+    catalogStatus,
+    courses.length,
+    filteredCourses.length,
+    isCatalogEmpty,
+    isCatalogError,
+    isCatalogLoading,
+    isCatalogUnauthorized,
+  ]);
+
   let gateContent: ReactNode | null = null;
   if (isCatalogLoading) {
     gateContent = (

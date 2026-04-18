@@ -18,6 +18,31 @@ const buildRes = () => {
 };
 
 describe('resolveOrganizationContext', () => {
+  it('honors the X-Org-Id header in production', () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    const req = {
+      user: {
+        isPlatformAdmin: true,
+        organizationIds: ['org-1', 'org-2'],
+        activeOrgId: null,
+      },
+      activeOrgId: null,
+      headers: { 'x-org-id': 'org-2' },
+      query: {},
+      path: '/api/admin/courses',
+      method: 'GET',
+    };
+    const res = buildRes();
+    const next = vi.fn();
+
+    resolveOrganizationContext(req, res, next);
+
+    process.env.NODE_ENV = previousNodeEnv;
+    expect(req.activeOrgId).toBe('org-2');
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
   it('requires explicit org selection for multi-org non-platform admins', () => {
     const req = {
       user: {
@@ -64,4 +89,3 @@ describe('resolveOrganizationContext', () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 });
-

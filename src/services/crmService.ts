@@ -69,7 +69,19 @@ export type BroadcastPayload = {
 };
 
 export const getCrmSummary = async () => {
+  if (import.meta.env.DEV) {
+    console.info('[crmService] request_dispatch', {
+      route: '/api/admin/crm/summary',
+    });
+  }
   const response = await safeApiRequest<{ data: CrmSummary }>('/api/admin/crm/summary');
+  if (import.meta.env.DEV) {
+    console.info('[crmService] response_received', {
+      route: '/api/admin/crm/summary',
+      envelopeKeys: Object.keys(response ?? {}),
+      disabled: Boolean(response?.data?.disabled),
+    });
+  }
   return response?.data ?? null;
 };
 

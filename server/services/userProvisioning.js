@@ -1,6 +1,7 @@
 import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from '../utils/authHelpers.js';
 import { logger as defaultLogger } from '../lib/logger.js';
 import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
+import { assertAdminQueryColumns, logAdminQuery } from '../utils/adminSchemaGuard.js';
 
 // In-process deduplication: if concurrent requests arrive for the same (orgId, email)
 // pair, only the first call runs; all others await the same promise result.
@@ -183,11 +184,27 @@ const cleanupProvisionedUserAccount = async ({
 };
 
 const ensureProfile = async ({ supabase, userId, profilePayload, requestId, logger }) => {
+  assertAdminQueryColumns({
+    table: 'user_profiles',
+    columns: Object.keys(profilePayload ?? {}),
+    label: 'userProvisioning.ensureProfile.upsert',
+  });
+  logAdminQuery(logger, {
+    requestId,
+    route: 'userProvisioning.ensureProfile',
+    table: 'user_profiles',
+    columns: Object.keys(profilePayload ?? {}),
+  });
   const { error } = await supabase.from('user_profiles').upsert(profilePayload, { onConflict: 'id' });
   if (error) {
     throw new ProvisioningError('profile_upsert', 'profile_upsert_failed', error.message || 'Profile upsert failed', 500, error);
   }
 
+  assertAdminQueryColumns({
+    table: 'user_profiles',
+    columns: 'id, email, first_name, last_name, organization_id, role',
+    label: 'userProvisioning.ensureProfile.verify',
+  });
   const { data: profileRow, error: profileCheckError } = await supabase
     .from('user_profiles')
     .select('id, email, first_name, last_name, organization_id, role')
@@ -838,9 +855,14 @@ const _provisionOrganizationUser = async ({
 
   let existingProfile = null;
   try {
+    assertAdminQueryColumns({
+      table: 'user_profiles',
+      columns: 'organization_id',
+      label: 'userProvisioning.existingProfileLookup',
+    });
     const { data } = await supabase
       .from('user_profiles')
-      .select('organization_id, active_organization_id')
+      .select('organization_id')
       .eq('id', authUser.id)
       .maybeSingle();
     existingProfile = data ?? null;
@@ -893,10 +915,6 @@ const _provisionOrganizationUser = async ({
     created || !existingProfile?.organization_id
       ? orgId
       : existingProfile.organization_id;
-  const resolvedActiveOrgId =
-    created || !existingProfile?.active_organization_id
-      ? orgId
-      : existingProfile.active_organization_id;
 
   const profilePayload = {
     id: authUser.id,
@@ -905,7 +923,6 @@ const _provisionOrganizationUser = async ({
     last_name: normalizedLastName,
     full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
     organization_id: resolvedProfileOrgId,
-    active_organization_id: resolvedActiveOrgId,
     role: normalizedRole,
     is_active: true,
     metadata: {

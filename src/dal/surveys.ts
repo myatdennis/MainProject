@@ -3,6 +3,7 @@ import type { CourseAssignment } from '../types/assignment';
 import { request } from './http';
 import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
 import { buildOrgHeaders } from '../utils/orgHeaders';
+import { appendAdminOrgIdQuery } from '../utils/adminOrgScope';
 
 type SurveyApiRecord = any;
 const LEARNER_ASSIGNED_SURVEYS_CACHE_TTL_MS = 10_000;
@@ -116,7 +117,7 @@ const buildSurveyPayload = (survey: Survey) => {
 export async function getAnalytics(surveyId: string, options: { organizationId?: string } = {}) {
   const [survey, responses] = await Promise.all([
     getSurveyById(surveyId).catch(() => null),
-    fetchAdminSurveyResults(surveyId, { organizationId: options.organizationId, limit: 500 }).catch(() => []),
+    fetchAdminSurveyResults(surveyId, { organizationId: options.organizationId, limit: 500 }),
   ]);
 
   const numericBuckets = new Map<string, { total: number; count: number }>();
@@ -202,7 +203,7 @@ export async function getAnalytics(surveyId: string, options: { organizationId?:
 }
 
 export async function listSurveys(): Promise<Survey[]> {
-  const json = await request<SurveyApiRecord[] | { data?: SurveyApiRecord[] }>('/api/admin/surveys');
+  const json = await request<SurveyApiRecord[] | { data?: SurveyApiRecord[] }>(appendAdminOrgIdQuery('/api/admin/surveys'));
   return (unwrapApiData(json) ?? []).map(mapSurveyRecord);
 }
 

@@ -27,6 +27,7 @@ import EditOrganizationModal from '../../components/EditOrganizationModal';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import orgService, { type Org, OrgProfileDetails } from '../../dal/orgs';
 import { ApiError } from '../../utils/apiClient';
 import { getCrmSummary, sendBroadcastNotification, type CrmSummary } from '../../dal/crm';
@@ -96,6 +97,7 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
 const AdminOrgWorkspace = () => {
   const { routeKey } = useRouteChangeReset();
   useNavTrace('AdminOrgWorkspace');
+  const { activeOrgId } = useSecureAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
@@ -186,6 +188,11 @@ const AdminOrgWorkspace = () => {
     setCrmError(null);
     try {
   const [summaryData] = await Promise.all([getCrmSummary()]);
+  console.info('[AdminOrgWorkspace] crm_response_received', {
+    route: '/api/admin/crm/summary',
+    rowCount: summaryData ? Object.keys(summaryData).length : 0,
+    disabled: Boolean(summaryData?.disabled),
+  });
   setCrmSummary(summaryData);
     } catch (error) {
       console.error('Failed to load CRM data', error);
@@ -201,6 +208,9 @@ const AdminOrgWorkspace = () => {
 
   const fetchOrganizations = useCallback(
     async (targetPage = 1, options?: { forceRefresh?: boolean }) => {
+      if (!activeOrgId) {
+        return;
+      }
       console.info('[AdminOrgWorkspace] fetch orgs', { targetPage, search: debouncedSearch, statusFilter, subscriptionFilter });
       setFetching(true);
       setLoadError(null);
@@ -214,12 +224,21 @@ const AdminOrgWorkspace = () => {
           includeProgress: true,
           status: statusFilter === 'all' ? undefined : [statusFilter],
           subscription: subscriptionFilter === 'all' ? undefined : [subscriptionFilter],
-        }, options);
+        }, {
+          ...options,
+          preferredOrgId: activeOrgId ?? undefined,
+        });
         if (cancelled) return;
         setOrganizations(response.data);
         setProgressMap(response.progress ?? {});
         setPaginationMeta(response.pagination);
-        console.info('[AdminOrgWorkspace] org count received', { count: response.data.length, total: response.pagination.total });
+        console.info('[AdminOrgWorkspace] response_received', {
+          route: '/api/admin/organizations',
+          requestedOrgId: 'see orgService trace',
+          rowCount: response.data.length,
+          totalCount: response.pagination.total,
+          progressKeyCount: Object.keys(response.progress ?? {}).length,
+        });
         // Only auto-select the first org if the user hasn't already made a selection
         // (read via ref, NOT from state, to avoid re-creating this callback on every
         // org click and causing a refetch → auto-select → refetch loop).
@@ -249,8 +268,27 @@ const AdminOrgWorkspace = () => {
       return cleanup;
     },
     // selectedOrgId intentionally omitted — read via ref to prevent refetch storms
-    [debouncedSearch, statusFilter, subscriptionFilter, showToast],
+    [activeOrgId, debouncedSearch, statusFilter, subscriptionFilter, showToast],
   );
+
+  useEffect(() => {
+    const organizationsUiState =
+      initialLoad && fetching
+        ? 'loading'
+        : loadError
+        ? 'error'
+        : organizations.length === 0
+        ? 'empty'
+        : 'success';
+    const crmUiState = crmLoading ? 'loading' : crmError ? 'error' : 'success';
+    console.info('[AdminOrgWorkspace] final_ui_state', {
+      route: '/admin/organizations',
+      organizationsUiState,
+      crmUiState,
+      organizationRowCount: organizations.length,
+      selectedOrgId,
+    });
+  }, [crmError, crmLoading, fetching, initialLoad, loadError, organizations.length, selectedOrgId]);
 
   useEffect(() => {
     fetchOrganizations(1);

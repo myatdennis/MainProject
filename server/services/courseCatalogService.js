@@ -148,13 +148,30 @@ export const createCourseCatalogService = ({
       req.body?.org_id,
       req.body?.organization_id,
       req.body?.organizationId,
+      context.requestedOrgId,
+      context.activeOrganizationId,
     );
+    if (!requestedOrgId) {
+      return {
+        status: 400,
+        body: { error: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' },
+      };
+    }
 
     const accessContext = await buildAdminOrgAccess({ req, res, context, requestedOrgId });
     if (accessContext?.handled) return null;
     if (accessContext?.result) return accessContext.result;
 
     const { isPlatformAdmin, adminOrgIds, allowedOrgIdSet, resolvedRequestedOrgId, restrictToAllowed } = accessContext;
+    logger.info('admin_courses_request_context', {
+      requestId: req.requestId ?? null,
+      route: '/api/admin/courses',
+      userId: context.userId ?? null,
+      requestedOrgId,
+      resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+      activeOrganizationId: context.activeOrganizationId ?? null,
+      isPlatformAdmin,
+    });
 
     if (isDemoOrTestMode) {
       try {
@@ -195,6 +212,14 @@ export const createCourseCatalogService = ({
             totalCountAllOrgs: shaped.length,
           };
         }
+        logger.info('admin_courses_response_ready', {
+          requestId: req.requestId ?? null,
+          route: '/api/admin/courses',
+          requestedOrgId,
+          resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+          rowCount: responseData.length,
+          envelopeKeys: Object.keys(body),
+        });
         return { status: 200, body };
       } catch (error) {
         logAdminCoursesError(req, error, 'E2E fetch courses failed');
@@ -287,6 +312,15 @@ export const createCourseCatalogService = ({
       if (debugMeta) {
         body.debug = debugMeta;
       }
+      logger.info('admin_courses_response_ready', {
+        requestId: req.requestId ?? null,
+        route: '/api/admin/courses',
+        requestedOrgId,
+        resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+        rowCount: hydratedData.length,
+        totalCount: count || 0,
+        envelopeKeys: Object.keys(body),
+      });
       return { status: 200, body };
     } catch (error) {
       logAdminCoursesError(req, error, 'Failed to fetch courses');
@@ -314,6 +348,8 @@ export const createCourseCatalogService = ({
       req.body?.org_id,
       req.body?.organization_id,
       req.body?.organizationId,
+      context.requestedOrgId,
+      context.activeOrganizationId,
     );
     const includeStructure = parseBooleanParam(req.query.includeStructure, true);
     const includeLessons = parseBooleanParam(req.query.includeLessons, true);

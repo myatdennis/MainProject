@@ -6,6 +6,7 @@ interface LoginOptions {
   password?: string;
   baseUrl?: string;
   apiBaseUrl?: string;
+  activeOrgId?: string;
 }
 
 const boundPages = new WeakSet<Page>();
@@ -36,6 +37,7 @@ export const loginAsAdmin = async (
   page: Page,
   options: LoginOptions = {},
 ) => {
+  const activeOrgId = options.activeOrgId ?? 'demo-sandbox-org';
   if (!boundPages.has(page)) {
     page.on('console', (msg) => console.log(`[browser:${msg.type()}] ${msg.text()}`));
     page.on('pageerror', (err) => console.error('[pageerror]', err.message));
@@ -45,7 +47,7 @@ export const loginAsAdmin = async (
   // app scripts run so the app boots with an authenticated session. This
   // avoids relying on the full SecureAuth flow in CI/local runs.
   if (shouldUseSyntheticBypass()) {
-    await page.addInitScript(() => {
+    await page.addInitScript((bootstrap) => {
       // Minimal fake supabase client with auth methods used by the app
       // NOTE: keep this minimal and only for test environments.
       const fake = {
@@ -107,7 +109,8 @@ export const loginAsAdmin = async (
   // Explicit bypass flag so client code can detect E2E mode even when
   // import.meta.env flags are not present in the built bundle.
   (window as any).__E2E_BYPASS = true;
-    });
+  (window as any).__E2E_ACTIVE_ORG_ID = bootstrap.activeOrgId;
+    }, { activeOrgId });
   }
   const baseUrl = options.baseUrl ?? getFrontendBaseUrl();
   const apiBaseUrl = options.apiBaseUrl ?? getApiBaseUrl();

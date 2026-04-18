@@ -41,6 +41,7 @@ import Loading from '../../components/ui/Loading';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
+import { nanoid } from 'nanoid';
 
 export const getUserTransferToastMessage = (
   currentOrgContext: string | null,
@@ -198,15 +199,10 @@ const AdminUsers = () => {
   const fetchUsers = useCallback(async () => {
     setUsersLoading(true);
     setUsersError(null);
+    const clientRequestId = `admin-users-${nanoid(8)}`;
     try {
       const normalizedFilterOrg = filterOrg !== 'all' ? filterOrg : null;
-
-      let queryOrgId: string | null = null;
-      if (isPlatformAdmin) {
-        queryOrgId = normalizedFilterOrg;
-      } else {
-        queryOrgId = activeOrgId || normalizedFilterOrg;
-      }
+      const queryOrgId = normalizedFilterOrg ?? activeOrgId ?? null;
 
       if (!isPlatformAdmin && !queryOrgId) {
         throw new Error('Organization context is required for non-platform administrators.');
@@ -215,9 +211,17 @@ const AdminUsers = () => {
       const queryString = queryOrgId ? `?orgId=${encodeURIComponent(queryOrgId)}` : '';
       const apiPath = `/api/admin/users${queryString}`;
 
-      console.info('[AdminUsers] fetchUsers:', { apiPath, activeOrgId, isPlatformAdmin, filterOrg });
+      console.info('[AdminUsers] request_dispatch', {
+        clientRequestId,
+        apiPath,
+        activeOrgId,
+        requestedOrgId: queryOrgId,
+        isPlatformAdmin,
+        filterOrg,
+      });
 
       const response = await apiRequest<any[] | { data?: any[] }>(apiPath, { noTransform: true });
+      const envelopeKeys = response && typeof response === 'object' ? Object.keys(response as Record<string, unknown>) : [];
       const records = Array.isArray(response)
         ? response
         : Array.isArray(response?.data)
@@ -237,11 +241,17 @@ const AdminUsers = () => {
         }
       });
 
+      console.info('[AdminUsers] response_received', {
+        clientRequestId,
+        requestedOrgId: queryOrgId,
+        rowCount: records.length,
+        mappedCount: mapped.length,
+        envelopeKeys,
+      });
       setUsersList(mapped);
     } catch (err: any) {
       console.error('[AdminUsers] Failed to load users', err);
       setUsersError(err?.message ?? 'Failed to load users');
-      setUsersList([]);
     } finally {
       setUsersLoading(false);
     }
@@ -251,13 +261,24 @@ const AdminUsers = () => {
     void fetchUsers();
   }, [fetchUsers]);
 
+  useEffect(() => {
+    const uiState = usersLoading ? 'loading' : usersError ? 'error' : usersList.length === 0 ? 'empty' : 'success';
+    console.info('[AdminUsers] final_ui_state', {
+      route: '/admin/users',
+      requestedOrgId: filterOrg !== 'all' ? filterOrg : activeOrgId ?? null,
+      uiState,
+      rowCount: usersList.length,
+    });
+  }, [activeOrgId, filterOrg, usersError, usersList.length, usersLoading]);
+
   const navigate = useNavigate();
 
   // Fetch real organizations from the API for filtering and the Add User modal
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     let cancelled = false;
-    listOrgs()
+    if (!activeOrgId) return;
+    listOrgs(undefined, { preferredOrgId: activeOrgId })
       .then((orgs) => {
         if (cancelled) return;
         setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
@@ -266,13 +287,14 @@ const AdminUsers = () => {
         console.warn('[AdminUsers] Failed to load organizations for filter', err);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [activeOrgId]);
 
   // Refresh organizations list when other parts of the app invalidate org list
   useEffect(() => {
     const unsub = onOrgListInvalidated?.(() => {
       let cancelled = false;
-      listOrgs({}, { forceRefresh: true })
+      if (!activeOrgId) return;
+      listOrgs({}, { forceRefresh: true, preferredOrgId: activeOrgId })
         .then((orgs) => {
           if (cancelled) return;
           setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
@@ -283,7 +305,7 @@ const AdminUsers = () => {
       return () => { cancelled = true; };
     });
     return () => { if (typeof unsub === 'function') unsub(); };
-  }, []);
+  }, [activeOrgId]);
 
   // ── Org course modules (dynamic, falls back to defaults) ─────────────
   const DEFAULT_MODULE_KEYS = ['foundations', 'bias', 'empathy', 'conversations', 'planning'];
@@ -868,7 +890,7 @@ const AdminUsers = () => {
         )}
       </div>
 
-      {!usersLoading && filteredUsers.length === 0 && (
+      {!usersLoading && !usersError && filteredUsers.length === 0 && (
         <div className="mt-8">
           <EmptyState
             title={usersList.length === 0 ? 'No users yet' : 'No users found'}
