@@ -80,11 +80,16 @@ export async function getAccessToken(): Promise<string | null> {
   if (isE2EBypass || storedToken) {
     return storedToken;
   }
-  const { data, error } = await supabase.auth.getSession();
-  if (error) {
-    throw new Error(`[apiFetch] supabase.getSession failed: ${error.message}`);
+  try {
+    const { getCanonicalSession, waitForAuthReady } = await import('./canonicalAuth');
+    const cs = getCanonicalSession();
+    if (cs && cs.accessToken) return cs.accessToken;
+    const ready = await waitForAuthReady(2000).catch(() => null);
+    return ready?.accessToken ?? null;
+  } catch (e) {
+    // If canonicalAuth isn't available, treat as unauthenticated.
+    return null;
   }
-  return data?.session?.access_token ?? null;
 }
 
 const ensureAccessToken = async (): Promise<string> => {

@@ -1194,6 +1194,8 @@ let learnerCatalogState: LearnerCatalogState = {
 
 let initPromise: Promise<void> | null = null;
 let initTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+// Monotonic init generation to avoid stale responses overwriting newer state.
+let initGeneration = 0;
 // Track the org context that was used for the last successful init so we can
 // detect org switches and flush the stale localStorage catalog cache.
 let lastInitOrgId: string | null = null;
@@ -1979,13 +1981,36 @@ export const courseStore = {
     editingCourseId = id ?? null;
   },
 
-  init: (options?: { reason?: string | null; surface?: SessionSurface }): Promise<void> => {
+  init: async (options?: { reason?: string | null; surface?: SessionSurface }): Promise<void> => {
     const reason = options?.reason ?? null;
     const initReason = reason ?? 'unknown';
     if (initPromise) {
       // Re-use the in-flight promise — never start a second concurrent init.
       return initPromise;
     }
+    const myGeneration = ++initGeneration;
+  console.info('[courseStore.init] init_started', { reason: initReason, generation: myGeneration });
+
+      // HARD GUARANTEE: do not start admin loader until org/auth context is
+      // resolved. Prefer the bridge snapshot; wait briefly for resolution.
+      try {
+        const initialContext = resolveOrgContext();
+        if (initialContext.status !== 'ready') {
+          const resolved = await waitForOrgContextResolution(initialContext, 'init:wait_org_ready');
+          if (myGeneration !== initGeneration) {
+            if (import.meta.env?.DEV) console.debug('[courseStore.init] generation changed during org wait — aborting init', { myGeneration, initGeneration });
+            return Promise.resolve();
+          }
+          if (resolved.status !== 'ready') {
+            console.warn('[courseStore.init] org context not resolved; deferring init until auth/org ready', { status: resolved.status });
+            // Do not set final empty state — keep UI in loading; caller can retry.
+            return Promise.resolve();
+          }
+        }
+      } catch (e) {
+        console.warn('[courseStore.init] org readiness check failed', e);
+        // proceed guarded — later checks will handle failures
+      }
 
     // Ready-guard: skip a full re-fetch if the catalog already succeeded,
     // UNLESS the active org has changed since the last successful load.
@@ -2418,7 +2443,21 @@ export const courseStore = {
             dbCourses = await fetchPublishedCourses();
           }
           if (import.meta.env?.DEV) {
-            console.info('[courseStore.init] published_catalog_loaded', { count: dbCourses.length });
+              console.info('[courseStore.init] published_catalog_loaded', { count: dbCourses.length });
+            }
+          // Verify org context did not change while fetching; if it did, discard
+          // the fetched results to avoid stale/incorrect catalog state.
+          try {
+            const postFetchOrgContext = resolveOrgContext();
+            if ((orgContext.orgId ?? null) !== (postFetchOrgContext.orgId ?? null)) {
+              console.warn('[courseStore.init] org_id_mismatch_after_fetch — discarding fetched catalog', {
+                requestedOrg: orgContext.orgId ?? null,
+                currentOrg: postFetchOrgContext.orgId ?? null,
+              });
+              return;
+            }
+          } catch (e) {
+            // ignore and continue
           }
         } catch (fallbackErr) {
           console.warn('[courseStore.init] Published catalog fallback failed:', fallbackErr);
@@ -2648,12 +2687,17 @@ export const courseStore = {
         }
       }
     } finally {
-      setAdminCatalogState({
-        phase: 'ready',
-        adminLoadStatus,
-        lastUpdatedAt: monotonicNow(),
-        lastError: adminLoadError,
-      });
+      // Apply final state only if this init run is still the active generation.
+      if (myGeneration === initGeneration) {
+        setAdminCatalogState({
+          phase: 'ready',
+          adminLoadStatus,
+          lastUpdatedAt: monotonicNow(),
+          lastError: adminLoadError,
+        });
+      } else {
+        console.debug('[courseStore.init] final state update skipped due to newer generation', { myGeneration, currentGeneration: initGeneration });
+      }
       // Persist the resolved org so forceInit can detect org switches on the next call.
       if (resolvedOrgIdForInit !== null) {
         lastInitOrgId = resolvedOrgIdForInit;
@@ -2673,12 +2717,22 @@ export const courseStore = {
           return;
         }
         console.warn('[courseStore.init] init_timeout_triggered', { timeoutMs: INIT_TIMEOUT_MS, reason: initReason });
-        setAdminCatalogState({
-          phase: 'ready',
-          adminLoadStatus: 'api_unreachable',
-          lastUpdatedAt: monotonicNow(),
-          lastError: `init_timeout_${INIT_TIMEOUT_MS}`,
-        });
+        // DO NOT mark the catalog as empty on timeout. Mark as degraded and
+        // retain phase 'loading' so we don't mislead UI into thinking load
+        // completed. Only apply this timeout state if this generation is
+        // still current (guard against concurrent init calls).
+        if (myGeneration === initGeneration) {
+          setAdminCatalogState((prev) => ({
+            ...prev,
+            // keep phase 'loading' to indicate background recovery in progress
+            phase: 'loading',
+            adminLoadStatus: 'api_unreachable',
+            lastUpdatedAt: monotonicNow(),
+            lastError: `init_timeout_${INIT_TIMEOUT_MS}`,
+          }));
+        } else {
+          console.debug('[courseStore.init] timeout skipped due to newer generation', { myGeneration, currentGeneration: initGeneration });
+        }
       } catch (e) {
         // Non-fatal: timeout handler must not throw.
         console.warn('[courseStore.init] timeout_handler_error', e);
@@ -2695,6 +2749,7 @@ export const courseStore = {
       clearTimeout(initTimeoutHandle);
       initTimeoutHandle = null;
     }
+    // Only clear the promise if this generation is still current.
     initPromise = null;
   });
 

@@ -8737,11 +8737,12 @@ const mapOrgProfileUser = (member) => {
     orgId: member.org_id ?? null,
     userId: member.user_id ?? null,
     role: member.role ?? userRow?.role ?? null,
-    status: member.status ?? userRow?.status ?? null,
     invitedBy: member.invited_by ?? null,
     acceptedAt: member.accepted_at ?? null,
     lastSeenAt: member.last_seen_at ?? null,
-    lastLoginAt: userRow?.last_login_at ?? null,
+  // Avoid depending on schema-specific columns like user.status or user.last_login_at.
+  status: member.status ?? null,
+  lastLoginAt: userRow?.updated_at ?? null,
     email: profile?.email ?? userRow?.email ?? null,
     name: profile?.name ?? fallbackName ?? null,
     title: profile?.title ?? userRow?.title ?? null,
@@ -9303,16 +9304,34 @@ const cloneCrmActivity = () => ({
 
 const countRows = async (table, applyFilters) => {
   if (!supabase) return 0;
-  let query = supabase.from(table).select('id', { count: 'exact', head: true });
-  if (typeof applyFilters === 'function') {
-    const modified = applyFilters(query);
-    if (modified) {
-      query = modified;
+  try {
+    let query = supabase.from(table).select('id', { count: 'exact', head: true });
+    if (typeof applyFilters === 'function') {
+      try {
+        const modified = applyFilters(query);
+        if (modified) {
+          query = modified;
+        }
+      } catch (err) {
+        // If the filter application throws (e.g. due to missing column
+        // identifier construction), treat as zero for safety.
+        logger && logger.warn && logger.warn('countRows.applyFilters_failed', { table, message: err?.message || String(err) });
+        return 0;
+      }
     }
+    const { count, error } = await query;
+    if (error) {
+      // Schema drift (missing column/relation) should not crash summary generation.
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        return 0;
+      }
+      throw error;
+    }
+    return count || 0;
+  } catch (error) {
+    logger && logger.warn && logger.warn('countRows_failed', { table, message: error?.message || String(error) });
+    return 0;
   }
-  const { count, error } = await query;
-  if (error) throw error;
-  return count || 0;
 };
 
 const fetchRecentRecords = async ({
@@ -9380,7 +9399,9 @@ async function loadCrmSummary() {
   countRows('user_profiles'),
   countRows('user_profiles', (query) => query.eq('status', 'active')),
       countRows('organization_memberships', (query) => query.eq('status', 'pending')),
-  countRows('user_profiles', (query) => query.gte('last_login_at', thirtyDaysAgoIso)),
+  // NOTE: last_login_at may not exist in all schema variants; use created_at
+  // as a safer proxy for 'recent activity' counts.
+  countRows('user_profiles', (query) => query.gte('created_at', thirtyDaysAgoIso)),
       countRows('assignments', (query) =>
         query
           .eq('assignment_type', 'course')
@@ -9458,7 +9479,8 @@ async function loadCrmActivity() {
     }),
     fetchRecentRecords({
       table: 'user_profiles',
-      columns: 'id,email,first_name,last_name,role,status,last_login_at,created_at',
+      // Avoid selecting columns that may not exist in all schemas (status, last_login_at).
+      columns: 'id,email,first_name,last_name,role,created_at',
       orderBy: 'created_at',
       label: 'users',
     }),
@@ -9483,15 +9505,15 @@ async function loadCrmActivity() {
     createdAt: row.created_at,
     contactEmail: row.contact_email ?? null,
   }));
-  activity.users = users.map((row) => ({
-    id: row.id,
-    email: row.email,
-    name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.email,
-    role: row.role,
-    status: row.status,
-    lastLoginAt: row.last_login_at ?? null,
-    createdAt: row.created_at,
-  }));
+    activity.users = users.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.email,
+      role: row.role,
+      // Avoid referencing schema-specific columns like `status` or `last_login_at`.
+      lastLoginAt: row.updated_at ?? null,
+      createdAt: row.created_at,
+    }));
   activity.messages = messages.map(mapOrgMessageRecord);
   activity.notifications = notifications.map(mapNotificationRecord);
   return activity;

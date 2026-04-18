@@ -36,34 +36,28 @@ const resolveSupabaseSessionSnapshot = async (): Promise<SupabaseSessionSnapshot
   }
 
   try {
-    const supabase = await getSupabase();
-    if (!supabase) {
-      console.warn('[requestContext] Supabase configured but client not available');
-      supabaseSessionSnapshot = createRetrySnapshot();
+    // Prefer canonical in-memory session snapshot; avoid reading Supabase
+    // session directly from arbitrary modules.
+    const { getCanonicalSession, waitForAuthReady } = await import('../lib/canonicalAuth');
+    const cs = getCanonicalSession();
+    if (cs && cs.accessToken) {
+      supabaseSessionSnapshot = {
+        token: cs.accessToken,
+        userId: cs.userId ?? null,
+        expiresAt: now() + 60 * 1000,
+      };
       return supabaseSessionSnapshot;
     }
-
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      console.warn('[requestContext] Failed to resolve Supabase session:', error.message || error);
-      supabaseSessionSnapshot = createRetrySnapshot();
+    const ready = await waitForAuthReady(2000).catch(() => null);
+    if (ready && ready.accessToken) {
+      supabaseSessionSnapshot = {
+        token: ready.accessToken,
+        userId: ready.userId ?? null,
+        expiresAt: now() + 60 * 1000,
+      };
       return supabaseSessionSnapshot;
     }
-
-    const session = data?.session ?? null;
-    if (!session) {
-      supabaseSessionSnapshot = createRetrySnapshot();
-      return supabaseSessionSnapshot;
-    }
-
-    const expiresAt = session.expires_at ? session.expires_at * 1000 : now() + 60 * 1000;
-
-    supabaseSessionSnapshot = {
-      token: session.access_token ?? null,
-      userId: session.user?.id ?? null,
-      expiresAt: session.access_token ? expiresAt : now() + SUPABASE_SESSION_RETRY_MS,
-    };
-
+    supabaseSessionSnapshot = createRetrySnapshot();
     return supabaseSessionSnapshot;
   } catch (err) {
     console.warn('[requestContext] Supabase session lookup failed:', err);

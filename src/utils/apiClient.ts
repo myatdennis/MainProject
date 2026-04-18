@@ -962,23 +962,22 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
   }
   const promise = (async () => {
     try {
-      const supabase = await getSupabase();
-      if (!supabase) {
-        if (import.meta.env?.DEV) {
-          console.debug('[apiClient] Skipping admin access gate because Supabase client is unavailable');
+      // Use canonical session snapshot rather than querying Supabase directly.
+      const { getCanonicalSession, waitForAuthReady } = await import('../lib/canonicalAuth');
+      const cs = getCanonicalSession();
+      let accessToken: string | null = null;
+      if (cs && cs.accessToken) {
+        accessToken = cs.accessToken;
+      } else {
+        const ready = await waitForAuthReady(2000).catch(() => null);
+        if (!ready || !ready.accessToken) {
+          if (import.meta.env?.DEV) {
+            console.debug('[apiClient] Skipping admin access gate because session is unavailable');
+          }
+          return null;
         }
-        return null;
+        accessToken = ready.accessToken;
       }
-      const { data, error } = await supabase.auth.getSession();
-      if (error || !data.session) {
-        if (import.meta.env?.DEV) {
-          console.debug('[apiClient] Skipping admin access gate because Supabase session is unavailable', {
-            error: error?.message ?? null,
-          });
-        }
-        return null;
-      }
-      const accessToken = data.session.access_token;
 
       const res = await authorizedFetch(
         '/api/admin/me',

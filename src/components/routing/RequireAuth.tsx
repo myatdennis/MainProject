@@ -14,6 +14,7 @@ import {
   type AdminAccessPayload,
 } from '../../lib/adminAccess';
 import { supabase } from '../../lib/supabaseClient';
+import { getCanonicalSession } from '../../lib/canonicalAuth';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 type AuthMode = 'admin' | 'lms' | 'client';
@@ -488,11 +489,10 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       return;
     }
     try {
-      const { data } = await supabase.auth.getSession();
-      const supabaseUser = data?.session?.user;
+      const cs = getCanonicalSession();
       const payload = {
-        id: supabaseUser?.id ?? user?.id ?? 'unknown',
-        email: supabaseUser?.email ?? user?.email ?? 'unknown',
+        id: cs.userId ?? user?.id ?? 'unknown',
+        email: cs.userEmail ?? user?.email ?? 'unknown',
       };
       await navigator.clipboard.writeText(`User ID: ${payload.id}\nEmail: ${payload.email}`);
       setCopyIdentityStatus('copied');

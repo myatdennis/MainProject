@@ -8,11 +8,11 @@ export type AuditAction = 'admin_login' | 'admin_logout' | 'user_update' | 'role
 
 const hasSupabaseSessionToken = async (): Promise<boolean> => {
   try {
-    const supabase = getSupabase();
-    if (!supabase) return false;
-    const { data, error } = await supabase.auth.getSession();
-    if (error) return false;
-    return Boolean(data?.session?.access_token);
+    const { getCanonicalSession, waitForAuthReady } = await import('../lib/canonicalAuth');
+    const cs = getCanonicalSession();
+    if (cs && cs.accessToken) return true;
+    const ready = await waitForAuthReady(2000).catch(() => null);
+    return Boolean(ready && ready.accessToken);
   } catch {
     return false;
   }

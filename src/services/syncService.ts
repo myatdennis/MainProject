@@ -1,6 +1,7 @@
 import { courseStore } from '../store/courseStore';
 import { Course } from '../types/courseTypes';
 import { getSupabase } from '../lib/supabaseClient';
+import { getCanonicalSession, subscribeCanonicalAuth, waitForAuthReady } from '../lib/canonicalAuth';
 import type { CourseAssignment } from '../types/assignment';
 import { CourseValidationError } from '../dal/adminCourses';
 import { wsClient } from './wsClient';
@@ -101,16 +102,31 @@ class SyncService {
 
     // Initialize real-time Supabase listeners
     void this.initializeRealtimeSync();
-    const supabaseClient = getSupabase();
-    if (supabaseClient) {
-      const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
-        if (session?.access_token) {
+    // Subscribe to canonical auth snapshot changes so we can initialize or
+    // teardown realtime channels according to the canonical session state.
+    try {
+      const unsub = subscribeCanonicalAuth((next) => {
+        if (next && next.accessToken) {
           void this.initializeRealtimeSync();
-        } else if (event === 'SIGNED_OUT') {
+        } else {
           this.cleanupRealtimeChannels();
         }
       });
-      this.authSubscription = data?.subscription ?? null;
+      this.authSubscription = { unsubscribe: unsub };
+    } catch (e) {
+      // If subscribing fails, fall back to Supabase onAuthStateChange when
+      // available.
+      const supabaseClient = getSupabase();
+      if (supabaseClient) {
+        const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
+          if (session?.access_token) {
+            void this.initializeRealtimeSync();
+          } else if (event === 'SIGNED_OUT') {
+            this.cleanupRealtimeChannels();
+          }
+        });
+        this.authSubscription = data?.subscription ?? null;
+      }
     }
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', () => {
@@ -203,18 +219,18 @@ class SyncService {
         this.cleanupRealtimeChannels();
         return;
       }
-      const sessionResponse =
-        typeof supabase.auth?.getSession === 'function' ? await supabase.auth.getSession() : null;
-      const sessionData =
-        sessionResponse && typeof sessionResponse === 'object' && 'data' in sessionResponse
-          ? (sessionResponse as { data?: { session?: { access_token?: string | null } | null } }).data
-          : undefined;
-      if (!sessionData?.session?.access_token) {
-        if (import.meta.env.DEV) {
-          logSyncDebug('[SyncService] Skipping realtime setup until Supabase session is available.');
+      // Check canonical session first, then wait briefly for auth ready
+      // before deciding whether to enable realtime.
+      const cs = getCanonicalSession();
+      if (!cs?.accessToken) {
+        const ready = await waitForAuthReady(2000).catch(() => null);
+        if (!ready?.accessToken) {
+          if (import.meta.env.DEV) {
+            logSyncDebug('[SyncService] Skipping realtime setup until session is available.');
+          }
+          this.cleanupRealtimeChannels();
+          return;
         }
-        this.cleanupRealtimeChannels();
-        return;
       }
       this.cleanupRealtimeChannels();
 

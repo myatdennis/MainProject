@@ -4,6 +4,7 @@ import {
   clearAuth,
   getRefreshToken,
 } from '../lib/secureStorage';
+import { clearCanonicalSession } from '../lib/canonicalAuth';
 import { getSupabase } from '../lib/supabaseClient';
 import apiRequest from '../utils/apiClient';
 
@@ -50,6 +51,13 @@ export const performLogout = async (
 
   clearAuth('manual_logout');
   clearAdminAccessSnapshot();
+  // Ensure canonical in-memory session is cleared so no module thinks there's
+  // an authenticated session after logout.
+  try {
+    clearCanonicalSession();
+  } catch (e) {
+    console.warn('[SecureAuth] clearCanonicalSession failed', e);
+  }
   deps.setUser(null);
   deps.setMemberships([]);
   deps.setOrganizationIds([]);

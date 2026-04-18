@@ -72,6 +72,7 @@ import { courseStore } from '../store/courseStore';
 // and intentionally not referenced here in all builds
 import type { OrgContextSnapshot } from '../store/courseStoreOrgBridge';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
+import { setCanonicalSession, clearCanonicalSession } from '../lib/canonicalAuth';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -545,6 +546,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           };
           setSessionMetadata(metadata);
           setSessionMetaVersion((value) => value + 1);
+        }
+        // Update canonical (in-memory) session snapshot so all modules can
+        // synchronously read the live access token / session state without
+        // querying Supabase directly.
+        try {
+          setCanonicalSession({
+            accessToken: payload.accessToken ?? getAccessToken() ?? null,
+            refreshToken: payload.refreshToken ?? null,
+            userId: session.id ?? null,
+            userEmail: session.email ?? null,
+            activeOrgId: resolvedState.activeOrgId ?? null,
+            authenticated: true,
+          });
+        } catch (e) {
+          console.warn('[SecureAuth] setCanonicalSession failed', e);
         }
       }
     },

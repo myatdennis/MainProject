@@ -234,6 +234,15 @@ export const useAuthDiagnostics = ({
             ts: Date.now(),
           });
         }
+        try {
+          // Ensure the courseStore org-bridge has a fresh snapshot available
+          // BEFORE we signal auth readiness. This prevents a race where
+          // consumers (like courseStore) receive `huddle:auth_ready` and
+          // read the bridge before it's been populated.
+          writeBridgeSnapshot(deriveOrgContextSnapshotCallback());
+        } catch (err) {
+          console.warn('[authDiagnostics] Failed to write bridge snapshot before auth_ready', err);
+        }
         window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
       }
     }

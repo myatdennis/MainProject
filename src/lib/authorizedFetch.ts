@@ -1,5 +1,5 @@
-import { getSupabase } from './supabaseClient';
 import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
+import { getCanonicalAccessToken, waitForAuthReady } from './canonicalAuth';
 import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 import { resolveApiUrl } from '../config/apiBase';
@@ -202,6 +202,8 @@ export default async function authorizedFetch(
   init: RequestInit = {},
   options: AuthorizedFetchOptions = {},
 ): Promise<Response> {
+  // Unique request id for instrumentation and tracing
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const requireAuth =
     options.requireAuth === true
       ? true
@@ -214,6 +216,9 @@ export default async function authorizedFetch(
 
   while (attempt < 2) {
     const headers = new Headers(init.headers || {});
+    // Attach request id for server-side correlation
+    if (!headers.has('X-Request-Id')) headers.set('X-Request-Id', requestId);
+    console.info('[request_start]', { requestId, url: extractPathname(url), attempt });
     let token: string | null = null;
     const e2eBypass = isE2EBypassActive();
 
@@ -228,12 +233,17 @@ export default async function authorizedFetch(
     if (requireAuth && !e2eBypass) {
       // Wait for any in-flight refresh to finish before using token
       await waitForRefresh();
-      token = getStoredAccessToken();
+      // Prefer canonical in-memory token (set by SecureAuthContext). Fall back
+      // to persisted secureStorage value if needed.
+      token = getCanonicalAccessToken() ?? getStoredAccessToken();
       if (!token) {
-        const supabase = getSupabase();
-        if (supabase && supabase.auth && typeof supabase.auth.getSession === 'function') {
-          const sessionResult = await supabase.auth.getSession();
-          token = sessionResult?.data?.session?.access_token ?? null;
+        // If canonical auth isn't yet set, wait briefly for auth ready event
+        // (use a short timeout so public endpoints are not blocked long).
+        try {
+          const cs = await waitForAuthReady(2000).catch(() => null);
+          if (cs && cs.accessToken) token = cs.accessToken;
+        } catch {
+          // ignore timeout/fail
         }
       }
       if (token) {
@@ -265,8 +275,10 @@ export default async function authorizedFetch(
     const targetUrl = normalizeUrl(url);
     try {
       response = await fetch(targetUrl, { ...init, headers, signal: controller.signal });
+      console.info('[request_success]', { requestId, url: extractPathname(url), status: response.status, attempt });
     } catch (error: any) {
       cleanup();
+      console.warn('[request_failure]', { requestId, url: extractPathname(url), attempt, error });
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (devMode) {
           console.warn('[authorizedFetch] request aborted', { url, requestLabel, attempt });

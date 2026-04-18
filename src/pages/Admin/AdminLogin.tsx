@@ -8,6 +8,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
+import { getCanonicalSession, waitForAuthReady } from '../../lib/canonicalAuth';
 import { flushAuditQueue } from '../../dal/auditLog';
 import {
   hasAdminPortalAccess,
@@ -123,11 +124,13 @@ const AdminLogin: React.FC = () => {
 
   const captureDeniedUserSnapshot = useCallback(async () => {
     try {
-      const { data } = await supabase.auth.getSession();
-      setDeniedUserSnapshot({
-        id: data?.session?.user?.id ?? null,
-        email: data?.session?.user?.email ?? null,
-      });
+      const cs = getCanonicalSession();
+      if (cs && cs.userId) {
+        setDeniedUserSnapshot({ id: cs.userId ?? null, email: cs.userEmail ?? null });
+      } else {
+        const ready = await waitForAuthReady(2000).catch(() => null);
+        setDeniedUserSnapshot(ready ? { id: ready.userId ?? null, email: ready.userEmail ?? null } : null);
+      }
     } catch (snapshotError) {
       console.warn('[AdminLogin] unable to capture denied user snapshot', snapshotError);
       setDeniedUserSnapshot(null);
@@ -158,8 +161,8 @@ const AdminLogin: React.FC = () => {
     async (label: string) => {
       if (!import.meta.env.DEV) return;
       try {
-        const { data } = await supabase.auth.getSession();
-        const token = data?.session?.access_token ?? null;
+        const cs = getCanonicalSession();
+        const token = cs?.accessToken ?? null;
         let alg: string | null = null;
         let kid: string | null = null;
         if (token) {
@@ -522,12 +525,16 @@ const AdminLogin: React.FC = () => {
     setIsLoading(false);
     if (result.success) {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (import.meta.env.DEV) {
-          console.info('[AdminLogin] session_verified', {
-            sessionHasAccessToken: Boolean(data?.session?.access_token),
-            sessionError: error?.message ?? null,
-          });
+        try {
+          const cs = getCanonicalSession();
+          if (import.meta.env.DEV) {
+            console.info('[AdminLogin] session_verified', {
+              sessionHasAccessToken: Boolean(cs?.accessToken),
+              sessionUserId: cs?.userId ?? null,
+            });
+          }
+        } catch (e) {
+          // ignore
         }
         await updateDevSessionSnapshot('post-login-success');
         await flushAuditQueue();

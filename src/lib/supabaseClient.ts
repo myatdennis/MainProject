@@ -327,12 +327,15 @@ export function debugAuthStorage(label: string) {
 async function logSupabaseSessionStatus(label: string) {
   if (!import.meta.env.DEV) return;
   try {
-    const { data, error } = await supabase.auth.getSession();
+    // Prefer canonical in-memory session when available; this avoids
+    // reaching into Supabase from arbitrary modules.
+    const { getCanonicalSession } = await import('./canonicalAuth');
+    const cs = getCanonicalSession();
     console.info('[supabaseClient] session snapshot', {
       label,
-      sessionHasAccessToken: Boolean(data?.session?.access_token),
-      sessionUserId: data?.session?.user?.id ?? null,
-      sessionError: error?.message ?? null,
+      sessionHasAccessToken: Boolean(cs?.accessToken),
+      sessionUserId: cs?.userId ?? null,
+      sessionError: null,
     });
   } catch (sessionError) {
     console.warn('[supabaseClient] session snapshot failed', {

@@ -155,8 +155,7 @@ const AdminUsers = () => {
     const overallProgress = progressKeys.reduce((sum, k) => sum + (progressMap[k] ?? 0), 0) / progressKeys.length;
     const completedModules = progressKeys.filter((k) => (progressMap[k] ?? 0) >= 100).length;
 
-    const rawStatus =
-      (member?.status || profile?.status || userRow?.status || 'inactive').toString().toLowerCase();
+    const rawStatus = (member?.status || profile?.status || 'inactive').toString().toLowerCase();
     const normalizedStatus = ['active', 'pending', 'inactive'].includes(rawStatus) ? rawStatus : rawStatus;
 
     const canonicalOrgId = orgFromMember || activeOrgId || '';
@@ -186,7 +185,7 @@ const AdminUsers = () => {
         member?.role ??
         '',
       enrolled: member?.created_at ?? profile.created_at ?? '',
-      lastLogin: userRow.last_login_at ?? profile.updated_at ?? '',
+  lastLogin: userRow?.updated_at ?? profile.updated_at ?? '',
       progress: progressMap as User['progress'],
       overallProgress: Math.round(overallProgress),
       status: normalizedStatus,

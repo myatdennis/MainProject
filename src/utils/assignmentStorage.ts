@@ -3,6 +3,7 @@ import { syncService } from '../dal/sync';
 import type { AssignmentKind, CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
 import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secureStorage';
+import { readBridgeSnapshot } from '../store/courseStoreOrgBridge';
 import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
@@ -12,6 +13,20 @@ let assignmentsTableWarningLogged = false;
 let assignmentsProgressColumnMissing = false;
 let assignmentsProgressWarningLogged = false;
 const ASSIGNMENTS_API_CACHE_TTL_MS = 10_000;
+// Maximum allowed JSON payload bytes per secure storage key. Guard against
+// oversized writes that would trigger QuotaExceededError in some browsers.
+const MAX_PERSIST_KEY_BYTES = (() => {
+  try {
+    const meta = typeof import.meta !== 'undefined' ? (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_ASSIGNMENT_MAX_KEY_BYTES : undefined;
+    const proc = typeof process !== 'undefined' ? process.env?.ASSIGNMENT_MAX_KEY_BYTES : undefined;
+    const parsed = Number(meta ?? proc ?? 500_000);
+    return Number.isFinite(parsed) && parsed > 16_384 ? parsed : 500_000;
+  } catch {
+    return 500_000;
+  }
+})();
+
+// Backwards-compatible threshold which controls whether we chunk by index.
 const ASSIGNMENT_PERSIST_SIZE_THRESHOLD = (() => {
   try {
     const metaValue =
@@ -103,8 +118,19 @@ const getAuthedSupabaseClient = async () => {
   try {
     const supabase = await getSupabase();
     if (!supabase) return null;
-    const { data } = await supabase.auth.getSession();
-    if (!data?.session) {
+    // Ensure a canonical session exists before returning a Supabase client
+    // capable of making authenticated requests.
+    try {
+      const { getCanonicalSession, waitForAuthReady } = await import('../lib/canonicalAuth');
+      const cs = getCanonicalSession();
+      if (!cs || !cs.accessToken) {
+        const ready = await waitForAuthReady(2000).catch(() => null);
+        if (!ready || !ready.accessToken) {
+          return null;
+        }
+      }
+    } catch (e) {
+      // If canonicalAuth is unavailable treat as unauthenticated
       return null;
     }
     return supabase;
@@ -173,18 +199,42 @@ const getSessionUserEmail = (): string | null => {
 };
 
 const hasAuthenticatedSessionSnapshot = (): boolean => {
+  try {
+    const bridge = readBridgeSnapshot();
+    if (bridge && (bridge.userId || bridge.status === 'ready')) return true;
+  } catch {
+    // ignore and fall back to secureStorage
+  }
   return Boolean(getSessionUserId() || getSessionUserEmail());
 };
 
 const resolveLiveSessionContext = async (): Promise<{ id: string | null; email: string | null }> => {
   try {
-    const supabase = await getSupabase();
-    if (!supabase) return { id: null, email: null };
-    const { data } = await supabase.auth.getSession();
-    return {
-      id: data?.session?.user?.id?.toLowerCase() ?? null,
-      email: typeof data?.session?.user?.email === 'string' ? data.session.user.email.toLowerCase() : null,
-    };
+    // Prefer the bridge snapshot (written by SecureAuthContext) when available
+    try {
+      const bridge = readBridgeSnapshot();
+      if (bridge && bridge.userId) {
+        return { id: bridge.userId.toLowerCase(), email: null };
+      }
+    } catch {
+      // ignore and fall back to Supabase
+    }
+    // Prefer canonical in-memory session (set by SecureAuthContext). This
+    // avoids direct Supabase session reads from arbitrary modules.
+    try {
+      const { getCanonicalSession } = await import('../lib/canonicalAuth');
+      const cs = getCanonicalSession();
+      if (cs && cs.userId) {
+        return { id: cs.userId.toLowerCase(), email: cs.userEmail ?? null };
+      }
+      // If canonical not ready, wait briefly for auth ready if possible.
+      const { waitForAuthReady } = await import('../lib/canonicalAuth');
+      const ready = await waitForAuthReady(2000).catch(() => null);
+      if (ready && ready.userId) return { id: ready.userId.toLowerCase(), email: ready.userEmail ?? null };
+    } catch (e) {
+      // fall through to safe null result
+    }
+    return { id: null, email: null };
   } catch (error) {
     console.warn('[assignmentStorage] Unable to resolve live Supabase session:', error);
     return { id: null, email: null };
@@ -274,7 +324,13 @@ const loadLocalAssignments = (): CourseAssignment[] => {
     });
 
     if (sanitized.length !== parsed.length) {
-      persistLocalAssignments(sanitized);
+      // Attempt to persist a cleaned serialization as a best-effort repair.
+      try {
+        persistLocalAssignments(sanitized);
+      } catch (e) {
+        // Non-fatal: do not allow persistence repairs to throw during load.
+        console.warn('[assignmentStorage] Non-fatal persist during load failed', e);
+      }
     }
     return sanitized;
   } catch (error) {
@@ -285,47 +341,202 @@ const loadLocalAssignments = (): CourseAssignment[] => {
 
 const STORAGE_INDEX_KEY = STORAGE_KEY + '_index';
 
+const minimalizeAssignment = (rec: CourseAssignment) => ({
+  id: rec.id,
+  courseId: rec.courseId ?? null,
+  surveyId: rec.surveyId ?? null,
+  userId: rec.userId,
+  status: rec.status ?? 'assigned',
+  progress: typeof rec.progress === 'number' ? rec.progress : 0,
+  dueDate: rec.dueDate ?? null,
+  updatedAt: rec.updatedAt ?? rec.createdAt ?? new Date().toISOString(),
+});
+
+const bytesOf = (s: string) => new TextEncoder().encode(s).length;
+
+const pruneRecordsToFit = (records: CourseAssignment[], maxBytes: number): CourseAssignment[] => {
+  // Attempt minimalization first
+  let simplified = records.map((r) => minimalizeAssignment(r) as unknown as CourseAssignment);
+  let serialized = JSON.stringify(simplified);
+  let size = bytesOf(serialized);
+  if (size <= maxBytes) return simplified;
+
+  // Apply LRU-ish prune by updatedAt ascending (oldest removed first)
+  simplified.sort((a, b) => {
+    const ta = Date.parse(a.updatedAt ?? '') || 0;
+    const tb = Date.parse(b.updatedAt ?? '') || 0;
+    return ta - tb;
+  });
+
+  while (simplified.length > 0 && size > maxBytes) {
+    simplified.shift();
+    serialized = JSON.stringify(simplified);
+    size = bytesOf(serialized);
+  }
+  return simplified;
+};
+
+/** One-time cleanup of legacy/oversized secure storage keys for assignments. */
+const cleanupLegacyOversizedKeys = (): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    const storage = window.localStorage;
+    const prefix = 'secure_' + STORAGE_KEY;
+    const toRemove: string[] = [];
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i);
+      if (!key) continue;
+      if (key === `secure_${STORAGE_KEY}` || key === `secure_${STORAGE_INDEX_KEY}` || key.startsWith(prefix + '_')) {
+        const raw = storage.getItem(key) ?? '';
+        const encBytes = raw.length;
+        // Heuristic: encrypted payloads larger than twice max key bytes are likely problematic legacy items.
+        if (encBytes > MAX_PERSIST_KEY_BYTES * 2) {
+          toRemove.push(key);
+        }
+      }
+    }
+    toRemove.forEach((k) => {
+      try {
+        storage.removeItem(k);
+        console.info('[assignmentStorage] legacy_key_removed', { key: k });
+      } catch (e) {
+        console.warn('[assignmentStorage] failed_remove_legacy_key', { key: k, error: e });
+      }
+    });
+  } catch (err) {
+    console.warn('[assignmentStorage] cleanupLegacyOversizedKeys failed', err);
+  }
+};
+
+// run cleanup at module load (best-effort)
+try {
+  cleanupLegacyOversizedKeys();
+} catch {
+  // ignore
+}
+
 const persistLocalAssignments = (records: CourseAssignment[]) => {
   try {
     const serialized = JSON.stringify(records || []);
-    // If payload is large, avoid writing a single huge item to localStorage which may hit quota.
-    // Instead, persist an index and individual records to reduce single-key size.
-    if (serialized.length > ASSIGNMENT_PERSIST_SIZE_THRESHOLD) {
+    const size = bytesOf(serialized);
+    console.info('[assignmentStorage] payload_size', { key: STORAGE_KEY, bytes: size });
+
+    // Fast path: if already small enough to fit a single key and below strict cap
+    if (size <= Math.min(ASSIGNMENT_PERSIST_SIZE_THRESHOLD, MAX_PERSIST_KEY_BYTES)) {
       try {
-        // store index of IDs
+        secureSet(STORAGE_KEY, records);
+        return;
+      } catch (err) {
+        console.warn('[assignmentStorage] storage_write_failed', { key: STORAGE_KEY, bytes: size, error: err });
+      }
+    }
+
+    // If payload exceeds per-key cap, reduce to minimal schema and prune until fits
+    if (size > MAX_PERSIST_KEY_BYTES) {
+      const pruned = pruneRecordsToFit(records, MAX_PERSIST_KEY_BYTES);
+      const prunedSerialized = JSON.stringify(pruned);
+      const prunedSize = bytesOf(prunedSerialized);
+      console.warn('[assignmentStorage] storage_pruned', { originalBytes: size, prunedBytes: prunedSize, originalCount: records.length, prunedCount: pruned.length });
+      try {
+        secureSet(STORAGE_KEY, pruned);
+        return;
+      } catch (err) {
+        console.warn('[assignmentStorage] storage_write_failed_after_prune', { key: STORAGE_KEY, prunedSize, error: err });
+      }
+    }
+
+    // If still too big for single-key but below chunk threshold, attempt chunked write.
+    if (size > ASSIGNMENT_PERSIST_SIZE_THRESHOLD) {
+      try {
         const ids = records.map((r) => r.id);
-        secureSet(STORAGE_INDEX_KEY, ids);
-        // store each record individually
+        try {
+          secureSet(STORAGE_INDEX_KEY, ids);
+        } catch (err) {
+          console.warn('[assignmentStorage] storage_write_failed', { key: STORAGE_INDEX_KEY, error: err });
+        }
         for (const rec of records) {
           try {
-            secureSet(`${STORAGE_KEY}_${rec.id}`, rec);
-          } catch (e) {
-            // best-effort: if individual store fails, continue
-            console.warn('[assignmentStorage] Failed to persist individual assignment', rec.id, e);
+            const recSerialized = JSON.stringify(rec);
+            const recBytes = bytesOf(recSerialized);
+            if (recBytes > MAX_PERSIST_KEY_BYTES) {
+              // if an individual record is too big, persist a minimalized version
+              const minimal = minimalizeAssignment(rec);
+              try {
+                secureSet(`${STORAGE_KEY}_${rec.id}`, minimal);
+                console.warn('[assignmentStorage] individual_record_minimalized', { id: rec.id, originalBytes: recBytes, minimalBytes: bytesOf(JSON.stringify(minimal)) });
+              } catch (err) {
+                console.warn('[assignmentStorage] storage_write_failed', { key: `${STORAGE_KEY}_${rec.id}`, error: err });
+              }
+            } else {
+              try {
+                secureSet(`${STORAGE_KEY}_${rec.id}`, rec);
+              } catch (err) {
+                console.warn('[assignmentStorage] storage_write_failed', { key: `${STORAGE_KEY}_${rec.id}`, id: rec.id, error: err });
+              }
+            }
+          } catch (inner) {
+            console.warn('[assignmentStorage] Failed to serialize individual record', rec.id, inner);
           }
         }
-        // remove any legacy grouped storage
-        try {
-          secureRemove(STORAGE_KEY);
-        } catch (e) {
-          // ignore
-        }
+        // attempt to remove grouped key
+        try { secureRemove(STORAGE_KEY); } catch (e) { /* non-fatal */ }
         return;
       } catch (e) {
         console.warn('[assignmentStorage] Chunked persist failed, falling back to single-key persist', e);
       }
     }
 
-    // Normal path: small payload
-    secureSet(STORAGE_KEY, records);
+    // final attempt: write single-key (may be slightly above threshold)
+    try {
+      secureSet(STORAGE_KEY, records);
+    } catch (error) {
+      console.warn('[assignmentStorage] storage_write_failed', { key: STORAGE_KEY, bytes: size, error });
+    }
   } catch (error) {
-    console.warn('[assignmentStorage] Failed to persist assignments to secure storage:', error);
+    console.warn('[assignmentStorage] Failed to persist assignments to secure storage (outer):', error);
   }
+};
+
+// Export internals for unit testing / diagnostics
+export const __assignmentStorageInternals = {
+  minimalizeAssignment,
+  pruneRecordsToFit,
+  bytesOf,
 };
 
 const clearLocalAssignments = () => {
   invalidateAssignmentsApiCache();
-  secureRemove(STORAGE_KEY);
+  let ids: string[] = [];
+  try {
+    // best-effort remove grouped key and index
+    // First gather chunk ids (if any) so we can remove individual keys.
+    try {
+      ids = secureGet<string[]>(STORAGE_INDEX_KEY) ?? [];
+    } catch {
+      ids = [];
+    }
+    secureRemove(STORAGE_KEY);
+  } catch (err) {
+    console.warn('[assignmentStorage] clearLocalAssignments failed to remove grouped key', err);
+  }
+  try {
+    secureRemove(STORAGE_INDEX_KEY);
+  } catch (err) {
+    // ignore
+  }
+  // attempt to remove chunked keys if any
+  try {
+    const idsToRemove = Array.isArray(ids) ? ids : [];
+    for (const id of idsToRemove) {
+      try {
+        secureRemove(`${STORAGE_KEY}_${id}`);
+      } catch (e) {
+        // non-fatal
+      }
+    }
+  } catch (err) {
+    // non-fatal
+  }
 };
 
 const invalidateAssignmentsApiCache = () => {

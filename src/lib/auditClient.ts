@@ -64,8 +64,13 @@ export const flushAuditQueue = async (): Promise<void> => {
 
   let sessionReady = false;
   try {
-    const { data, error } = await supabase.auth.getSession();
-    sessionReady = Boolean(!error && data?.session?.access_token);
+    const { getCanonicalSession, waitForAuthReady } = await import('./canonicalAuth');
+    const cs = getCanonicalSession();
+    if (cs && cs.accessToken) sessionReady = true;
+    else {
+      const ready = await waitForAuthReady(2000).catch(() => null);
+      sessionReady = Boolean(ready && ready.accessToken);
+    }
   } catch (error) {
     sessionReady = false;
   }

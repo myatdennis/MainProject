@@ -349,7 +349,8 @@ const mapOrgProfileUserRecord = (record: any): OrgProfileUser => ({
   invitedBy: record.invitedBy ?? record.invited_by ?? null,
   acceptedAt: record.acceptedAt ?? record.accepted_at ?? null,
   lastSeenAt: record.lastSeenAt ?? record.last_seen_at ?? null,
-  lastLoginAt: record.lastLoginAt ?? record.last_login_at ?? null,
+  // Avoid schema-specific fields like last_login_at; prefer updated_at if available.
+  lastLoginAt: record.lastLoginAt ?? record.updatedAt ?? null,
   email: record.email ?? null,
   name: record.name ?? null,
   title: record.title ?? null,
