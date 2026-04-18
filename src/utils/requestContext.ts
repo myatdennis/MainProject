@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
+import { hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
 import { getUserSession, getActiveOrgPreference, getAccessToken } from '../lib/secureStorage';
 
 export type AuthHeaderSource = 'secureStorage' | 'supabase' | 'none';

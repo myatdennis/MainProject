@@ -1,6 +1,5 @@
 // src/services/auditLogService.ts
 // Simple audit logging service for admin actions
-import { getSupabase } from '../lib/supabaseClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { apiFetch } from '../lib/apiClient';
 
@@ -47,7 +46,7 @@ const flushQueue = async (): Promise<void> => {
       try {
         await apiFetch('/audit-log', {
           method: 'POST',
-          body: nextEvent,
+          body: JSON.stringify(nextEvent),
           headers: {
             'Content-Type': 'application/json',
             ...buildSessionAuditHeaders(),

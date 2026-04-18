@@ -1,5 +1,4 @@
 import authorizedFetch from './authorizedFetch';
-import { supabase } from './supabaseClient';
 
 export type AuditEvent = {
   action: string;

@@ -72,7 +72,7 @@ import { courseStore } from '../store/courseStore';
 // and intentionally not referenced here in all builds
 import type { OrgContextSnapshot } from '../store/courseStoreOrgBridge';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
-import { setCanonicalSession, clearCanonicalSession } from '../lib/canonicalAuth';
+import { setCanonicalSession } from '../lib/canonicalAuth';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;

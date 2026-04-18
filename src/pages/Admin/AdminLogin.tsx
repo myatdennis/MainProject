@@ -7,7 +7,7 @@ import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
-import { supabase } from '../../lib/supabaseClient';
+// supabase client intentionally not used here; use canonical session snapshot instead
 import { getCanonicalSession, waitForAuthReady } from '../../lib/canonicalAuth';
 import { flushAuditQueue } from '../../dal/auditLog';
 import {

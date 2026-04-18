@@ -33,7 +33,7 @@ afterEach(() => {
 test('ADMIN_STARTUP_STABILITY loads admin workspace safely under slow APIs and storage failure', async () => {
   // Intercept fetch and simulate slow endpoints for admin loads
   const calls: string[] = [];
-  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === 'string' ? input : String((input as Request).url);
     calls.push(url);
     // Simulate endpoints used during admin bootstrap
