@@ -36,7 +36,9 @@ test.describe('Client survey entry points', () => {
       `${apiBase}/api/client/surveys?status=published&orgId=${encodeURIComponent(TEST_ORG_ID)}`,
       {
       headers: {
+        Authorization: 'Bearer e2e-access-token',
         'x-user-role': 'admin',
+        'x-e2e-bypass': 'true',
         'x-org-id': TEST_ORG_ID,
       },
       }

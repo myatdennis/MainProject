@@ -126,4 +126,110 @@ describe('client surveys router', () => {
     expect(payload.ok).toBe(true);
     expect(payload.data.assignmentId).toBe('assignment-1');
   });
+
+  it('returns a valid empty learner results payload instead of 500 for invalid uuid filter contexts', async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.requestId = 'client-survey-req-invalid-uuid';
+      next();
+    });
+    app.use(
+      '/api/client/surveys',
+      createClientSurveysRouter({
+        logger,
+        supabase: {
+          from() {
+            const builder: any = {
+              select() {
+                return builder;
+              },
+              eq() {
+                return builder;
+              },
+              order() {
+                return builder;
+              },
+              limit() {
+                return builder;
+              },
+              maybeSingle() {
+                return Promise.resolve({
+                  data: null,
+                  error: {
+                    code: '22P02',
+                    message: 'invalid input syntax for type uuid: "platform-admin"',
+                  },
+                });
+              },
+              then(resolve: (value: any) => any) {
+                return Promise.resolve(resolve({ data: [], error: null }));
+              },
+            };
+            return builder;
+          },
+        },
+        e2eStore: { surveys: new Map(), assignments: [], surveyResponses: [] },
+        isDemoMode: false,
+        isDemoOrTestMode: false,
+        ensureSupabase: () => true,
+        requireUserContext: vi.fn(() => ({
+          userId: 'platform-admin',
+          organizationIds: ['org-1'],
+          isPlatformAdmin: true,
+          activeOrganizationId: 'org-1',
+          userRole: 'admin',
+          platformRole: 'platform_admin',
+        })),
+        loadSurveyWithAssignments: vi.fn(async () => ({ id: 'survey-1', title: 'Pulse Survey' })),
+        fetchSurveyAssignmentsMap: vi.fn(async () => new Map()),
+        applyAssignmentToSurvey: (survey) => survey,
+        listDemoSurveys: () => [],
+        loadSurveyAssignmentForUser: vi.fn(async () => {
+          const err: any = new Error('invalid input syntax for type uuid: "platform-admin"');
+          err.code = '22P02';
+          throw err;
+        }),
+        createEmptyAssignedTo: () => ({ organizationIds: [], userIds: [], cohortIds: [], departmentIds: [] }),
+        updateDemoSurveyAssignments: vi.fn(),
+        persistE2EStore: vi.fn(),
+        logSurveyAssignmentEvent: vi.fn(),
+        refreshSurveyAssignmentAggregates: vi.fn(),
+        surveyAssignmentType: 'survey',
+        isHdiAssessment: () => false,
+        normalizeHdiAdministrationType: (value) => value,
+        normalizeHdiLinkedAssessmentId: (value) => value,
+        buildParticipantIdentity: vi.fn(),
+        validateHdiSubmissionContract: vi.fn(() => ({ ok: true })),
+        scoreHdiSubmission: vi.fn(),
+        buildHdiProfile: vi.fn(),
+        buildHdiReport: vi.fn(),
+        compareHdiReports: vi.fn(),
+        buildHdiComparison: vi.fn(() => null),
+        findLatestHdiPreRecord: vi.fn(() => null),
+        toHdiRecord: (row) => row,
+        createHdiResponseEnvelope: (_shape, data) => ({ data }),
+        hdiResponseShapes: { LEARNER_RESULTS: 'learner-results' },
+        hdiMetadataContractVersion: 'v1',
+        firstRow: (result) => result?.data?.[0] ?? null,
+      }),
+    );
+
+    const localServer = app.listen(0);
+    await new Promise((resolve) => localServer.once('listening', resolve));
+    const localBaseUrl = `http://127.0.0.1:${localServer.address().port}`;
+
+    try {
+      const response = await fetch(`${localBaseUrl}/api/client/surveys/survey-1/results`);
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(payload.data.latest).toBeNull();
+      expect(payload.data.assignmentId).toBeNull();
+    } finally {
+      await new Promise((resolve, reject) => localServer.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
 });

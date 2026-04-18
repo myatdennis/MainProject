@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Loading from '../../components/ui/Loading';
 import { fetchAssignedSurveysForLearner, saveLearnerSurveyProgress, submitLearnerSurveyResponse } from '../../dal/surveys';
+import { DalError, extractDalErrorDetail } from '../../dal/http';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 import type { SurveyQuestion } from '../../types/survey';
 
@@ -117,7 +118,14 @@ const ClientSurveyTake = () => {
           reason: 'assigned_survey_fetch_failed',
           error: err instanceof Error ? err.message : String(err),
         });
-        setError('Unable to load this survey right now.');
+        if (err instanceof DalError && err.status === 503) {
+          setError('This survey is temporarily unavailable. Please retry in a moment.');
+        } else if (err instanceof DalError) {
+          const detail = extractDalErrorDetail(err);
+          setError(detail.message || 'Unable to load this survey right now.');
+        } else {
+          setError('Unable to load this survey right now.');
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -172,7 +180,14 @@ const ClientSurveyTake = () => {
       setSubmitted(true);
     } catch (err) {
       console.error('[ClientSurveyTake] submit failed', err);
-      setValidationError('Unable to submit your survey right now. Please try again.');
+      if (err instanceof DalError && err.status === 503) {
+        setValidationError('Survey submission is temporarily unavailable. Please retry in a moment.');
+      } else if (err instanceof DalError) {
+        const detail = extractDalErrorDetail(err);
+        setValidationError(detail.message || 'Unable to submit your survey right now. Please try again.');
+      } else {
+        setValidationError('Unable to submit your survey right now. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -202,7 +217,14 @@ const ClientSurveyTake = () => {
       });
     } catch (err) {
       console.error('[ClientSurveyTake] save progress failed', err);
-      setValidationError('Unable to save progress right now. Please try again.');
+      if (err instanceof DalError && err.status === 503) {
+        setValidationError('Survey progress saving is temporarily unavailable. Please retry in a moment.');
+      } else if (err instanceof DalError) {
+        const detail = extractDalErrorDetail(err);
+        setValidationError(detail.message || 'Unable to save progress right now. Please try again.');
+      } else {
+        setValidationError('Unable to save progress right now. Please try again.');
+      }
     } finally {
       setSaving(false);
     }

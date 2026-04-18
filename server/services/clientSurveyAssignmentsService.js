@@ -15,6 +15,22 @@ export const createClientSurveyAssignmentsService = ({
   isSupabaseTransientError,
   loadSurveyRecordsByAssignmentIds,
 }) => {
+  const isInvalidUuidFilterError = (error) =>
+    error?.code === '22P02' ||
+    (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid'));
+
+  const createServiceUnavailableError = (step, message, cause = null) => {
+    const error = new Error(message);
+    error.statusCode = 503;
+    error.code = 'SERVICE_UNAVAILABLE';
+    error.userMessage = message;
+    error.label = step;
+    if (cause) {
+      error.cause = cause;
+    }
+    return error;
+  };
+
   const buildSurveyAssignmentSelect = buildClientSurveyAssignmentSelect ?? ((assignmentsOrgColumn) => {
     const baseColumns =
       typeof surveyAssignmentSelect === 'string' && surveyAssignmentSelect.trim().length > 0 && surveyAssignmentSelect.trim() !== '*'
@@ -236,12 +252,10 @@ export const createClientSurveyAssignmentsService = ({
       return loadAssignmentsForUser('user_id', context.userId);
     };
 
-    let hydrationPending = false;
     let assignments = [];
     try {
       assignments = await loadMergedUserAssignments();
     } catch (error) {
-      // Treat transient network/connection errors as hydrationPending and proceed.
       if (isSupabaseTransientError(error)) {
         logger.warn('client_assigned_surveys_load_transient', {
           requestId,
@@ -250,18 +264,13 @@ export const createClientSurveyAssignmentsService = ({
           code: error?.code ?? null,
           message: error?.message ?? String(error),
         });
-        hydrationPending = true;
-        assignments = [];
+        throw createServiceUnavailableError(
+          'survey.assigned.load_assignments',
+          'Survey assignments are temporarily unavailable. Please retry.',
+          error,
+        );
       } else {
-        // Handle common Postgres / PostgREST filters that occur when userId is not a UUID
-        // (for example: invalid input syntax for type uuid - code 22P02). These can happen
-        // when platform/admin users are present in learner-scoped flows. In such cases,
-        // return an empty assignment set instead of bubbling a raw 500.
-        const invalidUuidFilter =
-          error?.code === '22P02' ||
-          (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid')) ||
-          (typeof error?.message === 'string' && error.message.includes('invalid input syntax for type uuid'));
-        if (invalidUuidFilter) {
+        if (isInvalidUuidFilterError(error)) {
           logger.warn('client_assigned_surveys_invalid_userid_filter', {
             requestId,
             userId: context.userId,
@@ -276,16 +285,46 @@ export const createClientSurveyAssignmentsService = ({
       }
     }
 
-    if (assignments.length === 0 && !hydrationPending) {
+    if (assignments.length === 0) {
       const outcome = await Promise.race([
         materializeOutcome,
         waitForMs(materializeBudgetMs).then(() => ({ state: 'timeout' })),
       ]);
 
       if (outcome?.state === 'done') {
-        assignments = await loadMergedUserAssignments();
+        try {
+          assignments = await loadMergedUserAssignments();
+        } catch (error) {
+          if (isInvalidUuidFilterError(error)) {
+            logger.warn('client_assigned_surveys_invalid_userid_filter_after_materialize', {
+              requestId,
+              userId: context.userId,
+              orgId: orgScope.orgId ?? null,
+              code: error?.code ?? null,
+              message: error?.message ?? String(error),
+            });
+            assignments = [];
+          } else if (isSupabaseTransientError(error)) {
+            throw createServiceUnavailableError(
+              'survey.assigned.reload_assignments',
+              'Survey assignments are temporarily unavailable. Please retry.',
+              error,
+            );
+          } else {
+            throw error;
+          }
+        }
       } else if (outcome?.state === 'error') {
-        if (isSupabaseTransientError(outcome.error)) {
+        if (isInvalidUuidFilterError(outcome.error)) {
+          logger.warn('client_assigned_surveys_materialize_invalid_userid_filter', {
+            requestId,
+            userId: context.userId,
+            orgId: orgScope.orgId ?? null,
+            code: outcome.error?.code ?? null,
+            message: outcome.error?.message ?? String(outcome.error),
+          });
+          assignments = [];
+        } else if (isSupabaseTransientError(outcome.error)) {
           logger.warn('client_assigned_surveys_materialize_transient', {
             requestId,
             userId: context.userId,
@@ -293,12 +332,25 @@ export const createClientSurveyAssignmentsService = ({
             code: outcome.error?.code ?? null,
             message: outcome.error?.message ?? String(outcome.error),
           });
-          hydrationPending = true;
+          throw createServiceUnavailableError(
+            'survey.assigned.materialize_assignments',
+            'Survey assignments are temporarily unavailable. Please retry.',
+            outcome.error,
+          );
         } else {
           throw outcome.error;
         }
       } else {
-        hydrationPending = true;
+        logger.warn('client_assigned_surveys_materialize_timeout', {
+          requestId,
+          userId: context.userId,
+          orgId: orgScope.orgId ?? null,
+          budgetMs: materializeBudgetMs,
+        });
+        throw createServiceUnavailableError(
+          'survey.assigned.materialize_timeout',
+          'Survey assignments are temporarily unavailable. Please retry.',
+        );
       }
     }
 
@@ -325,25 +377,46 @@ export const createClientSurveyAssignmentsService = ({
         surveyResolution = await loadSurveyRecordsByAssignmentIds(surveyIds);
         surveyMap = surveyResolution.surveyMap;
       } catch (error) {
-        if (isSupabaseTransientError(error)) {
-          logger.warn('client_assigned_surveys_survey_lookup_unavailable', {
-            requestId,
-            userId: context.userId,
-            orgId: orgScope.orgId ?? null,
-            code: error?.code ?? null,
-            message: error?.message ?? null,
-            surveyIdCount: surveyIds.length,
-          });
-        } else {
-          throw error;
-        }
+        logger.warn('client_assigned_surveys_survey_lookup_unavailable', {
+          requestId,
+          userId: context.userId,
+          orgId: orgScope.orgId ?? null,
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+          surveyIdCount: surveyIds.length,
+          transient: Boolean(isSupabaseTransientError(error)),
+        });
       }
     }
 
-    const data = assignments.map((assignment) => ({
-      assignment,
-      survey: assignment.survey_id ? surveyMap.get(String(assignment.survey_id)) ?? null : null,
-    }));
+    const malformedAssignments = [];
+    const data = assignments
+      .map((assignment) => {
+        const assignmentId = assignment?.id ? String(assignment.id) : '';
+        const surveyId = assignment?.survey_id ? String(assignment.survey_id) : '';
+        if (!assignmentId || !surveyId) {
+          malformedAssignments.push({
+            assignmentId: assignmentId || null,
+            surveyId: surveyId || null,
+          });
+          return null;
+        }
+        return {
+          assignment,
+          survey: surveyMap.get(surveyId) ?? null,
+        };
+      })
+      .filter(Boolean);
+
+    if (malformedAssignments.length > 0) {
+      logger.warn('client_assigned_surveys_skipped_malformed_rows', {
+        requestId,
+        userId: context.userId,
+        orgId: orgScope.orgId ?? null,
+        skippedCount: malformedAssignments.length,
+        skipped: malformedAssignments,
+      });
+    }
 
     logger.info('client_assigned_surveys_render_ready', {
       requestId,
@@ -362,7 +435,7 @@ export const createClientSurveyAssignmentsService = ({
     return {
       data,
       meta: {
-        hydrationPending,
+        hydrationPending: false,
         orgId: orgScope.orgId ?? null,
       },
     };

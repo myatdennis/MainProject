@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { fetchAssignedSurveysForLearner, getAnalytics } from '../surveys';
+import { fetchAssignedSurveysForLearner, getAnalytics, invalidateAssignedSurveysForLearnerCache } from '../surveys';
 
 const requestMock = vi.fn();
 
@@ -19,6 +19,7 @@ describe('surveys DAL', () => {
   beforeEach(() => {
     requestMock.mockReset();
     vi.useFakeTimers();
+    invalidateAssignedSurveysForLearnerCache();
   });
 
   afterEach(() => {

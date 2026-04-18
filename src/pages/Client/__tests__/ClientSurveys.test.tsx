@@ -4,6 +4,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HelmetProvider } from 'react-helmet-async';
 import ClientSurveys from '../ClientSurveys';
+import { DalError } from '../../../dal/http';
 
 const mockNavigate = vi.fn();
 const fetchAssignedSurveysForLearnerMock = vi.fn();
@@ -102,6 +103,32 @@ describe('ClientSurveys', () => {
     renderPage();
 
     expect(await screen.findByText('Unable to load surveys right now. Please retry soon.')).toBeInTheDocument();
+    expect(screen.queryByText('No surveys assigned')).not.toBeInTheDocument();
+  });
+
+  it('renders the normal empty state for a successful empty assignment response', async () => {
+    fetchAssignedSurveysForLearnerMock.mockResolvedValue([]);
+
+    renderPage();
+
+    expect(await screen.findByText('No surveys assigned')).toBeInTheDocument();
+    expect(screen.queryByText('Surveys are temporarily unavailable')).not.toBeInTheDocument();
+  });
+
+  it('renders a survey-specific temporary unavailable state for 503 responses', async () => {
+    fetchAssignedSurveysForLearnerMock.mockRejectedValue(
+      new DalError(
+        'Survey assignments are temporarily unavailable. Please retry.',
+        503,
+        'SERVICE_UNAVAILABLE',
+        { error: 'SERVICE_UNAVAILABLE', message: 'Survey assignments are temporarily unavailable. Please retry.' },
+      ),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Surveys are temporarily unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Assigned surveys are temporarily unavailable. Please retry in a moment.')).toBeInTheDocument();
     expect(screen.queryByText('No surveys assigned')).not.toBeInTheDocument();
   });
 });

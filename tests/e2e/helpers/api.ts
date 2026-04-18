@@ -20,6 +20,7 @@ async function apiPost(path: string, body: any, extraHeaders?: Record<string, st
   } catch {}
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
+    Authorization: 'Bearer e2e-access-token',
     'x-user-role': 'admin',
     'x-e2e-bypass': 'true',
     'x-org-id': TEST_ORG_ID,

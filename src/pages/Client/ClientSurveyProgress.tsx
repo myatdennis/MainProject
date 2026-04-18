@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Loading from '../../components/ui/Loading';
+import { DalError, extractDalErrorDetail } from '../../dal/http';
 import { fetchLearnerSurveyResults } from '../../dal/surveys';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 
@@ -38,7 +39,12 @@ const ClientSurveyProgress = () => {
       .catch((err) => {
         if (!active) return;
         console.error('[ClientSurveyProgress] load failed', err);
-        setError('Unable to load your progress right now.');
+        if (err instanceof DalError && err.status === 503) {
+          setError('Survey progress is temporarily unavailable. Please retry in a moment.');
+        } else {
+          const detail = extractDalErrorDetail(err);
+          setError(detail.message || 'Unable to load your progress right now.');
+        }
       })
       .finally(() => {
         if (active) setLoading(false);

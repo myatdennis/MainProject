@@ -5282,16 +5282,32 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
     if (surveyIds.length === 0) return;
 
     const loadExistingSurveyIds = async (column, value) => {
-      const result = await runTimedQuery('survey.assignments.existing_by_user', () =>
-        supabase
-          .from('assignments')
-          .select('survey_id')
-          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-          .eq(column, value)
-          .in('survey_id', surveyIds),
-        10000,
-      );
-      return Array.isArray(result?.data) ? result.data : [];
+      try {
+        const result = await runTimedQuery('survey.assignments.existing_by_user', () =>
+          supabase
+            .from('assignments')
+            .select('survey_id')
+            .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+            .eq(column, value)
+            .in('survey_id', surveyIds),
+          10000,
+        );
+        return Array.isArray(result?.data) ? result.data : [];
+      } catch (error) {
+        const invalidUuidFilter =
+          error?.code === '22P02' ||
+          (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid'));
+        if (invalidUuidFilter) {
+          logger.warn('survey_assignment_materialize_invalid_userid_filter', {
+            userId,
+            column,
+            code: error?.code ?? null,
+            message: error?.message ?? null,
+          });
+          return [];
+        }
+        throw error;
+      }
     };
 
     let existingRows = [];
@@ -5529,6 +5545,18 @@ const loadSurveyAssignmentForUser = async (
     await refreshSurveyAssignmentAggregates(surveyId);
     return created ?? null;
   } catch (error) {
+    const invalidUuidFilter =
+      error?.code === '22P02' ||
+      (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid'));
+    if (invalidUuidFilter) {
+      logger.warn('survey_assignment_load_invalid_userid_filter', {
+        surveyId,
+        userId,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return null;
+    }
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
       logger.warn('survey_assignment_load_skipped', {
         surveyId,

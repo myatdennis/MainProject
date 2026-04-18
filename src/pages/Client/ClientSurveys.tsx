@@ -87,6 +87,7 @@ const ClientSurveys = () => {
   const [assignments, setAssignments] = useState<LearnerSurveyAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<'temporary' | 'fatal' | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const portalPath = getLearnerPortalBasePath(location.pathname);
@@ -98,6 +99,7 @@ const ClientSurveys = () => {
     });
     setLoading(true);
     setError(null);
+    setErrorKind(null);
     try {
       const rows = await fetchAssignedSurveysForLearner({ forceRefresh: options?.forceRefresh === true });
       console.info('[learner-surveys] surveyListLoadSucceeded', {
@@ -113,18 +115,24 @@ const ClientSurveys = () => {
         const backendError = typeof body.error === 'string' ? body.error : null;
         if (err.status === 400 && backendError === 'explicit_org_selection_required') {
           setError('Select an organization to load surveys, then retry.');
+          setErrorKind('fatal');
         } else if (err.status === 403 && backendError === 'org_membership_required') {
           setError('Your account is not associated with an organization that can access surveys.');
-        } else if (err.status === 503 && backendError === 'upstream_unavailable') {
-          setError('Surveys are temporarily unavailable. Please retry in a moment.');
+          setErrorKind('fatal');
+        } else if (err.status === 503) {
+          setError('Assigned surveys are temporarily unavailable. Please retry in a moment.');
+          setErrorKind('temporary');
         } else if (err.code === 'AbortError') {
           setError('The surveys request timed out. Please retry.');
+          setErrorKind('temporary');
         } else {
           const detail = extractDalErrorDetail(err);
           setError(detail.message || 'Unable to load surveys right now. Please retry soon.');
+          setErrorKind('fatal');
         }
       } else {
         setError('Unable to load surveys right now. Please retry soon.');
+        setErrorKind('fatal');
       }
     } finally {
       setLoading(false);
@@ -330,7 +338,9 @@ const ClientSurveys = () => {
         </div>
       ) : error ? (
         <Card tone="muted" className="space-y-3 text-center" padding="lg">
-          <h2 className="font-heading text-lg font-semibold text-charcoal">We couldn’t load your surveys</h2>
+          <h2 className="font-heading text-lg font-semibold text-charcoal">
+            {errorKind === 'temporary' ? 'Surveys are temporarily unavailable' : 'We couldn’t load your surveys'}
+          </h2>
           <p className="text-sm text-slate/70">{error}</p>
           <div className="flex justify-center">
             <Button onClick={() => void refresh()}>Retry</Button>

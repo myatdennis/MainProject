@@ -7,6 +7,7 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Loading from '../../components/ui/Loading';
+import { DalError, extractDalErrorDetail } from '../../dal/http';
 import { fetchLearnerSurveyResults } from '../../dal/surveys';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 
@@ -51,7 +52,12 @@ const ClientSurveyResults = () => {
       .catch((err) => {
         if (!mounted) return;
         console.error('[ClientSurveyResults] load failed', err);
-        setError('Unable to load your survey results right now.');
+        if (err instanceof DalError && err.status === 503) {
+          setError('Survey results are temporarily unavailable. Please retry in a moment.');
+        } else {
+          const detail = extractDalErrorDetail(err);
+          setError(detail.message || 'Unable to load your survey results right now.');
+        }
       })
       .finally(() => {
         if (mounted) setLoading(false);

@@ -36,6 +36,24 @@ export const createClientSurveysService = ({
   hdiMetadataContractVersion,
   firstRow,
 }) => {
+  const isInvalidUuidFilterError = (error) =>
+    error?.code === '22P02' ||
+    (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid'));
+
+  const buildSurveyServiceError = ({
+    status = 500,
+    code,
+    message,
+    details,
+  }) => ({
+    status,
+    error: {
+      code,
+      message,
+      ...(details !== undefined ? { details } : {}),
+    },
+  });
+
   const listClientSurveys = async ({ req, res }) => {
     const context = requireUserContext(req, res);
     if (!context) return null;
@@ -168,11 +186,32 @@ export const createClientSurveysService = ({
       const surveyId = surveyRecord.id ?? id;
       surveyIdForLogs = surveyId;
       submitStage = 'load_assignment';
-      const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
-        assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
-        orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
-        allowSelfEnroll: false,
-      });
+      let assignment = null;
+      try {
+        assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
+          assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
+          orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+          allowSelfEnroll: false,
+        });
+      } catch (error) {
+        if (isInvalidUuidFilterError(error)) {
+          logger.warn('client_survey_submit_assignment_lookup_invalid_userid_filter', {
+            requestId: req.requestId ?? null,
+            route: '/api/client/surveys/:id/submit',
+            userId: context.userId,
+            userRole: context.userRole ?? null,
+            platformRole: context.platformRole ?? null,
+            activeOrgId: context.activeOrganizationId ?? null,
+            surveyId,
+            stage: submitStage,
+            code: error?.code ?? null,
+            message: error?.message ?? String(error),
+          });
+          assignment = null;
+        } else {
+          throw error;
+        }
+      }
 
       let resolvedAssignment = assignment;
       if (!supabase && isDemoOrTestMode) {
@@ -643,11 +682,15 @@ export const createClientSurveysService = ({
         requestId: req.requestId ?? null,
         route: '/api/client/surveys/:id/submit',
         userId: context.userId,
+        userRole: context.userRole ?? null,
+        platformRole: context.platformRole ?? null,
+        activeOrgId: context.activeOrganizationId ?? null,
         surveyId: surveyIdForLogs,
         stage: submitStage,
         status: submissionStatus,
         code: error?.code ?? null,
         message: error?.message ?? String(error),
+        stack: error?.stack ?? null,
       });
       logSurveyAssignmentEvent('survey_assignment_failed', {
         requestId: req.requestId ?? null,
@@ -685,11 +728,31 @@ export const createClientSurveysService = ({
 
     try {
       const surveyId = surveyRecord.id ?? id;
-      const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
-        assignmentId: req.query.assignmentId ?? req.query.assignment_id ?? null,
-        orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
-        allowSelfEnroll: false,
-      });
+      let assignment = null;
+      try {
+        assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
+          assignmentId: req.query.assignmentId ?? req.query.assignment_id ?? null,
+          orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+          allowSelfEnroll: false,
+        });
+      } catch (error) {
+        if (isInvalidUuidFilterError(error)) {
+          logger.warn('client_hdi_results_assignment_lookup_invalid_userid_filter', {
+            requestId: req.requestId ?? null,
+            route: '/api/client/surveys/:id/results',
+            surveyId,
+            userId: context.userId,
+            userRole: context.userRole ?? null,
+            platformRole: context.platformRole ?? null,
+            activeOrgId: context.activeOrganizationId ?? null,
+            code: error?.code ?? null,
+            message: error?.message ?? String(error),
+          });
+          assignment = null;
+        } else {
+          throw error;
+        }
+      }
 
       if ((req.query.assignmentId || req.query.assignment_id) && !assignment) {
         return {
@@ -729,8 +792,26 @@ export const createClientSurveysService = ({
         }
 
         const responseResult = await responseQuery;
-        if (responseResult.error) throw responseResult.error;
+        if (responseResult.error) {
+          if (isInvalidUuidFilterError(responseResult.error)) {
+            logger.warn('client_hdi_results_invalid_userid_filter', {
+              requestId: req.requestId ?? null,
+              route: '/api/client/surveys/:id/results',
+              surveyId: surveyRecord.id,
+              userId: context.userId,
+              userRole: context.userRole ?? null,
+              platformRole: context.platformRole ?? null,
+              activeOrgId: context.activeOrganizationId ?? null,
+              code: responseResult.error?.code ?? null,
+              message: responseResult.error?.message ?? String(responseResult.error),
+            });
+            data = [];
+          } else {
+            throw responseResult.error;
+          }
+        } else {
         data = responseResult.data || [];
+        }
       }
 
       const records = (data || []).map((row) => toHdiRecord(row)).filter(Boolean);
@@ -755,15 +836,29 @@ export const createClientSurveysService = ({
       };
     } catch (error) {
       logger.error('client_hdi_results_failed', {
+        requestId: req.requestId ?? null,
+        route: '/api/client/surveys/:id/results',
         surveyId: surveyRecord.id,
         userId: context.userId,
+        userRole: context.userRole ?? null,
+        platformRole: context.platformRole ?? null,
+        activeOrgId: context.activeOrganizationId ?? null,
         message: error?.message ?? String(error),
         code: error?.code ?? null,
+        stack: error?.stack ?? null,
       });
-      return {
+      if (String(error?.code || '').toUpperCase() === 'SUPABASE_TIMEOUT') {
+        return buildSurveyServiceError({
+          status: 503,
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Survey results are temporarily unavailable. Please retry.',
+        });
+      }
+      return buildSurveyServiceError({
         status: 500,
-        error: { code: 'survey_results_failed', message: 'Unable to load survey results' },
-      };
+        code: 'survey_results_failed',
+        message: 'Unable to load survey results',
+      });
     }
   };
 

@@ -201,14 +201,130 @@ describe('client survey assignments router', () => {
       const response = await fetch(`${timeoutUrl}/api/client/surveys/assigned`);
       const payload = await response.json();
 
-      expect(response.status).toBe(200);
-      expect(payload.ok).toBe(true);
-      expect(Array.isArray(payload.data)).toBe(true);
-      expect(payload.data).toHaveLength(0);
-      expect(payload.meta).toEqual({ hydrationPending: true, orgId: 'org-1' });
+      expect(response.status).toBe(503);
+      expect(payload).toMatchObject({
+        ok: false,
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Survey assignments are temporarily unavailable. Please retry.',
+      });
     } finally {
       await new Promise<void>((resolve, reject) =>
         timeoutServer.close((error: Error | undefined) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it('returns an empty successful response for platform admins in learner workspace with no assignments', async () => {
+    const selectCalls: string[] = [];
+    const createBuilder = () => {
+      const builder: any = {
+        select(columns: string) {
+          selectCalls.push(columns);
+          return builder;
+        },
+        eq() {
+          return builder;
+        },
+        in() {
+          return builder;
+        },
+        then(resolve: (value: any) => any) {
+          return Promise.resolve(resolve({ data: [], error: null }));
+        },
+      };
+      return builder;
+    };
+    const supabase = {
+      from() {
+        return createBuilder();
+      },
+    };
+
+    const context = createApp({
+      isDemoOrTestMode: false,
+      supabase,
+      context: {
+        userId: 'admin-user',
+        organizationIds: ['org-1'],
+        isPlatformAdmin: true,
+        platformRole: 'platform_admin',
+        userRole: 'admin',
+        activeOrganizationId: 'org-1',
+      },
+      ensureSurveyAssignmentsForUserFromOrgScope: vi.fn(async () => undefined),
+    });
+    const server = context.app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const url = `http://127.0.0.1:${(server.address() as any).port}`;
+
+    try {
+      const response = await fetch(`${url}/api/client/surveys/assigned`);
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload).toMatchObject({
+        ok: true,
+        data: [],
+        meta: { hydrationPending: false, orgId: 'org-1' },
+      });
+      expect(selectCalls.length).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error: Error | undefined) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it('does not 500 when assignment materialization hits an invalid uuid filter', async () => {
+    const createBuilder = () => {
+      const builder: any = {
+        select() {
+          return builder;
+        },
+        eq() {
+          return builder;
+        },
+        in() {
+          return builder;
+        },
+        then(resolve: (value: any) => any) {
+          return Promise.resolve(resolve({ data: [], error: null }));
+        },
+      };
+      return builder;
+    };
+    const supabase = {
+      from() {
+        return createBuilder();
+      },
+    };
+
+    const context = createApp({
+      isDemoOrTestMode: false,
+      supabase,
+      ensureSurveyAssignmentsForUserFromOrgScope: vi.fn(async () => {
+        const err = new Error('invalid input syntax for type uuid: "admin-user"') as any;
+        err.code = '22P02';
+        throw err;
+      }),
+    });
+    const server = context.app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const url = `http://127.0.0.1:${(server.address() as any).port}`;
+
+    try {
+      const response = await fetch(`${url}/api/client/surveys/assigned`);
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload).toMatchObject({
+        ok: true,
+        data: [],
+        meta: { hydrationPending: false, orgId: 'org-1' },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error: Error | undefined) => (error ? reject(error) : resolve())),
       );
     }
   });

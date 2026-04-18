@@ -8,6 +8,10 @@ export const createClientSurveyAssignmentsController = ({
 }) => {
   return {
     listAssigned: async (req, res) => {
+      console.info('[SURVEYS_ASSIGNED_DEPLOY_MARKER_V3]', {
+        route: '/api/client/surveys/assigned',
+        ts: new Date().toISOString(),
+      });
       // Diagnostic marker: inserted to prove this handler version is deployed.
       // DO NOT remove — used by prod log grep to confirm deployed revision.
       console.info('[SURVEYS_ASSIGNED_ROUTE_REACHED_V2]', {
