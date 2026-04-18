@@ -11,6 +11,26 @@ interface LoginOptions {
 const boundPages = new WeakSet<Page>();
 type RealtimeStatusCallback = (status: string) => void;
 type RealtimeEventCallback = (...args: unknown[]) => void;
+const envFlagEnabled = (value?: string) => String(value || '').trim().toLowerCase() === 'true';
+
+const shouldUseSyntheticBypass = () =>
+  envFlagEnabled(process.env.E2E_TEST_MODE) || envFlagEnabled(process.env.DEV_FALLBACK);
+
+const waitForAdminLanding = async (page: Page) => {
+  await page.waitForURL((url) => {
+    const pathname = url.pathname || '/';
+    return pathname === '/admin' || pathname === '/admin/dashboard';
+  }, { timeout: 30_000 });
+
+  const adminShellSignals = [
+    page.getByRole('heading', { name: /track impact across/i }),
+    page.getByText(/Admin Workspace/i),
+  ];
+
+  await Promise.any(
+    adminShellSignals.map((locator) => locator.waitFor({ state: 'visible', timeout: 20_000 })),
+  );
+};
 
 export const loginAsAdmin = async (
   page: Page,
@@ -24,7 +44,7 @@ export const loginAsAdmin = async (
   // In E2E test mode inject a lightweight fake supabase client before the
   // app scripts run so the app boots with an authenticated session. This
   // avoids relying on the full SecureAuth flow in CI/local runs.
-  if (process.env.E2E_TEST_MODE || process.env.DEV_FALLBACK) {
+  if (shouldUseSyntheticBypass()) {
     await page.addInitScript(() => {
       // Minimal fake supabase client with auth methods used by the app
       // NOTE: keep this minimal and only for test environments.
@@ -102,14 +122,13 @@ export const loginAsAdmin = async (
   // In E2E mode, skip the full SecureAuth flow and navigate directly to the
   // dashboard. Tests run with E2E_TEST_MODE or DEV_FALLBACK should use this
   // to avoid flaky external auth dependencies.
-  if (process.env.E2E_TEST_MODE || process.env.DEV_FALLBACK) {
+  if (shouldUseSyntheticBypass()) {
     await page.goto(`${baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
   }
 
-  if (page.url().includes('/admin/dashboard')) {
+  if (/\/admin(?:\/dashboard)?(?:\?|$)/.test(page.url())) {
     // Already authenticated (e.g., warm storage). Ensure dashboard is ready and return.
-    const dashboardHeading = page.getByRole('heading', { name: /track impact across/i });
-    await expect(dashboardHeading).toBeVisible({ timeout: 20_000 });
+    await waitForAdminLanding(page);
     return { baseUrl, apiBaseUrl };
   }
 
@@ -120,11 +139,10 @@ export const loginAsAdmin = async (
     // In E2E mode, be tolerant of SecureAuth failing to render and fallback
     // to directly visiting the dashboard so tests can proceed. This keeps
     // the test harness moving while still only running in test/dev modes.
-    if (process.env.E2E_TEST_MODE || process.env.DEV_FALLBACK) {
+    if (shouldUseSyntheticBypass()) {
       console.warn('Email input did not appear; falling back to direct dashboard navigation for E2E.');
       await page.goto(`${baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
-      const dashboardHeading = page.getByRole('heading', { name: /track impact across/i });
-      await expect(dashboardHeading).toBeVisible({ timeout: 20_000 });
+      await waitForAdminLanding(page);
       return { baseUrl, apiBaseUrl };
     }
     const bodyText = await page.textContent('body').catch(() => '');
@@ -142,9 +160,7 @@ export const loginAsAdmin = async (
   // is more robust in E2E when the button might be animated/covered or
   // temporarily non-actionable for Playwright's click heuristics.
   await page.press('#password', 'Enter');
-  await page.waitForURL('**/admin/dashboard', { timeout: 30_000 });
-  const dashboardHeading = page.getByRole('heading', { name: /track impact across/i });
-  await expect(dashboardHeading).toBeVisible({ timeout: 20_000 });
+  await waitForAdminLanding(page);
 
   return { baseUrl, apiBaseUrl };
 };

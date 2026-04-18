@@ -18,7 +18,7 @@ const {
       sessionStatus: 'authenticated',
       membershipStatus: 'ready',
       membershipCount: 0,
-      activeOrgId: 'org-1',
+      activeOrgId: 'org-1' as string | null,
       authInitializing: false,
       isAuthenticated: { client: true, lms: true },
     },

@@ -16,6 +16,7 @@ import { DalError, extractDalErrorDetail } from '../../dal/http';
 import type { CourseAssignmentStatus } from '../../types/assignment';
 import { subscribeSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const deriveStatusTone = (status: CourseAssignmentStatus, overdue: boolean) => {
   const statusValue = String(status);
@@ -84,6 +85,7 @@ const getEntrySurveyDescription = (entry: LearnerSurveyAssignment) => {
 };
 
 const ClientSurveys = () => {
+  const { authInitializing, sessionStatus, membershipStatus, activeOrgId, isAuthenticated } = useSecureAuth();
   const [assignments, setAssignments] = useState<LearnerSurveyAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +94,19 @@ const ClientSurveys = () => {
   const navigate = useNavigate();
   const portalPath = getLearnerPortalBasePath(location.pathname);
   const highlightAssignmentId = useMemo(() => new URLSearchParams(location.search).get('assignment'), [location.search]);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
+  const learnerAuthPending =
+    authInitializing ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
+  const learnerAuthFailed = !learnerAuthPending && !learnerAuthReady;
 
   const refresh = useCallback(async (options?: { forceRefresh?: boolean }) => {
     console.info('[learner-surveys] surveyListLoadStarted', {
@@ -140,16 +155,32 @@ const ClientSurveys = () => {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (learnerAuthPending) {
+      setLoading(true);
+      setError(null);
+      setErrorKind(null);
+      return;
+    }
+
+    if (learnerAuthFailed) {
+      setAssignments([]);
+      setLoading(false);
+      setError('Sign in to load your assigned surveys.');
+      setErrorKind('fatal');
+      return;
+    }
+
     void refresh();
-  }, [refresh]);
+  }, [learnerAuthFailed, learnerAuthPending, refresh]);
 
   useEffect(() => {
+    if (!learnerAuthReady) return () => {};
     const unsubscribe = subscribeSurveyAssignmentsChanged((event) => {
       console.info('[learner-surveys] assignments invalidated', event);
       void refresh({ forceRefresh: true });
     });
     return unsubscribe;
-  }, [refresh]);
+  }, [learnerAuthReady, refresh]);
 
   useEffect(() => {
     if (!highlightAssignmentId) return;

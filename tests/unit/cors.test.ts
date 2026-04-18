@@ -7,7 +7,6 @@ const importCors = async () => {
     if (k === modPath || k.endsWith('/server/middleware/cors.js')) delete require.cache[k];
   });
   // Dynamic import ensures process.env changes are picked up.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = await import(modPath);
   return mod;
 };

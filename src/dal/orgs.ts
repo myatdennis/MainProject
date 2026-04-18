@@ -29,6 +29,7 @@ export {
   remindOrgInvite,
   revokeOrgInvite,
   invalidateOrgListCache,
+  onOrgListInvalidated,
 } from '../services/orgService';
 
 export { default } from '../services/orgService';

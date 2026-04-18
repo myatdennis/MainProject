@@ -6,6 +6,7 @@ import { ApiError } from '../../utils/apiClient';
 
 const apiRequestMock = vi.hoisted(() => vi.fn());
 const apiRequestRawMock = vi.hoisted(() => vi.fn());
+const runRefreshTokenCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 
 const supabaseAuthMock = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -42,6 +43,11 @@ vi.mock('../../utils/apiClient', async () => {
   };
 });
 
+vi.mock('../tokenRefresh', () => ({
+  runRefreshTokenCallback: (options: unknown, deps: unknown) => runRefreshTokenCallbackMock(options, deps),
+  setRefreshManagerActive: vi.fn(),
+}));
+
 const buildJsonResponse = (payload: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(payload), {
     status: 200,
@@ -72,17 +78,31 @@ const AuthProbe = () => {
 describe('SecureAuthContext bootstrap', () => {
   beforeEach(() => {
     supabaseAuthMock.getSession.mockResolvedValue({
-      data: { session: { access_token: 'supabase-test-token', refresh_token: 'supabase-refresh-token' } },
+      data: {
+        session: {
+          access_token: 'supabase-test-token',
+          refresh_token: 'supabase-refresh-token',
+          user: buildUser(),
+        },
+      },
       error: null,
     });
     supabaseAuthMock.refreshSession.mockResolvedValue({
-      data: { session: { access_token: 'supabase-test-token', refresh_token: 'supabase-refresh-token' } },
+      data: {
+        session: {
+          access_token: 'supabase-test-token',
+          refresh_token: 'supabase-refresh-token',
+          user: buildUser(),
+        },
+      },
       error: null,
     });
     supabaseAuthMock.signOut.mockResolvedValue({ error: null });
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue({ data: {} });
     apiRequestRawMock.mockReset();
+    runRefreshTokenCallbackMock.mockReset();
+    runRefreshTokenCallbackMock.mockResolvedValue(false);
   });
 
   it('surfaces bootstrap error when refresh fails and spinner stops', async () => {
@@ -136,6 +156,26 @@ describe('SecureAuthContext bootstrap', () => {
 
   it('updates session state when refresh succeeds after bootstrap failure', async () => {
     let sessionAttempts = 0;
+    runRefreshTokenCallbackMock.mockImplementation(async (_options, deps: any) => {
+      await apiRequestMock('/api/auth/refresh', {
+        method: 'POST',
+      });
+      deps.applySessionPayload(
+        {
+          user: buildUser(),
+          accessToken: 'refreshed-access-token',
+          refreshToken: 'refreshed-refresh-token',
+          activeOrgId: 'org-1',
+          membershipStatus: 'ready',
+          memberships: [{ orgId: 'org-1', role: 'admin' }],
+          organizationIds: ['org-1'],
+        },
+        { persistTokens: true, reason: 'refresh_success' },
+      );
+      deps.setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
+      deps.setSessionStatus('authenticated', 'refreshTokenCallback:refresh_success');
+      return true;
+    });
     apiRequestRawMock.mockImplementation((path: string) => {
       if (path.includes('/auth/session')) {
         sessionAttempts += 1;

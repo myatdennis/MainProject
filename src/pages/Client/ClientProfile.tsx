@@ -12,13 +12,26 @@ import type { CourseAssignment } from '../../types/assignment';
 import Loading from '../../components/ui/Loading';
 
 const ClientProfile = () => {
-  const { user } = useSecureAuth();
+  const { user, authInitializing, sessionStatus, membershipStatus, activeOrgId, isAuthenticated } = useSecureAuth();
   const [courseAssignments, setCourseAssignments] = useState<CourseAssignment[]>([]);
   const [surveyAssignments, setSurveyAssignments] = useState<LearnerSurveyAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(true);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
 
   const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
+  const learnerAuthPending =
+    authInitializing ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
+  const learnerAuthFailed = !learnerAuthPending && !learnerAuthReady;
 
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
@@ -30,6 +43,24 @@ const ClientProfile = () => {
     let isMounted = true;
 
     const run = async () => {
+      if (learnerAuthPending) {
+        if (isMounted) {
+          setIsLoadingAssignments(true);
+          setAssignmentError(null);
+        }
+        return;
+      }
+
+      if (learnerAuthFailed) {
+        if (isMounted) {
+          setCourseAssignments([]);
+          setSurveyAssignments([]);
+          setIsLoadingAssignments(false);
+          setAssignmentError('Sign in to load your assigned courses and surveys.');
+        }
+        return;
+      }
+
       if (!learnerId) {
         if (isMounted) {
           setCourseAssignments([]);
@@ -75,7 +106,7 @@ const ClientProfile = () => {
     return () => {
       isMounted = false;
     };
-  }, [learnerId]);
+  }, [learnerAuthFailed, learnerAuthPending, learnerId]);
 
   const courseTitleMap = useMemo(() => {
     const map = new Map<string, string>();

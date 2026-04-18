@@ -13,6 +13,17 @@ vi.mock('../hooks/useUserProfile', () => ({
   useUserProfile: () => ({ user: null }),
 }));
 
+vi.mock('../context/SecureAuthContext', () => ({
+  useSecureAuth: () => ({
+    authInitializing: false,
+    sessionStatus: 'authenticated',
+    membershipStatus: 'ready',
+    activeOrgId: 'org-1',
+    isAuthenticated: { lms: true, client: true, admin: false },
+    user: { id: 'local-user', email: 'learner@example.com', role: 'learner' },
+  }),
+}));
+
 const mockFetchLearnerReflection = vi.hoisted(() => vi.fn());
 const mockSaveLearnerReflection = vi.hoisted(() => vi.fn());
 const mockFetchAssignedSurveysForLearner = vi.hoisted(() => vi.fn());

@@ -122,13 +122,12 @@ const createRedisStore = (client) => {
       }
     },
     async keys(pattern = '*') {
-      const found = [];
-      let cursor = '0';
-      do {
-        // eslint-disable-next-line no-await-in-loop
-        let res;
-        try {
-          res = await withTimeout(client.scan(cursor, 'MATCH', pattern, 'COUNT', 100), Number(process.env.CACHE_OP_TIMEOUT_MS || 400));
+    const found = [];
+    let cursor = '0';
+    do {
+      let res;
+      try {
+        res = await withTimeout(client.scan(cursor, 'MATCH', pattern, 'COUNT', 100), Number(process.env.CACHE_OP_TIMEOUT_MS || 400));
         } catch (err) {
           // fail fast when scan cannot complete
           const e = new Error('redis_scan_failed');
@@ -142,13 +141,12 @@ const createRedisStore = (client) => {
       return found;
     },
     async entries() {
-      const keys = await this.keys('*');
-      const out = [];
-      for (const k of keys) {
-        // eslint-disable-next-line no-await-in-loop
-        const v = await this.get(k);
-        out.push([k, { value: v }]);
-      }
+    const keys = await this.keys('*');
+    const out = [];
+    for (const k of keys) {
+      const v = await this.get(k);
+      out.push([k, { value: v }]);
+    }
       return out;
     },
   };

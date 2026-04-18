@@ -22,6 +22,7 @@ vi.mock('../../../dal/orgs', () => ({
     { id: 'org-1', name: 'Org 1' },
     { id: 'org-2', name: 'Org 2' },
   ]),
+  onOrgListInvalidated: vi.fn(() => () => {}),
 }));
 
 vi.mock('../../../context/SecureAuthContext', () => ({

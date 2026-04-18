@@ -22,6 +22,9 @@ describe('notificationService request dedupe', () => {
       __esModule: true,
       default: apiRequestMock,
     }));
+    vi.doMock('../../lib/secureStorage', () => ({
+      getUserSession: () => ({ id: 'user-1', email: 'user@example.com' }),
+    }));
 
     const { listLearnerNotifications } = await import('../notificationService');
 

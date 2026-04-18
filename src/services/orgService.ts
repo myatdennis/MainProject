@@ -199,7 +199,9 @@ export type OrgProfileDetails = {
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { resolveApiUrl } from '../config/apiBase';
 
-const ORG_LIST_CACHE_TTL_MS = 60 * 1000;
+// Reduce TTL to make admin lists refresh quickly when backend state changes.
+// Short TTL avoids long stale windows while still deduping rapid repeated requests.
+const ORG_LIST_CACHE_TTL_MS = 5 * 1000;
 type OrgListCacheEntry = { timestamp: number; data: Org[] };
 const orgListCache = new Map<string, OrgListCacheEntry>();
 type OrgPageCacheEntry = { timestamp: number; data: OrgListResponse };
@@ -214,6 +216,7 @@ export const invalidateOrgListCache = (predicate?: (key: string) => boolean) => 
     orgListCache.clear();
     orgPageCache.clear();
     orgProfileCache.clear();
+    notifyOrgListInvalidated();
     return;
   }
   for (const key of Array.from(orgListCache.keys())) {
@@ -224,6 +227,29 @@ export const invalidateOrgListCache = (predicate?: (key: string) => boolean) => 
   for (const key of Array.from(orgPageCache.keys())) {
     if (predicate(key)) {
       orgPageCache.delete(key);
+    }
+  }
+  // Notify listeners when partial invalidation happens as well
+  notifyOrgListInvalidated();
+};
+
+// Event emitter: allow UI surfaces to subscribe to list invalidation so they can
+// proactively refresh instead of waiting for TTL expiry or a manual refresh.
+const orgListInvalidationListeners = new Set<() => void>();
+
+export const onOrgListInvalidated = (cb: () => void) => {
+  orgListInvalidationListeners.add(cb);
+  return () => orgListInvalidationListeners.delete(cb);
+};
+
+// Notify listeners when cache is invalidated via this helper.
+const notifyOrgListInvalidated = () => {
+  for (const cb of Array.from(orgListInvalidationListeners)) {
+    try {
+      cb();
+    } catch (e) {
+      // swallow listener errors
+      console.warn('[orgService] orgListInvalidation listener error', e);
     }
   }
 };
@@ -732,4 +758,5 @@ export default {
   addOrgMember,
   removeOrgMember,
   invalidateOrgListCache,
+  onOrgListInvalidated,
 };

@@ -9,8 +9,10 @@ import Loading from '../../components/ui/Loading';
 import { DalError, extractDalErrorDetail } from '../../dal/http';
 import { fetchLearnerSurveyResults } from '../../dal/surveys';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const ClientSurveyProgress = () => {
+  const { authInitializing, sessionStatus, membershipStatus, activeOrgId, isAuthenticated } = useSecureAuth();
   const { surveyId } = useParams<{ surveyId: string }>();
   const location = useLocation();
   const portalPath = getLearnerPortalBasePath(location.pathname);
@@ -19,11 +21,34 @@ const ClientSurveyProgress = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<any>(null);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
+  const learnerAuthPending =
+    authInitializing ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
+  const learnerAuthFailed = !learnerAuthPending && !learnerAuthReady;
 
   useEffect(() => {
     if (!surveyId) {
       setError('Survey ID is required.');
       setLoading(false);
+      return;
+    }
+    if (learnerAuthPending) {
+      setLoading(true);
+      setError(null);
+      return;
+    }
+    if (learnerAuthFailed) {
+      setLoading(false);
+      setError('Sign in to load survey progress.');
       return;
     }
 
@@ -53,7 +78,7 @@ const ClientSurveyProgress = () => {
     return () => {
       active = false;
     };
-  }, [surveyId, assignmentId]);
+  }, [assignmentId, learnerAuthFailed, learnerAuthPending, surveyId]);
 
   if (loading) {
     return (

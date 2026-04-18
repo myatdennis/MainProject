@@ -208,6 +208,22 @@ describe('apiClient', () => {
     expect(options?.body).toContain('assigned_to');
   });
 
+  it('attaches auth headers on learner survey requests', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer survey-token', 'X-Org-Id': 'org-7' });
+    __setTestOrgContext('org-7');
+    const { apiRequest } = await loadApiClient();
+    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+
+    await apiRequest('/api/client/surveys/assigned');
+
+    const [url, options] = fetchSpy.mock.calls[0];
+    const headers = headersToObject(options?.headers as HeadersInit);
+    expect(String(url)).toBe('https://api.huddle.local/api/client/surveys/assigned');
+    expect(getHeaderValue(headers, 'Authorization')).toBe('Bearer survey-token');
+  });
+
   it('stringifies plain object bodies and sets JSON headers automatically', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');

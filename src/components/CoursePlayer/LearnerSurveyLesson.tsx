@@ -11,6 +11,7 @@ import {
   saveLearnerSurveyProgress,
   submitLearnerSurveyResponse,
 } from '../../dal/surveys';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 type LearnerSurveyLessonProps = {
   lessonId: string;
@@ -61,6 +62,7 @@ const LearnerSurveyLesson = ({
   surveyId,
   onSubmitSuccess,
 }: LearnerSurveyLessonProps) => {
+  const { authInitializing, sessionStatus, membershipStatus, activeOrgId, isAuthenticated } = useSecureAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [survey, setSurvey] = useState<any>(null);
@@ -73,6 +75,19 @@ const LearnerSurveyLesson = ({
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [advancing, setAdvancing] = useState(false);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
+  const learnerAuthPending =
+    authInitializing ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
+  const learnerAuthFailed = !learnerAuthPending && !learnerAuthReady;
 
   const syncedAnswersRef = useRef<string>(serializeAnswers({}));
   const latestAnswersRef = useRef<Record<string, unknown>>({});
@@ -91,6 +106,16 @@ const LearnerSurveyLesson = ({
     if (!surveyId) {
       setError('A linked survey is required for this lesson.');
       setLoading(false);
+      return;
+    }
+    if (learnerAuthPending) {
+      setLoading(true);
+      setError(null);
+      return;
+    }
+    if (learnerAuthFailed) {
+      setLoading(false);
+      setError('Sign in to load this survey lesson.');
       return;
     }
 
@@ -167,7 +192,7 @@ const LearnerSurveyLesson = ({
     return () => {
       active = false;
     };
-  }, [lessonId, surveyId]);
+  }, [learnerAuthFailed, learnerAuthPending, lessonId, surveyId]);
 
   const persistAnswers = useCallback(
     async (nextAnswers: Record<string, unknown>, status: 'in-progress' | 'completed') => {

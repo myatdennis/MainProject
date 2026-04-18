@@ -35,7 +35,7 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import Button from '../../components/ui/Button';
 import ActionsMenu from '../../components/ui/ActionsMenu';
-import { listOrgs } from '../../dal/orgs';
+import { listOrgs, onOrgListInvalidated } from '../../dal/orgs';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import Loading from '../../components/ui/Loading';
 import apiRequest from '../../utils/apiClient';
@@ -267,6 +267,23 @@ const AdminUsers = () => {
         console.warn('[AdminUsers] Failed to load organizations for filter', err);
       });
     return () => { cancelled = true; };
+  }, []);
+
+  // Refresh organizations list when other parts of the app invalidate org list
+  useEffect(() => {
+    const unsub = onOrgListInvalidated?.(() => {
+      let cancelled = false;
+      listOrgs({}, { forceRefresh: true })
+        .then((orgs) => {
+          if (cancelled) return;
+          setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
+        })
+        .catch((err) => {
+          console.warn('[AdminUsers] Failed to refresh organizations after invalidation', err);
+        });
+      return () => { cancelled = true; };
+    });
+    return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
 
   // ── Org course modules (dynamic, falls back to defaults) ─────────────

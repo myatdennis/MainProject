@@ -50,6 +50,7 @@ import { logger } from './lib/logger.js';
 // ...app is declared below, so after that:
 // (Find the first occurrence of 'const app = express();' and add this right after)
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
+import { setBroadcaster } from './lib/broadcaster.js';
 import { isValidGrowthOrgId } from './lib/growthOrgHelpers.js';
 
 const logRouteError = (route, error) => {
@@ -5358,6 +5359,28 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
 
     await runTimedQuery('survey.assignments.materialize', () => supabase.from('assignments').insert(inserts), 10000);
 
+    // Broadcast created assignment events for materialized rows (best-effort).
+    try {
+      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
+        for (const row of inserts) {
+          try {
+            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
+            broadcastToTopic(topicOrg, payload);
+            const userIdForRow = row.user_id ?? row.userId ?? null;
+            if (userIdForRow) {
+              broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
+            }
+          } catch (inner) {
+            logger?.warn?.('survey_assignment_materialize_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+          }
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('survey_assignment_materialize_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
+
     if (refreshAggregates) {
       const affectedSurveyIds = Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean)));
       await Promise.all(affectedSurveyIds.map((surveyId) => refreshSurveyAssignmentAggregates(surveyId)));
@@ -5454,6 +5477,28 @@ const ensureCourseAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
 
     const { error: insertError } = await supabase.from('assignments').insert(inserts);
     if (insertError) throw insertError;
+
+    // Broadcast created assignment events for org-rollup inserts (best-effort).
+    try {
+      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
+        for (const row of inserts) {
+          try {
+            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
+            broadcastToTopic(topicOrg, payload);
+            const userIdForRow = row.user_id ?? row.userId ?? null;
+            if (userIdForRow) {
+              broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
+            }
+          } catch (inner) {
+            logger?.warn?.('course_assignment_materialize_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+          }
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('course_assignment_materialize_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
   } catch (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
       logger.warn('course_assignment_user_materialize_skipped', {
@@ -5543,6 +5588,22 @@ const loadSurveyAssignmentForUser = async (
     if (_assignInsert.error) throw _assignInsert.error;
     const created = firstRow(_assignInsert);
     await refreshSurveyAssignmentAggregates(surveyId);
+
+    // Broadcast self-enroll created assignment (best-effort).
+    try {
+      if (typeof broadcastToTopic === 'function' && created) {
+        const orgId = created.organization_id ?? created.organizationId ?? created.org_id ?? created.orgId ?? null;
+        const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+        const payload = { type: 'assignment_created', data: created, timestamp: Date.now() };
+        broadcastToTopic(topicOrg, payload);
+        if (created.user_id) {
+          broadcastToTopic(`assignment:user:${String(created.user_id).toLowerCase()}`, payload);
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('survey_self_enroll_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
+
     return created ?? null;
   } catch (error) {
     const invalidUuidFilter =
@@ -10112,6 +10173,26 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
   if (inserts.length > 0) {
     const { error } = await supabase.from('assignments').insert(inserts);
     if (error) throw error;
+
+    // Broadcast created assignment events for inserted course assignments (best-effort)
+    try {
+      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
+        for (const row of inserts) {
+          try {
+            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
+            broadcastToTopic(topicOrg, payload);
+            const userIdForRow = row.user_id ?? row.userId ?? null;
+            if (userIdForRow) broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
+          } catch (inner) {
+            logger?.warn?.('backfill_course_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+          }
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('backfill_course_assignment_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
   }
 
   return {
@@ -10307,6 +10388,26 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
         refreshSurveyAssignmentAggregates(surveyId),
       ),
     );
+
+    // Broadcast created survey assignment events for inserted rows (best-effort)
+    try {
+      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
+        for (const row of inserts) {
+          try {
+            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
+            broadcastToTopic(topicOrg, payload);
+            const userIdForRow = row.user_id ?? row.userId ?? null;
+            if (userIdForRow) broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
+          } catch (inner) {
+            logger?.warn?.('assign_published_org_surveys_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+          }
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('assign_published_org_surveys_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
   }
 
   return {
@@ -10621,14 +10722,66 @@ async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
     throw createHttpError(400, 'invalid_delete_request', 'userId is required.');
   }
 
+  // Delete assignments by user id — select affected rows first and broadcast deletions (best-effort)
   await runOptionalCleanupMutation(
     'delete_user.assignments.user_id',
-    () => supabase.from('assignments').delete().eq('user_id', userId),
+    async () => {
+      try {
+        const { data: rows } = await supabase.from('assignments').select('*').eq('user_id', userId);
+        if (Array.isArray(rows) && rows.length > 0) {
+          try {
+            for (const r of rows) {
+              try {
+                const orgId = r.organization_id ?? r.organizationId ?? r.org_id ?? r.orgId ?? null;
+                const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+                const payload = { type: 'assignment_deleted', data: r, timestamp: Date.now() };
+                if (typeof broadcastToTopic === 'function') {
+                  broadcastToTopic(topicOrg, payload);
+                  if (r.user_id) broadcastToTopic(`assignment:user:${String(r.user_id).toLowerCase()}`, payload);
+                }
+              } catch (inner) {
+                logger?.warn?.('delete_user_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+              }
+            }
+          } catch (err) {
+            logger?.warn?.('delete_user_assignment_broadcast_failed', { message: err?.message ?? String(err) });
+          }
+        }
+      } catch (selErr) {
+        // continue
+      }
+      return supabase.from('assignments').delete().eq('user_id', userId);
+    },
     { userId, requestId },
   );
+
   await runOptionalCleanupMutation(
     'delete_user.assignments.user_id_uuid',
-    () => supabase.from('assignments').delete().eq('user_id_uuid', userId),
+    async () => {
+      try {
+        const { data: rows } = await supabase.from('assignments').select('*').eq('user_id_uuid', userId);
+        if (Array.isArray(rows) && rows.length > 0) {
+          try {
+            for (const r of rows) {
+              try {
+                const orgId = r.organization_id ?? r.organizationId ?? r.org_id ?? r.orgId ?? null;
+                const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+                const payload = { type: 'assignment_deleted', data: r, timestamp: Date.now() };
+                if (typeof broadcastToTopic === 'function') {
+                  broadcastToTopic(topicOrg, payload);
+                  if (r.user_id) broadcastToTopic(`assignment:user:${String(r.user_id).toLowerCase()}`, payload);
+                }
+              } catch (inner) {
+                logger?.warn?.('delete_user_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+              }
+            }
+          } catch (err) {
+            logger?.warn?.('delete_user_assignment_broadcast_failed', { message: err?.message ?? String(err) });
+          }
+        }
+      } catch (selErr) {}
+      return supabase.from('assignments').delete().eq('user_id_uuid', userId);
+    },
     { userId, requestId },
   );
   await runOptionalCleanupMutation(
@@ -11447,6 +11600,12 @@ app.post('/api/broadcast', async (req, res) => {
 
 // Expose broadcast helper to other server modules
 app.locals.broadcastToTopic = broadcastToTopic;
+// Also set the shared broadcaster so other modules can import and use it
+try {
+  setBroadcaster(broadcastToTopic);
+} catch (_) {
+  /* no-op */
+}
 
 const logAdminCourseUpdateEvent = (event, meta = {}) => {
   try {
@@ -13393,17 +13552,45 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
   // Blocker 3: even platform admins must request a valid, resolvable org scope
   if (requestedOrgId && (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim()))) {
+    logger.warn('admin_organizations_access_denied', {
+      requestId,
+      reason: 'invalid_requested_orgid',
+      requestedOrgId: requestedOrgId ?? null,
+      resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+      userId: context?.user?.id ?? null,
+      isPlatformAdmin: Boolean(context?.isPlatformAdmin),
+      adminOrgIds,
+    });
     res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
     return;
   }
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
   if (!isPlatformAdmin && adminOrgIds.length === 0) {
+    // Helpful diagnostic: log the denial reason so we can correlate browser/network
+    // traces with server-side decisions when organizations do not appear in the UI.
+    logger.warn('admin_organizations_access_denied', {
+      requestId,
+      reason: 'no_admin_memberships',
+      userId: context?.user?.id ?? null,
+      isPlatformAdmin: Boolean(context?.isPlatformAdmin),
+      userRole: context?.userRole ?? null,
+      adminOrgIds: adminOrgIds,
+    });
     res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
     return;
   }
 
   if (!isPlatformAdmin && resolvedRequestedOrgId && !adminOrgIds.includes(resolvedRequestedOrgId)) {
+    logger.warn('admin_organizations_access_denied', {
+      requestId,
+      reason: 'requested_org_not_in_admin_orgs',
+      requestedOrgId: requestedOrgId ?? null,
+      resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+      userId: context?.user?.id ?? null,
+      isPlatformAdmin: Boolean(context?.isPlatformAdmin),
+      adminOrgIds,
+    });
     res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
     return;
   }
@@ -13413,6 +13600,14 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   }
 
   if (!isPlatformAdmin && requestedOrgId && !adminOrgIds.includes(requestedOrgId)) {
+    logger.warn('admin_organizations_access_denied', {
+      requestId,
+      reason: 'requested_org_not_in_admin_orgs_legacy',
+      requestedOrgId: requestedOrgId ?? null,
+      userId: context?.user?.id ?? null,
+      isPlatformAdmin: Boolean(context?.isPlatformAdmin),
+      adminOrgIds,
+    });
     res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
     return;
   }
@@ -13896,12 +14091,60 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
   try {
     await runOptionalCleanupMutation(
       'delete_org.assignments',
-      () => supabase.from('assignments').delete().eq('organization_id', id),
+      async () => {
+        try {
+          const { data: rows } = await supabase.from('assignments').select('*').eq('organization_id', id);
+          if (Array.isArray(rows) && rows.length > 0) {
+            try {
+              for (const r of rows) {
+                try {
+                  const orgId = r.organization_id ?? r.organizationId ?? r.org_id ?? r.orgId ?? null;
+                  const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+                  const payload = { type: 'assignment_deleted', data: r, timestamp: Date.now() };
+                  if (typeof broadcastToTopic === 'function') {
+                    broadcastToTopic(topicOrg, payload);
+                    if (r.user_id) broadcastToTopic(`assignment:user:${String(r.user_id).toLowerCase()}`, payload);
+                  }
+                } catch (inner) {
+                  logger?.warn?.('delete_org_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+                }
+              }
+            } catch (err) {
+              logger?.warn?.('delete_org_assignment_broadcast_failed', { message: err?.message ?? String(err) });
+            }
+          }
+        } catch (selErr) {}
+        return supabase.from('assignments').delete().eq('organization_id', id);
+      },
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
       'delete_org.assignments.org_id',
-      () => supabase.from('assignments').delete().eq('org_id', id),
+      async () => {
+        try {
+          const { data: rows } = await supabase.from('assignments').select('*').eq('org_id', id);
+          if (Array.isArray(rows) && rows.length > 0) {
+            try {
+              for (const r of rows) {
+                try {
+                  const orgId = r.organization_id ?? r.organizationId ?? r.org_id ?? r.orgId ?? null;
+                  const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+                  const payload = { type: 'assignment_deleted', data: r, timestamp: Date.now() };
+                  if (typeof broadcastToTopic === 'function') {
+                    broadcastToTopic(topicOrg, payload);
+                    if (r.user_id) broadcastToTopic(`assignment:user:${String(r.user_id).toLowerCase()}`, payload);
+                  }
+                } catch (inner) {
+                  logger?.warn?.('delete_org_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+                }
+              }
+            } catch (err) {
+              logger?.warn?.('delete_org_assignment_broadcast_failed', { message: err?.message ?? String(err) });
+            }
+          }
+        } catch (selErr) {}
+        return supabase.from('assignments').delete().eq('org_id', id);
+      },
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(

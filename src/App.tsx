@@ -28,6 +28,7 @@ import AuthCallback from './pages/AuthCallback';
 import HomePage from './pages/HomePage';
 import LMSLogin from './pages/LMS/LMSLogin';
 import useViewportHeight from './hooks/useViewportHeight';
+import { initRealtimeHandlers } from './services/realtimeHandlers';
 
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const ServicesPage = lazy(() => import('./pages/ServicesPage'));
@@ -313,6 +314,21 @@ export function AppContent() {
       cancelled = true;
     };
   }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId, surface]);
+
+  // Initialize realtime handlers when session is ready. Keeps learner/admin
+  // surfaces in sync by subscribing to assignment/org topics and triggering
+  // cache invalidation + background refreshes on events.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (sessionStatus !== 'authenticated') return;
+    try {
+      initRealtimeHandlers();
+    } catch (err) {
+      // Don't block render if realtime init fails.
+      // Keep a lightweight console warning for diagnostics.
+      console.warn('[App] initRealtimeHandlers failed', err);
+    }
+  }, [sessionStatus]);
 
   // ── Catalog warning toast handler ─────────────────────────────────────────
   // Declared here (before useLocation / any conditional) so hook call count

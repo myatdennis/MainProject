@@ -8,6 +8,15 @@ import ClientSurveyTake from '../ClientSurveyTake';
 const fetchAssignedSurveysForLearnerMock = vi.fn();
 const saveLearnerSurveyProgressMock = vi.fn();
 const submitLearnerSurveyResponseMock = vi.fn();
+const secureAuthState = {
+  value: {
+    authInitializing: false,
+    sessionStatus: 'authenticated',
+    membershipStatus: 'ready',
+    activeOrgId: 'org-1',
+    isAuthenticated: { client: true, lms: true },
+  },
+};
 
 vi.mock('../../../dal/surveys', () => ({
   fetchAssignedSurveysForLearner: () => fetchAssignedSurveysForLearnerMock(),
@@ -15,11 +24,22 @@ vi.mock('../../../dal/surveys', () => ({
   submitLearnerSurveyResponse: (...args: any[]) => submitLearnerSurveyResponseMock(...args),
 }));
 
+vi.mock('../../../context/SecureAuthContext', () => ({
+  useSecureAuth: () => secureAuthState.value,
+}));
+
 describe('ClientSurveyTake', () => {
   beforeEach(() => {
     fetchAssignedSurveysForLearnerMock.mockReset();
     saveLearnerSurveyProgressMock.mockReset();
     submitLearnerSurveyResponseMock.mockReset();
+    secureAuthState.value = {
+      authInitializing: false,
+      sessionStatus: 'authenticated',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-1',
+      isAuthenticated: { client: true, lms: true },
+    };
   });
 
   it('opens a survey when the assignment provides the matching survey id', async () => {
@@ -238,5 +258,28 @@ describe('ClientSurveyTake', () => {
 
     expect(await screen.findByText(/Unable to submit your survey right now\. Please try again\./i)).toBeInTheDocument();
     expect(screen.queryByText(/Thanks! Your survey has been submitted./i)).not.toBeInTheDocument();
+  });
+
+  it('waits for learner auth readiness before loading the assigned survey', async () => {
+    secureAuthState.value = {
+      authInitializing: true,
+      sessionStatus: 'loading',
+      membershipStatus: 'loading',
+      activeOrgId: null,
+      isAuthenticated: { client: false, lms: false },
+    };
+
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={['/client/surveys/survey-1/take?assignmentId=assignment-1']}>
+          <Routes>
+            <Route path="/client/surveys/:surveyId/take" element={<ClientSurveyTake />} />
+          </Routes>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+
+    expect(await screen.findByText('Loading survey…')).toBeInTheDocument();
+    expect(fetchAssignedSurveysForLearnerMock).not.toHaveBeenCalled();
   });
 });

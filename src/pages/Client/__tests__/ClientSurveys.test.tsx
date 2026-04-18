@@ -8,6 +8,15 @@ import { DalError } from '../../../dal/http';
 
 const mockNavigate = vi.fn();
 const fetchAssignedSurveysForLearnerMock = vi.fn();
+const secureAuthState = {
+  value: {
+    authInitializing: false,
+    sessionStatus: 'authenticated',
+    membershipStatus: 'ready',
+    activeOrgId: 'org-1',
+    isAuthenticated: { client: true, lms: true },
+  },
+};
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -25,10 +34,21 @@ vi.mock('../../../utils/surveyAssignmentEvents', () => ({
   subscribeSurveyAssignmentsChanged: () => () => {},
 }));
 
+vi.mock('../../../context/SecureAuthContext', () => ({
+  useSecureAuth: () => secureAuthState.value,
+}));
+
 describe('ClientSurveys', () => {
   beforeEach(() => {
     mockNavigate.mockReset();
     fetchAssignedSurveysForLearnerMock.mockReset();
+    secureAuthState.value = {
+      authInitializing: false,
+      sessionStatus: 'authenticated',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-1',
+      isAuthenticated: { client: true, lms: true },
+    };
   });
 
   const renderPage = () =>
@@ -130,5 +150,20 @@ describe('ClientSurveys', () => {
     expect(await screen.findByText('Surveys are temporarily unavailable')).toBeInTheDocument();
     expect(screen.getByText('Assigned surveys are temporarily unavailable. Please retry in a moment.')).toBeInTheDocument();
     expect(screen.queryByText('No surveys assigned')).not.toBeInTheDocument();
+  });
+
+  it('does not fetch assigned surveys before learner auth is ready', async () => {
+    secureAuthState.value = {
+      authInitializing: true,
+      sessionStatus: 'loading',
+      membershipStatus: 'loading',
+      activeOrgId: null,
+      isAuthenticated: { client: false, lms: false },
+    };
+
+    renderPage();
+
+    expect(await screen.findByText('Loading surveys…')).toBeInTheDocument();
+    expect(fetchAssignedSurveysForLearnerMock).not.toHaveBeenCalled();
   });
 });

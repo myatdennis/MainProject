@@ -233,6 +233,30 @@ export const createAdminSurveyAssignmentsController = ({
           context,
           requireOrgAccess: service.requireOrgAccess,
         });
+        // Broadcast assignment events so realtime clients pick up changes.
+        try {
+          const broadcastToTopic = req.app?.locals?.broadcastToTopic;
+          if (typeof broadcastToTopic === 'function' && Array.isArray(result?.data)) {
+            const eventType = result?.meta?.inserted > 0 ? 'assignment_created' : result?.meta?.updated > 0 ? 'assignment_updated' : 'assignment_changed';
+            for (const row of result.data) {
+              try {
+                const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+                const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+                const payload = { type: eventType, data: row, timestamp: Date.now() };
+                broadcastToTopic(topicOrg, payload);
+                if (row.user_id) {
+                  broadcastToTopic(`assignment:user:${String(row.user_id).toLowerCase()}`, payload);
+                }
+              } catch (inner) {
+                // best-effort: continue broadcasting other rows
+                logger.warn('survey_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
+              }
+            }
+          }
+        } catch (broadcastErr) {
+          logger.warn('survey_assignment_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+        }
+
         return sendOk(res, result.data, { status: result.status, meta: result.meta });
       } catch (error) {
         if (res.headersSent) return;
@@ -332,12 +356,32 @@ export const createAdminSurveyAssignmentsController = ({
           return sendError(res, 403, 'org_required', 'Only platform admins can remove global assignments.');
         }
 
+        const hardDeleteFlag = String(req.query.hard ?? 'false').toLowerCase() === 'true';
         await service.deleteAssignment({
           assignmentId,
-          hardDelete: String(req.query.hard ?? 'false').toLowerCase() === 'true',
+          hardDelete: hardDeleteFlag,
           existing,
         });
         await service.refreshAggregates(surveyIdForLookup);
+
+        // Broadcast deletion/deactivation so realtime clients update immediately.
+        try {
+          const broadcastToTopic = req.app?.locals?.broadcastToTopic;
+          if (typeof broadcastToTopic === 'function' && existing) {
+            const payload = {
+              type: hardDeleteFlag ? 'assignment_deleted' : 'assignment_deactivated',
+              data: existing,
+              timestamp: Date.now(),
+            };
+            const orgTopic = existing.organization_id ? `assignment:org:${existing.organization_id}` : 'assignment:org:global';
+            broadcastToTopic(orgTopic, payload);
+            if (existing.user_id) {
+              broadcastToTopic(`assignment:user:${String(existing.user_id).toLowerCase()}`, payload);
+            }
+          }
+        } catch (broadcastErr) {
+          logger.warn('survey_assignment_delete_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+        }
 
         service.logSurveyAssignmentEvent?.('survey_assignment_updated', {
           requestId: req.requestId ?? null,

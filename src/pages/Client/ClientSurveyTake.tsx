@@ -9,6 +9,7 @@ import { fetchAssignedSurveysForLearner, saveLearnerSurveyProgress, submitLearne
 import { DalError, extractDalErrorDetail } from '../../dal/http';
 import { getLearnerPortalBasePath } from '../../utils/learnerPortalPath';
 import type { SurveyQuestion } from '../../types/survey';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const normalizeQuestions = (survey: any): SurveyQuestion[] => {
   if (!survey) return [];
@@ -41,6 +42,7 @@ const getEntrySurveyId = (entry: any): string | null =>
   entry?.survey?.id ?? entry?.assignment?.surveyId ?? entry?.assignment?.survey_id ?? null;
 
 const ClientSurveyTake = () => {
+  const { authInitializing, sessionStatus, membershipStatus, activeOrgId, isAuthenticated } = useSecureAuth();
   const { surveyId } = useParams<{ surveyId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -57,11 +59,34 @@ const ClientSurveyTake = () => {
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
+  const learnerAuthPending =
+    authInitializing ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
+  const learnerAuthFailed = !learnerAuthPending && !learnerAuthReady;
 
   useEffect(() => {
     if (!surveyId) {
       setError('Survey ID is required.');
       setLoading(false);
+      return;
+    }
+    if (learnerAuthPending) {
+      setLoading(true);
+      setError(null);
+      return;
+    }
+    if (learnerAuthFailed) {
+      setLoading(false);
+      setError('Sign in to load this survey.');
       return;
     }
     let active = true;
@@ -133,7 +158,7 @@ const ClientSurveyTake = () => {
     return () => {
       active = false;
     };
-  }, [surveyId, assignmentId]);
+  }, [assignmentId, learnerAuthFailed, learnerAuthPending, surveyId]);
 
   const questions = useMemo(() => normalizeQuestions(survey), [survey]);
 

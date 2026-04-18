@@ -4,6 +4,7 @@ import { logger } from '../lib/logger.js';
 const supabase = supabaseClient || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
 const supabaseAdmin = supabaseAdminClient || supabase;
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
+import { broadcastToTopic } from '../lib/broadcaster.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { validateOrgId } from '../lib/inviteHelper.js';
 import { isPlatformAdminActor, canModifyUser, canAssignAcrossOrganizations } from '../utils/adminAuthz.js';
@@ -650,11 +651,47 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
     const { id, ...changes } = update;
     const { error } = await supabase.from('assignments').update(changes).eq('id', id);
     if (error) throw error;
+
+    // Broadcast updated assignment row (best-effort)
+    try {
+      const { data: updatedRow, error: selErr } = await supabase.from('assignments').select('*').eq('id', id).maybeSingle();
+      if (!selErr && updatedRow && typeof broadcastToTopic === 'function') {
+        const orgId = updatedRow.organization_id ?? updatedRow.organizationId ?? updatedRow.org_id ?? updatedRow.orgId ?? null;
+        const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+        const payload = { type: 'assignment_updated', data: updatedRow, timestamp: Date.now() };
+        broadcastToTopic(topicOrg, payload);
+        if (updatedRow.user_id) broadcastToTopic(`assignment:user:${String(updatedRow.user_id).toLowerCase()}`, payload);
+      }
+    } catch (inner) {
+      logger?.warn?.('admin_users_assignment_update_broadcast_failed', { message: inner?.message ?? String(inner) });
+    }
   }
 
   if (inserts.length > 0) {
     const { error } = await supabase.from('assignments').insert(inserts);
     if (error) throw error;
+
+    // Broadcast created assignment events for the inserted rows (best-effort)
+    try {
+      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
+        for (const row of inserts) {
+          try {
+            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
+            broadcastToTopic(topicOrg, payload);
+            const userIdForRow = row.user_id ?? row.userId ?? null;
+            if (userIdForRow) {
+              broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
+            }
+          } catch (inner) {
+            logger?.warn?.('admin_users_assignment_insert_broadcast_failed', { message: inner?.message ?? String(inner) });
+          }
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('admin_users_assignment_insert_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
   }
 
   return { inserted: inserts.length, updated: updates.length };
@@ -722,11 +759,47 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
     const { id, ...changes } = update;
     const { error } = await supabase.from('assignments').update(changes).eq('id', id);
     if (error) throw error;
+
+    // Broadcast updated survey assignment row (best-effort)
+    try {
+      const { data: updatedRow, error: selErr } = await supabase.from('assignments').select('*').eq('id', id).maybeSingle();
+      if (!selErr && updatedRow && typeof broadcastToTopic === 'function') {
+        const orgId = updatedRow.organization_id ?? updatedRow.organizationId ?? updatedRow.org_id ?? updatedRow.orgId ?? null;
+        const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+        const payload = { type: 'assignment_updated', data: updatedRow, timestamp: Date.now() };
+        broadcastToTopic(topicOrg, payload);
+        if (updatedRow.user_id) broadcastToTopic(`assignment:user:${String(updatedRow.user_id).toLowerCase()}`, payload);
+      }
+    } catch (inner) {
+      logger?.warn?.('admin_users_survey_update_broadcast_failed', { message: inner?.message ?? String(inner) });
+    }
   }
 
   if (inserts.length > 0) {
     const { error } = await supabase.from('assignments').insert(inserts);
     if (error) throw error;
+
+    // Broadcast created survey assignment events (best-effort)
+    try {
+      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
+        for (const row of inserts) {
+          try {
+            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
+            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
+            broadcastToTopic(topicOrg, payload);
+            const userIdForRow = row.user_id ?? row.userId ?? null;
+            if (userIdForRow) {
+              broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
+            }
+          } catch (inner) {
+            logger?.warn?.('admin_users_survey_insert_broadcast_failed', { message: inner?.message ?? String(inner) });
+          }
+        }
+      }
+    } catch (broadcastErr) {
+      logger?.warn?.('admin_users_survey_insert_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
+    }
   }
 
   return { inserted: inserts.length, updated: updates.length };

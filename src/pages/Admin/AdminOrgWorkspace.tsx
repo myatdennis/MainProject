@@ -28,6 +28,7 @@ import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel'
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
 import orgService, { type Org, OrgProfileDetails } from '../../dal/orgs';
+import { ApiError } from '../../utils/apiClient';
 import { getCrmSummary, sendBroadcastNotification, type CrmSummary } from '../../dal/crm';
 import { useDebounce } from '../../components/PerformanceComponents';
 
@@ -228,8 +229,17 @@ const AdminOrgWorkspace = () => {
       } catch (error) {
         if (cancelled) return;
         console.error('Failed to load organizations', error);
-        setLoadError('Unable to load organizations');
-        showToast?.('Unable to load organizations', 'error');
+        // If the server denied access (403), show a friendly, actionable message
+        // rather than the generic 'Unable to load organizations'.
+        const status = (error && (error as any).status) || (error instanceof ApiError ? (error as any).status : null);
+        if (status === 403) {
+          setLoadError('no_admin_memberships');
+          showToast?.("You don't have admin memberships to view organizations. Contact your organization owner or support.", 'warning');
+          setOrganizations([]);
+        } else {
+          setLoadError('Unable to load organizations');
+          showToast?.('Unable to load organizations', 'error');
+        }
       } finally {
         if (!cancelled) {
           setFetching(false);
@@ -245,6 +255,18 @@ const AdminOrgWorkspace = () => {
   useEffect(() => {
     fetchOrganizations(1);
   }, [fetchOrganizations]);
+
+  // Subscribe to org list invalidation so this page refreshes automatically
+  // when other parts of the app mutate organizations (create/update/delete).
+  useEffect(() => {
+    const unsub = orgService.onOrgListInvalidated?.(() => {
+      // Force refresh current page when cache invalidation occurs.
+      void fetchOrganizations(paginationMeta.page || 1, { forceRefresh: true });
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [fetchOrganizations, paginationMeta.page]);
 
   const handleRefreshOrgs = useCallback(() => {
     fetchOrganizations(paginationMeta.page || 1, { forceRefresh: true });

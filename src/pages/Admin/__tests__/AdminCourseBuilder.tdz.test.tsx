@@ -154,7 +154,7 @@ describe('AdminCourseBuilder', () => {
   it('renders without throwing and exposes the builder root element', async () => {
     await renderBuilder('/admin/course-builder/new');
 
-    expect(screen.getByTestId('admin-course-builder')).toBeInTheDocument();
+    expect(await screen.findByTestId('admin-course-builder')).toBeInTheDocument();
   });
 
   it('debounces rapid typing into a single autosave request', async () => {
