@@ -13,7 +13,6 @@ import {
   normalizeAdminAccessPayload,
   type AdminAccessPayload,
 } from '../../lib/adminAccess';
-import { supabase } from '../../lib/supabaseClient';
 import { getCanonicalSession } from '../../lib/canonicalAuth';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
