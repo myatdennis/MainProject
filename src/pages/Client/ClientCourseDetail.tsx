@@ -13,7 +13,7 @@ import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { evaluateCourseAvailability } from '../../utils/courseAvailability';
 import { getUserSession } from '../../lib/secureStorage';
-import { useSecureAuth } from '../../contexts/SecureAuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const ClientCourseDetail = () => {
   const navigate = useNavigate();
