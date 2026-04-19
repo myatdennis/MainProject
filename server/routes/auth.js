@@ -5,6 +5,7 @@
 
 import express from 'express';
 import bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { generateTokens, verifyRefreshToken, isJwtSecretConfigured, extractTokenFromHeader } from '../utils/jwt.js';
 import {
   authenticate,
@@ -134,7 +135,7 @@ const buildConfiguredDemoUsers = () => {
     }
 
     users.push({
-      id: process.env[`${prefix}_ID`] || defaults.id,
+      id: process.env[`${prefix}_ID`] || defaults.id || randomUUID(),
       email: email.trim(),
       emailLower: normalizeEmail(email),
       role: process.env[`${prefix}_ROLE`] || defaults.role,
@@ -166,7 +167,7 @@ const buildConfiguredDemoUsers = () => {
             return;
           }
           users.push({
-            id: entry.id || `demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+            id: entry.id || randomUUID(),
             email: entry.email,
             emailLower: normalizeEmail(entry.email),
             role: entry.role || 'user',

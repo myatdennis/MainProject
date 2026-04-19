@@ -1,10 +1,8 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import type { Survey } from '../types/survey';
-import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+import apiRequest from '../utils/apiClient';
 import { getAnalytics as getSurveyAnalyticsFromDal } from '../dal/surveys';
 
-const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
-  apiRequest<T>(path, options);
+const apiFetch = async <T>(path: string, options: any = {}) => apiRequest<T>(path, options);
 
 const mapSurveyRecord = (record: any): Survey => ({
   id: record.id,
@@ -59,15 +57,11 @@ export interface SurveyAssignment {
 
 export const getAssignments = async (surveyId: string): Promise<SurveyAssignment | null> => {
   try {
-    if (!hasSupabaseConfig()) return null;
-    const supabase = await getSupabase();
-    if (!supabase) return null;
-    const { data, error } = await supabase.from('survey_assignments').select('*').eq('survey_id', surveyId).limit(1).single();
-    if (error) {
-      console.warn('getAssignments supabase error:', error.message || error);
-      return null;
-    }
-    return data as SurveyAssignment;
+    // Read assignments via backend API (server is the single source of truth and enforces RLS/claims).
+    const json = await apiRequest<{ data?: any[] }>(`/api/admin/surveys/${surveyId}/assignments`);
+    const rows = Array.isArray(json.data) ? json.data : [];
+    if (rows.length === 0) return null;
+    return rows[0] as SurveyAssignment;
   } catch (err) {
     console.warn('getAssignments exception:', err);
     return null;
@@ -76,20 +70,15 @@ export const getAssignments = async (surveyId: string): Promise<SurveyAssignment
 
 export const saveAssignments = async (surveyId: string, organizationIds: string[]) => {
   try {
-    if (!hasSupabaseConfig()) return null;
-    const supabase = await getSupabase();
-    if (!supabase) return null;
-    const payload = {
-      survey_id: surveyId,
-      organization_ids: organizationIds,
-      updated_at: new Date().toISOString()
+    // Persist assignments via backend API so server-side policies and auditing run.
+    const body = {
+      organizationIds: Array.isArray(organizationIds) ? organizationIds : [],
     };
-    const { data, error } = await supabase.from('survey_assignments').upsert(payload).select();
-    if (error) {
-      console.warn('saveAssignments supabase error:', error.message || error);
-      return null;
-    }
-    return data;
+    const json = await apiRequest<{ data?: any[] }>(`/api/admin/surveys/${surveyId}/assign`, {
+      method: 'POST',
+      body,
+    });
+    return json.data ?? null;
   } catch (err) {
     console.warn('saveAssignments exception:', err);
     return null;

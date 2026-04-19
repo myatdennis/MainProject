@@ -280,6 +280,45 @@ export const createCourseAssignmentsService = ({
       return { status: 401, error: { code: 'not_authenticated', message: 'Authentication required.' } };
     }
 
+    // --- Instrumentation: capture runtime auth / caller / client info for debugging RLS ---
+    try {
+      const supabaseClientInfo = {
+        hasSupabase: !!supabase,
+        envServiceRolePresent: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+        envAnonKeyPresent: !!process.env.SUPABASE_ANON_KEY,
+      };
+      const jwtClaims = req.supabaseJwtClaims ?? null;
+      const jwtUser = req.supabaseJwtUser ?? null;
+      const authContext = req.authContext ?? null;
+      // developer-friendly console output in non-production
+      debugAssign('[assign][debug][auth]', {
+        requestId: req.requestId ?? null,
+        route: req.path,
+        method: req.method,
+        jwtClaims: jwtClaims ? { sub: jwtClaims.sub ?? null, email: jwtClaims.email ?? null, role: jwtClaims.role ?? null } : null,
+        jwtUser: jwtUser ?? null,
+        authContext: authContext ?? null,
+        contextUserId: context.userId ?? null,
+        supabaseClientInfo,
+      });
+      try {
+        logger.info('course_assignment_debug_auth', {
+          requestId: req.requestId ?? null,
+          jwtSub: jwtClaims?.sub ?? null,
+          jwtEmail: jwtClaims?.email ?? null,
+          jwtRole: jwtClaims?.role ?? null,
+          contextUserId: context.userId ?? null,
+          supabaseClientInfo,
+          route: req.path,
+          method: req.method,
+        });
+      } catch (e) {
+        // non-fatal
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
     const access = await requireOrgAccess(req, res, finalOrganizationId, { write: true, requireOrgAdmin: true });
     if (!access) {
       return {
@@ -688,6 +727,46 @@ export const createCourseAssignmentsService = ({
       }
 
       const existingMap = new Map();
+      // If the client supplied an explicit assignment id in the payload, probe it
+      // so we can prove whether the runtime will take the UPDATE vs INSERT path.
+      try {
+        const payloadId = body.id ?? body.assignment_id ?? body.assignmentId ?? null;
+        if (payloadId && supabase) {
+          try {
+            const { data: existingById, error: existingByIdErr } = await supabase
+              .from('assignments')
+              .select('*')
+              .eq('id', payloadId)
+              .maybeSingle();
+            if (existingByIdErr) throw existingByIdErr;
+            debugAssign('[assign][debug][preupsert_by_id]', {
+              requestId: req.requestId ?? null,
+              payloadId,
+              existingByIdExists: !!existingById,
+              existingById: existingById ? { id: existingById.id, user_id: existingById.user_id ?? null, user_id_uuid: existingById.user_id_uuid ?? null, organization_id: existingById.organization_id ?? existingById.org_id ?? null } : null,
+            });
+            try {
+              logger.info('course_assignment_debug_preupsert_by_id', {
+                requestId: req.requestId ?? null,
+                payloadId,
+                exists: !!existingById,
+              });
+            } catch (e) {}
+            if (existingById) {
+              // Seed the existing map so later logic will treat this as an update
+              existingMap.set(resolveRowKey(existingById), existingById);
+            }
+          } catch (err) {
+            // Non-fatal probe
+            debugAssign('[assign][debug][preupsert_by_id_error]', { requestId: req.requestId ?? null, payloadId, err: String(err) });
+            try {
+              logger.warn('course_assignment_debug_preupsert_by_id_error', { requestId: req.requestId ?? null, payloadId, error: safeSerializeError(err) });
+            } catch (e) {}
+          }
+        }
+      } catch (e) {
+        // non-fatal
+      }
       if (targetUserIds.length > 0) {
         const userScopedTargetIds = targetUserIds.filter((value) => value !== null);
         const includesOrgLevelTarget = targetUserIds.some((value) => value === null);
@@ -739,8 +818,8 @@ export const createCourseAssignmentsService = ({
         }
       }
 
-      const updates = [];
-      const inserts = [];
+  const updates = [];
+  const inserts = [];
       const nowIso = new Date().toISOString();
       for (const userId of targetUserIds) {
         const key = buildAssignmentKey(userId);
@@ -768,6 +847,17 @@ export const createCourseAssignmentsService = ({
       }
 
       const updatedRows = [];
+      try {
+        logger.info('course_assignment_debug_plan_prewrite', {
+          requestId: req.requestId ?? null,
+          targetCount: targetUserIds.length,
+          updatesCount: updates.length,
+          insertsCount: inserts.length,
+          updateIds: updates.map((u) => u.id),
+          insertPreview: inserts.map((r) => ({ user_id: r.user_id ?? null, user_id_uuid: r.user_id_uuid ?? null })),
+        });
+      } catch (e) {}
+
       for (const patch of updates) {
         const { id: patchId, ...changes } = patch;
         const { data: updatedRow, error } = await supabase
@@ -1311,11 +1401,64 @@ export const createCourseAssignmentsService = ({
     return { status: 200, data, meta: { deleted: true } };
   };
 
+  const updateClientAssignmentProgress = async ({ req, res, requireUserContext }) => {
+    if (!supabase) {
+      return { status: 503, error: { code: 'database_unavailable', message: 'Assignments unavailable.' } };
+    }
+    const { course_id, courseId, user_id, userId, progress } = req.body || {};
+    const courseIdValue = course_id ?? courseId ?? null;
+    const userIdValue = (user_id ?? userId ?? null) && String(user_id ?? userId ?? '').trim().toLowerCase();
+    const progressValue = Number.isFinite(progress) ? Number(progress) : null;
+
+    if (!courseIdValue || !userIdValue || progressValue === null || !Number.isFinite(progressValue)) {
+      return { status: 400, error: { code: 'invalid_payload', message: 'course_id, user_id and progress are required.' } };
+    }
+
+    const context = requireUserContext(req, res);
+    if (!context) {
+      return { status: 401, error: { code: 'not_authenticated', message: 'Authentication required.' } };
+    }
+
+    // Only allow learners to update their own progress. Admin updates should go
+    // through admin endpoints.
+    if (context.userId && String(context.userId).toLowerCase() !== String(userIdValue).toLowerCase()) {
+      return { status: 403, error: { code: 'forbidden', message: 'Cannot update progress for another user.' } };
+    }
+
+    const clamped = Math.min(Math.max(Number(progressValue), 0), 100);
+    const statusValue = clamped >= 100 ? 'completed' : clamped > 0 ? 'in-progress' : 'assigned';
+    const now = new Date().toISOString();
+
+    try {
+      const { data, error } = await supabase
+        .from('assignments')
+        .update({ progress: clamped, status: statusValue, updated_at: now })
+        .eq('course_id', courseIdValue)
+        .eq('user_id', userIdValue)
+        .select('*')
+        .maybeSingle();
+      if (error) throw error;
+      return { status: 200, data, meta: null };
+    } catch (error) {
+      logger.error('client_update_assignment_progress_failed', {
+        requestId: req.requestId ?? null,
+        userId: userIdValue,
+        courseId: courseIdValue,
+        message: error?.message ?? String(error),
+      });
+      if (isInfrastructureUnavailableError(error)) {
+        return { status: 503, error: { code: 'database_unavailable', message: 'Assignments unavailable.' } };
+      }
+      throw error;
+    }
+  };
+
   return {
     assignAdminCourse,
     loadClientAssignments,
     listAdminAssignments,
     deleteAdminAssignment,
+    updateClientAssignmentProgress,
   };
 };
 

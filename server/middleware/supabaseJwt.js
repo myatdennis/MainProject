@@ -371,6 +371,20 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     if (!req.user) {
       req.user = supabaseUser;
     }
+      // Emit a lightweight, non-production debug log of parsed claims for diagnostics.
+      try {
+        if (!isProduction) {
+          jwtLog('info', 'parsed_claims', {
+            sub: claims.sub ?? null,
+            email: claims.email ?? claims.user_email ?? null,
+            role: claims.role ?? null,
+            issuer: claims.iss ?? null,
+            path: req.path ?? null,
+          });
+        }
+      } catch (e) {
+        // non-fatal
+      }
     return next();
   } catch (error) {
     const code = error?.message || 'token_verification_failed';

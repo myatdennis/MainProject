@@ -596,35 +596,40 @@ const syncLocalAssignmentsToSupabase = async () => {
     }
 
       try {
-        const supabase = await getAuthedSupabaseClient();
-        if (!supabase) {
-          console.info('[assignmentStorage] Skipping Supabase sync (no authenticated session).');
-          return;
+        // Group pending assignments by course and call the backend admin assign
+        // endpoint for each course so the browser never writes directly.
+        const byCourse = new Map<string, CourseAssignment[]>();
+        for (const asn of pending) {
+          const key = asn.courseId ?? '__org__';
+          const list = byCourse.get(key) ?? [];
+          list.push(asn);
+          byCourse.set(key, list);
         }
 
-        if (!hasSupabaseFrom(supabase)) {
-          console.warn('[assignmentStorage] Supabase client does not expose .from(); skipping remote sync.');
-          return;
+        for (const [courseId, rows] of byCourse.entries()) {
+          const userIds = rows.map((r) => r.userId).filter(Boolean);
+          const orgId = rows.find((r) => r.organizationId)?.organizationId ?? null;
+          if (userIds.length === 0) continue;
+          try {
+            const payload: any = { user_ids: Array.from(new Set(userIds)), organization_id: orgId };
+            // preserve optional fields if available on the first row
+            const first = rows[0];
+            if (first.dueDate) payload.due_at = first.dueDate;
+            if (first.note) payload.note = first.note;
+            await apiRequest(`/api/admin/courses/${encodeURIComponent(courseId)}/assign`, { method: 'POST', body: payload });
+          } catch (err) {
+            if (handleAssignmentsTableMissing('sync', err)) {
+              // table missing -> leave local queue intact
+              return;
+            }
+            console.warn('[assignmentStorage] Failed to sync local assignments to backend API:', err);
+          }
         }
 
-        const attemptSync = async (includeProgressField: boolean) => {
-          const payload = pending.map((assignment) =>
-            buildSupabaseAssignmentRecord(assignment, includeProgressField),
-          );
-          const { error } = await supabase
-            .from(ASSIGNMENTS_TABLE)
-            .upsert(payload, buildUpsertOptions());
-          if (error) throw error;
-        };
-
-        await executeAssignmentsMutation('syncLocalAssignments', attemptSync);
-
+        // If we got here without throwing, clear the local queue.
         clearLocalAssignments();
       } catch (error) {
-        if (handleAssignmentsTableMissing('sync', error)) {
-          return;
-        }
-        console.warn('[assignmentStorage] Failed to sync local assignments to Supabase:', error);
+        console.warn('[assignmentStorage] Failed to sync local assignments (outer):', error);
       } finally {
         inflightLocalSync = null;
       }
@@ -727,45 +732,28 @@ export async function legacyAddAssignments(
 
   return withSupabaseFallback<CourseAssignment[]>(
     async () => {
+      // POST to backend admin assign endpoint so browser never writes directly
+      // to the Supabase assignments table.
       if (normalizedIds.length === 0) return [];
-
-      const supabase = await getSupabase();
-      if (!supabase) throw new Error('Supabase unavailable');
-      if (!hasSupabaseFrom(supabase)) {
-        console.warn('[assignmentStorage] Supabase client missing .from() — aborting remote op to allow local fallback.');
-        throw new Error('Supabase client missing from()');
-      }
-
-      const runUpsert = async (includeProgressField: boolean) => {
-        const payload = normalizedIds.map((userId) => ({
-          course_id: courseId,
-          user_id: userId,
-          organization_id: options.organizationId ?? null,
-          assignment_type: 'course',
-          metadata: null,
-          status: 'assigned',
-          ...(includeProgressField ? { progress: 0 } : {}),
-          due_at: options.dueDate ?? null,
-          note: options.note ?? null,
-          assigned_by: options.assignedBy ?? null,
-          created_at: now,
-          updated_at: now,
-        }));
-
-        const { data, error } = await supabase
-          .from(ASSIGNMENTS_TABLE)
-          .upsert(payload, buildUpsertOptions())
-          .select();
-        if (error) throw error;
-        return data;
-      };
-
       try {
-        const data = await executeAssignmentsMutation('legacyAddAssignments', runUpsert);
+        const payload: any = {
+          user_ids: normalizedIds,
+          organization_id: options.organizationId ?? null,
+        };
+        if (options.dueDate) payload.due_at = options.dueDate;
+        if (options.note) payload.note = options.note;
+        if (options.assignedBy) payload.assigned_by = options.assignedBy;
+
+        const response = await apiRequest<{ data?: any }>(`/api/admin/courses/${encodeURIComponent(
+          courseId,
+        )}/assign`, { method: 'POST', body: payload });
+        const rows = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : [];
         invalidateAssignmentsApiCache();
-        return (data ?? []).map(mapSupabaseAssignment);
+        return mapAssignmentsFromApiRows(rows);
       } catch (error) {
-        handleAssignmentsTableMissing('legacyAddAssignments', error);
+        // If the backend indicates the assignments table is missing or other infra
+        // problems exist, surface as before and let fallback path run.
+        console.warn('[assignmentStorage] Remote admin assign failed, falling back to local', error);
         throw error;
       }
     },
@@ -1069,35 +1057,17 @@ export const updateAssignmentProgress = async (
 
   return withSupabaseFallback<CourseAssignment | undefined>(
     async () => {
-      const supabase = await getSupabase();
-      if (!supabase) throw new Error('Supabase unavailable');
-      if (!hasSupabaseFrom(supabase)) {
-        console.warn('[assignmentStorage] Supabase client missing .from() — aborting remote op to allow local fallback.');
-        throw new Error('Supabase client missing from()');
-      }
-
-      const runUpdate = async (includeProgressField: boolean) => {
-        const { data, error } = await supabase
-          .from(ASSIGNMENTS_TABLE)
-          .update({
-            ...(includeProgressField ? { progress: clampedProgress } : {}),
-            status,
-            updated_at: now,
-          })
-          .eq('course_id', courseId)
-          .eq('user_id', normalized)
-          .select();
-        if (error) throw error;
-        return data;
-      };
-
+      // Route progress updates through backend API so clients don't update
+      // assignments table directly and avoid RLS failures.
       try {
-        const data = await executeAssignmentsMutation('updateAssignmentProgress', runUpdate);
-
-        const record = Array.isArray(data) ? data[0] : data;
-        const assignment = record ? mapSupabaseAssignment(record as SupabaseAssignmentRow) : undefined;
-        invalidateAssignmentsApiCache();
-        return assignment;
+        const payload = { course_id: courseId, user_id: normalized, progress: clampedProgress };
+        const response = await apiRequest<{ data?: any }>(`/api/client/assignments/progress`, { method: 'POST', body: payload });
+        const row = Array.isArray(response) ? response[0] : response?.data ? (Array.isArray(response.data) ? response.data[0] : response.data) : null;
+        if (row) {
+          invalidateAssignmentsApiCache();
+          return mapSupabaseAssignment(row as SupabaseAssignmentRow);
+        }
+        return undefined;
       } catch (error) {
         if (handleAssignmentsTableMissing('updateAssignmentProgress', error)) {
           const localAssignments = loadLocalAssignments();
@@ -1114,6 +1084,7 @@ export const updateAssignmentProgress = async (
             localAssignments[index] = updated;
             persistLocalAssignments(localAssignments);
             emitLocalEvent('assignment_updated', updated);
+            void syncLocalAssignmentsToSupabase();
             return updated;
           }
           return undefined;

@@ -112,6 +112,20 @@ export async function startTestServer({ resetDemo = true, idempotencyFallback = 
       DEV_FALLBACK: 'false',
       DEMO_MODE: 'false',
       TEST_IDEMPOTENCY_FALLBACK_MODE: String(idempotencyFallback),
+      ALLOW_DEBUG_LOGIN: process.env.ALLOW_DEBUG_LOGIN || 'true',
+      DEMO_USERS_JSON:
+        process.env.DEMO_USERS_JSON ||
+        JSON.stringify([
+          {
+            id: TEST_USERS.platformAdmin.id,
+            email: 'admin@example.com',
+            password: 'password',
+            role: 'admin',
+            firstName: 'Admin',
+            lastName: 'Demo',
+            organizationId: TEST_ORGANIZATION_ID,
+          },
+        ]),
     };
 
     const child = spawn(process.execPath, ['server/index.js'], {

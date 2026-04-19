@@ -89,6 +89,24 @@ export const createCourseAssignmentsController = ({
       return sendError(res, 500, 'fetch_failed', 'Unable to load assignments');
     }
   },
+  clientUpdateProgress: async (req, res) => {
+    const context = requireUserContext(req, res);
+    if (!context) return;
+    try {
+      const result = await service.updateClientAssignmentProgress({ req, res, requireUserContext });
+      if (result.error) {
+        return sendError(res, result.status, result.error.code, result.error.message, undefined, result.meta);
+      }
+      return res.status(result.status).json({ ok: true, data: result.data, meta: result.meta ?? null });
+    } catch (error) {
+      logger.error('client_assignment_progress_update_failed', {
+        requestId: req.requestId ?? null,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return sendError(res, 500, 'assignment_update_failed', 'Unable to update assignment progress');
+    }
+  },
   adminList: async (req, res) => {
     try {
       const result = await service.listAdminAssignments({ req, isFallbackMode, requireOrgAccess, requireUserContext });

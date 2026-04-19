@@ -7,11 +7,17 @@ import {
 
 const ISSUER = process.env.JWT_ISSUER || 'the-huddle-api';
 const AUDIENCE = process.env.JWT_AUDIENCE || 'the-huddle-clients';
+const rawSupabaseUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+const SUPABASE_ISSUER = rawSupabaseUrl ? `${rawSupabaseUrl}/auth/v1` : '';
+const SUPABASE_AUDIENCE = 'authenticated';
 const accessSecretEnv = (process.env.JWT_ACCESS_SECRET || '').trim();
 const refreshSecretEnv = (process.env.JWT_REFRESH_SECRET || '').trim();
+const supabaseJwtSecretEnv = (process.env.SUPABASE_JWT_SECRET || '').trim();
 
 const ACCESS_SECRET = accessSecretEnv;
 const REFRESH_SECRET = (refreshSecretEnv || ACCESS_SECRET).trim();
+const SUPABASE_ACCESS_SECRET = supabaseJwtSecretEnv;
+const SHOULD_SIGN_SUPABASE_ACCESS_TOKENS = Boolean(SUPABASE_ACCESS_SECRET && SUPABASE_ISSUER);
 
 const ensureAccessSecret = () => {
   if (!ACCESS_SECRET) {
@@ -37,6 +43,28 @@ const normalizeClaims = (claims = {}) => ({
   platformRole: claims.platformRole ?? null,
 });
 
+const buildSupabaseAccessPayload = (claims = {}) => {
+  const payload = normalizeClaims(claims);
+  const organizationIds = payload.organizationId ? [payload.organizationId] : [];
+  return {
+    sub: payload.userId,
+    email: payload.email,
+    role: payload.role,
+    type: 'access',
+    iss: SUPABASE_ISSUER,
+    aud: SUPABASE_AUDIENCE,
+    app_metadata: {
+      debug_login: true,
+      ...(payload.platformRole ? { platform_role: payload.platformRole } : {}),
+      ...(organizationIds.length > 0 ? { organization_ids: organizationIds } : {}),
+    },
+    user_metadata: {
+      debug_login: true,
+    },
+    ...(organizationIds.length > 0 ? { organization_ids: organizationIds } : {}),
+  };
+};
+
 export const signToken = (payload, options = {}) =>
   jwt.sign(payload, ensureAccessSecret(), { algorithm: 'HS256', ...options });
 
@@ -55,11 +83,16 @@ export const generateTokens = (claims = {}) => {
   const refreshTtl = Math.max(60, Number(REFRESH_TOKEN_TTL_SECONDS || 0) || 604800);
   const payload = normalizeClaims(claims);
 
-  const accessToken = jwt.sign(
-    { ...payload, type: 'access', iss: ISSUER, aud: AUDIENCE },
-    ensureAccessSecret(),
-    { expiresIn: accessTtl, algorithm: 'HS256' },
-  );
+  const accessToken = SHOULD_SIGN_SUPABASE_ACCESS_TOKENS
+    ? jwt.sign(buildSupabaseAccessPayload(payload), SUPABASE_ACCESS_SECRET, {
+        expiresIn: accessTtl,
+        algorithm: 'HS256',
+      })
+    : jwt.sign(
+        { ...payload, type: 'access', iss: ISSUER, aud: AUDIENCE },
+        ensureAccessSecret(),
+        { expiresIn: accessTtl, algorithm: 'HS256' },
+      );
 
   const refreshToken = jwt.sign(
     { ...payload, type: 'refresh' },

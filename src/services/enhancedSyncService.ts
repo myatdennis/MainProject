@@ -278,6 +278,20 @@ class EnhancedSyncService extends EventEmitter {
     const results = [];
 
     try {
+      // Guard: prevent dangerous direct client-side writes to protected tables.
+      // Browser code must go through backend APIs for these domains (RLS / security).
+      const PROTECTED_TABLES = new Set(['assignments', 'course_assignments', 'survey_assignments']);
+      if (typeof window !== 'undefined') {
+        for (const op of operations) {
+          if (PROTECTED_TABLES.has(op.table)) {
+            const msg = `Client attempts to write protected table "${op.table}". Route this through the server API instead.`;
+            // Loud fail in the browser so developers notice during testing/dev.
+            console.error(msg, { operation: op });
+            throw new Error(msg);
+          }
+        }
+      }
+
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       for (const op of operations) {

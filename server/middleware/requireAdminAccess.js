@@ -83,6 +83,21 @@ const grantAdminAccess = (req, reason, meta = {}) => {
 
 const fallbackFlagEnabled = (value) => String(value || '').trim().toLowerCase() === 'true';
 
+const isLocalDebugAdminToken = (req) => {
+  if (isProduction) return false;
+  if (String(process.env.ALLOW_DEBUG_LOGIN || '').trim().toLowerCase() !== 'true') return false;
+  const user = req?.supabaseJwtUser;
+  const appMetadata = user?.app_metadata || {};
+  const userMetadata = user?.user_metadata || {};
+  const debugLogin =
+    appMetadata.debug_login === true ||
+    userMetadata.debug_login === true;
+  if (!debugLogin) return false;
+  const role = String(user?.role || '').trim().toLowerCase();
+  const platformRole = String(user?.platformRole || '').trim().toLowerCase();
+  return role === 'admin' || platformRole === 'platform_admin' || user?.isPlatformAdmin === true;
+};
+
 const ensureAdminAccess = async (req, res) => {
   // E2E header bypass: allow a local-only bypass when the X-E2E-Bypass header is present.
   // This MUST NOT run in production. It synthesizes a minimal admin identity for E2E tests.
@@ -170,6 +185,15 @@ const ensureAdminAccess = async (req, res) => {
   }
 
   req.user = req.user || req.supabaseJwtUser;
+
+  if (isLocalDebugAdminToken(req)) {
+    console.info('[requireAdminAccess] local_debug_admin_token', {
+      requestId: req.requestId ?? null,
+      userId: user.id,
+      email: user.email ?? null,
+    });
+    return grantAdminAccess(req, 'local_debug_admin_token');
+  }
 
   // Strong admin checks derived from authoritative DB data.
   // 1) allowlist email

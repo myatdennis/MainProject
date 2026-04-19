@@ -212,6 +212,31 @@ describe('Server demo-mode behavior', () => {
     expect(body).toHaveProperty('error', 'Authentication required');
   });
 
+  it('accepts debug demo-login access tokens on protected admin routes', async () => {
+    const loginRes = await server!.fetch('/api/auth/_debug/demo-login', {
+      method: 'POST',
+      headers: asJson(),
+      body: JSON.stringify({
+        email: 'admin@example.com',
+        password: 'password',
+      }),
+    });
+    expect(loginRes.status).toBe(200);
+    const loginJson = await loginRes.json();
+    expect(typeof loginJson?.accessToken).toBe('string');
+    expect(loginJson.accessToken.length).toBeGreaterThan(20);
+
+    const res = await server!.fetch('/api/admin/me', {
+      headers: asJson({
+        Authorization: `Bearer ${loginJson.accessToken}`,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty('ok', true);
+    expect(body).toHaveProperty('data.adminPortalAllowed', true);
+  });
+
   it('allows admin access when a signed cookie supplies the access token', async () => {
     const adminAuth = await createAdminAuthHeaders();
     const token = adminAuth.Authorization?.replace(/^Bearer\s+/i, '') ?? '';

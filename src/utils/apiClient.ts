@@ -565,6 +565,20 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
       requireAuth: options.requireAuth,
       allowAnonymous: options.allowAnonymous,
     }) && options.allowAnonymous !== true;
+  // If this request requires a session, and the app is still performing
+  // auth bootstrap, wait briefly for the canonical auth snapshot to settle
+  // so we don't send an accidental unauthenticated request during page
+  // startup (fixes race where first request after refresh is anonymous).
+  if (requiresSession && isAuthBootstrapping()) {
+    try {
+      const { waitForAuthReady } = await import('../lib/canonicalAuth');
+      // Wait up to 3s for auth bootstrap to complete — this keeps startup
+      // responsive but prevents a whole-class of unauthenticated races.
+      await waitForAuthReady(3000).catch(() => null);
+    } catch (e) {
+      // ignore — fallback behavior will attempt to attach tokens below
+    }
+  }
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
 import Loading from '../../components/ui/Loading';
+import { apiRequestRaw } from '../../utils/apiClient';
 
 const AdminPerformanceDashboard: React.FC = () => {
   const { data, loading, error, refresh, lastUpdated } = useAnalyticsDashboard();
@@ -25,9 +26,14 @@ const AdminPerformanceDashboard: React.FC = () => {
   // Measure the round-trip time for a lightweight API call as a proxy for API response time
   useEffect(() => {
     const t0 = Date.now();
-    fetch('/api/runtime/status', { credentials: 'include' })
-      .then(() => setApiTiming(Date.now() - t0))
-      .catch(() => {});
+    (async () => {
+      try {
+        await apiRequestRaw('/api/runtime/status', { method: 'GET' });
+        setApiTiming(Date.now() - t0);
+      } catch (err) {
+        // ignore timing on error
+      }
+    })();
   }, []);
 
   function exportDashboardData() {
