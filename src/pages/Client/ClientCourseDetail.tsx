@@ -18,7 +18,7 @@ import { useSecureAuth } from '../../context/SecureAuthContext';
 const ClientCourseDetail = () => {
   const navigate = useNavigate();
   const { courseId } = useParams();
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, authInitializing, sessionStatus, membershipStatus, isAuthenticated } = useSecureAuth();
 
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
@@ -51,9 +51,22 @@ const ClientCourseDetail = () => {
     if (courseId) return slugify(courseId);
     return undefined;
   }, [normalized?.slug, courseId]);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
 
   useEffect(() => {
     let isMounted = true;
+
+    if (!learnerAuthReady) {
+      setAssignment(undefined);
+      return () => {
+        isMounted = false;
+      };
+    }
 
     const fetchAssignment = async () => {
       if (!normalizedId) return;
@@ -75,7 +88,7 @@ const ClientCourseDetail = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalizedId, learnerId, activeOrgId]);
+  }, [normalizedId, learnerId, activeOrgId, learnerAuthReady]);
 
   useEffect(() => {
     let isMounted = true;

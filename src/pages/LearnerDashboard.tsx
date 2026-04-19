@@ -67,7 +67,7 @@ const LearnerDashboard = () => {
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
   const { user } = useUserProfile();
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, authInitializing, sessionStatus, membershipStatus, isAuthenticated } = useSecureAuth();
   const { steps, resetTrace, startStep, markStepSuccess, markStepError, runningStep, lastErrorStep } = useBootTrace();
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
@@ -78,6 +78,18 @@ const LearnerDashboard = () => {
     const params = new URLSearchParams(location.search);
     return params.get('debug') === '1';
   }, [location.search]);
+  const learnerAuthReady =
+    !authInitializing &&
+    sessionStatus === 'authenticated' &&
+    (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+    Boolean(activeOrgId) &&
+    Boolean(isAuthenticated?.client || isAuthenticated?.lms);
+  const learnerAuthPending =
+    authInitializing ||
+    sessionStatus === 'loading' ||
+    membershipStatus === 'idle' ||
+    membershipStatus === 'loading' ||
+    (sessionStatus === 'authenticated' && !activeOrgId);
   const runningStepLabel = runningStep?.name ?? 'Initializing';
   const bannerError = catalogError ?? lastErrorStep?.error?.message ?? null;
 
@@ -85,6 +97,21 @@ const LearnerDashboard = () => {
     let isMounted = true;
 
     const run = async () => {
+      if (learnerAuthPending) {
+        setIsLoading(true);
+        setCatalogError(null);
+        return;
+      }
+
+      if (!learnerAuthReady) {
+        setIsLoading(false);
+        setEnrolledCourses([]);
+        setProgressData(new Map());
+        setAssignments([]);
+        setCatalogError('Sign in to load your assigned courses.');
+        return;
+      }
+
       setIsLoading(true);
       setCatalogError(null);
       resetTrace();
@@ -159,7 +186,17 @@ const LearnerDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [activeOrgId, learnerId, bootAttempt, resetTrace, startStep, markStepSuccess, markStepError]);
+  }, [
+    activeOrgId,
+    learnerId,
+    learnerAuthPending,
+    learnerAuthReady,
+    bootAttempt,
+    resetTrace,
+    startStep,
+    markStepSuccess,
+    markStepError,
+  ]);
 
   const handleRetryBoot = () => {
     resetTrace();
@@ -169,6 +206,13 @@ const LearnerDashboard = () => {
 
   useEffect(() => {
     let isMounted = true;
+
+    if (!learnerAuthReady) {
+      setAssignments([]);
+      return () => {
+        isMounted = false;
+      };
+    }
 
     const loadAssignments = async () => {
       try {
@@ -186,9 +230,13 @@ const LearnerDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [activeOrgId, learnerId]);
+  }, [activeOrgId, learnerId, learnerAuthReady]);
 
   useEffect(() => {
+    if (!learnerAuthReady) {
+      return () => {};
+    }
+
     const refreshAssignments = async () => {
       try {
         const records = await getAssignmentsForUser(learnerId, activeOrgId);
@@ -222,7 +270,7 @@ const LearnerDashboard = () => {
       unsubProgress?.();
       unsubComplete?.();
     };
-  }, [activeOrgId, learnerId]);
+  }, [activeOrgId, learnerId, learnerAuthReady]);
 
 
   useEffect(() => {

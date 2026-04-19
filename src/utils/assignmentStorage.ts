@@ -492,11 +492,11 @@ const syncLocalAssignmentsToSupabase = async () => {
           const orgId = resolveAssignmentOrgId(rows.find((r) => r.organizationId)?.organizationId ?? null);
           if (userIds.length === 0) continue;
           if (!orgId) {
-            console.warn('[assignmentStorage] Skipping local assignment sync without orgId', {
-              courseId,
-              queuedAssignments: rows.length,
-            });
-            continue;
+            // Fail loudly: require orgId for assignment API interactions. This prevents
+            // silent skips that would hide missing org context and lead to silent local-only state.
+            const msg = 'organization_id_required';
+            console.error('[assignmentStorage] Aborting local assignment sync - missing orgId', { courseId, queuedAssignments: rows.length });
+            throw new Error(msg);
           }
           try {
             const payload: any = { user_ids: Array.from(new Set(userIds)), organization_id: orgId };
@@ -680,16 +680,16 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
     .filter((row): row is CourseAssignment => Boolean(row));
 };
 
-const fetchAssignmentsViaApi = async (orgId: string): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
+const fetchAssignmentsViaApi = async (orgId: string): Promise<{ rows: CourseAssignment[]; failed: boolean; authFailed: boolean }> => {
   const now = Date.now();
   if (assignmentsApiCache && assignmentsApiCache.expiresAt > now && assignmentsApiCache.orgId === orgId) {
-    return { rows: assignmentsApiCache.rows, failed: false };
+    return { rows: assignmentsApiCache.rows, failed: false, authFailed: false };
   }
   if (assignmentsApiInflight) {
     return assignmentsApiInflight;
   }
 
-  const request = (async (): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
+  const request = (async (): Promise<{ rows: CourseAssignment[]; failed: boolean; authFailed: boolean }> => {
   try {
     const params = new URLSearchParams({
       include_completed: 'true',
@@ -707,7 +707,7 @@ const fetchAssignmentsViaApi = async (orgId: string): Promise<{ rows: CourseAssi
         orgId,
         rows: [],
       };
-      return { rows: [], failed: false };
+      return { rows: [], failed: false, authFailed: false };
     }
     const mappedRows = mapAssignmentsFromApiRows(rows);
     assignmentsApiCache = {
@@ -715,14 +715,14 @@ const fetchAssignmentsViaApi = async (orgId: string): Promise<{ rows: CourseAssi
       orgId,
       rows: mappedRows,
     };
-    return { rows: mappedRows, failed: false };
+    return { rows: mappedRows, failed: false, authFailed: false };
   } catch (error) {
     if (error instanceof RequestError && (error.status === 401 || error.status === 403)) {
       console.warn('[assignmentStorage] Remote assignments request rejected (unauthorized).');
-      return { rows: [], failed: false };
+      return { rows: [], failed: false, authFailed: true };
     }
     console.warn('[assignmentStorage] Failed to load assignments via API:', error);
-    return { rows: [], failed: true };
+    return { rows: [], failed: true, authFailed: false };
   } finally {
     assignmentsApiInflight = null;
   }
@@ -794,7 +794,10 @@ export const getAssignmentsForUserWithOutcome = async (
   }
 
   try {
-    const { rows, failed } = await fetchAssignmentsViaApi(resolvedOrgId);
+    const { rows, failed, authFailed } = await fetchAssignmentsViaApi(resolvedOrgId);
+    if (authFailed) {
+      return { outcome: 'unauthenticated', assignments: loadLocalForUser(), error: 'auth_session_unavailable' };
+    }
     if (failed) {
       // Remote call failed — surface as an error outcome but return local fallback
       return { outcome: 'error', assignments: loadLocalForUser(), error: 'remote_failed' };
@@ -871,7 +874,11 @@ export const getAssignmentsForUser = async (userId?: string | null, orgId?: stri
   if (liveSessionEmail) sessionJoiningKeys.add(liveSessionEmail);
 
   const loadRemoteAssignments = async () => {
-    const { rows, failed } = await fetchAssignmentsViaApi(resolvedOrgId);
+    const { rows, failed, authFailed } = await fetchAssignmentsViaApi(resolvedOrgId);
+    if (authFailed) {
+      console.info('[assignmentStorage] Skipping remote assignment fetch (auth session unavailable).');
+      return loadLocalForUser();
+    }
     if (!failed) {
       const filtered = rows.filter((record) => {
         const assignmentType = (record.assignmentType ?? 'course') as AssignmentKind;

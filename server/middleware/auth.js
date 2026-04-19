@@ -603,11 +603,14 @@ const pickOrgId = (...candidates) => {
 
 const getRequestedOrgId = (req) => {
   if (!req) return null;
-  const headerOrg = normalizeOrgId(
-    req.headers?.['x-organization-id'] ??
-    req.headers?.['x-org-id'] ??
-    null,
-  );
+  // In production we must not trust forwarded headers for org selection.
+  // Tests expect x-org headers to be ignored in production environments.
+  // Read NODE_ENV at runtime so tests can override it dynamically.
+  const headerOrg = String(process.env.NODE_ENV || '').trim() === 'production'
+    ? null
+    : normalizeOrgId(
+        req.headers?.['x-organization-id'] ?? req.headers?.['x-org-id'] ?? null,
+      );
   const cookieOrg = getActiveOrgFromRequest(req);
   const candidates = [
     headerOrg,

@@ -15,6 +15,16 @@ if (process.env.NODE_ENV === 'production') {
   console.debug = () => {};
 }
 
+// Safety: Prevent accidental enabling of debug/demo login in production.
+// This is an extra defensive guard — the auth route also checks environment
+// and non-production, but we want a hard startup failure if someone sets
+// ALLOW_DEBUG_LOGIN=true in a production environment.
+if (process.env.NODE_ENV === 'production' && String(process.env.ALLOW_DEBUG_LOGIN || '').toLowerCase() === 'true') {
+  console.error('[startup] FATAL CONFIG: ALLOW_DEBUG_LOGIN must not be enabled in production. Aborting startup.');
+  // Exit fast so deployment does not accidentally enable debug login.
+  process.exit(1);
+}
+
 // GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
 // (must be after app is created, before any other middleware/routes)
 // This will help pinpoint where requests are stalling

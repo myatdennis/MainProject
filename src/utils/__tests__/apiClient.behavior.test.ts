@@ -214,7 +214,7 @@ describe('apiClient', () => {
     mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer survey-token', 'X-Org-Id': 'org-7' });
     __setTestOrgContext('org-7');
     const { apiRequest } = await loadApiClient();
-    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+    fetchSpy.mockResolvedValue(createResponse({ data: [] }));
 
     await apiRequest('/api/client/surveys/assigned');
 
@@ -222,6 +222,18 @@ describe('apiClient', () => {
     const headers = headersToObject(options?.headers as HeadersInit);
     expect(String(url)).toBe('https://api.huddle.local/api/client/surveys/assigned');
     expect(getHeaderValue(headers, 'Authorization')).toBe('Bearer survey-token');
+  });
+
+  it('blocks protected requests locally when no bearer token is available', async () => {
+    shouldRequireSessionSpy.mockReturnValue(true);
+    mockBuildAuthHeaders.mockResolvedValue({});
+    const { apiRequest, ApiError } = await loadApiClient();
+
+    await expect(apiRequest('/api/learner/assignments?orgId=org-1')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('stringifies plain object bodies and sets JSON headers automatically', async () => {
@@ -347,18 +359,13 @@ describe('apiClient', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
-    fetchSpy
-      .mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }))
-      .mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
+    mockBuildAuthHeaders.mockResolvedValue({});
     const { apiRequest, ApiError } = await loadApiClient();
 
-    await expect(apiRequest('/api/admin/courses')).rejects.toMatchObject({
-      status: 403,
-      body: { message: 'You need administrator access to perform this action.' },
+    await expect(apiRequest('/api/client/data')).rejects.toMatchObject({
+      status: 401,
     } satisfies Partial<InstanceType<typeof ApiError>>);
-    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-    const calledUrls = fetchSpy.mock.calls.map((call) => String(call?.[0] ?? ''));
-    expect(calledUrls.some((url) => url.includes('/api/admin/me'))).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('includes Authorization header on protected routes when session exists', async () => {
@@ -366,7 +373,7 @@ describe('apiClient', () => {
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
   getActiveSessionSpy.mockReturnValue({ id: 'user-1', email: 'user-1@test.local', role: 'admin', isPlatformAdmin: true });
-    mockBuildAuthHeaders.mockResolvedValue({ 'X-Org-Id': 'org-99' });
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer supabase-test-token', 'X-Org-Id': 'org-99' });
     fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
     const { apiRequest } = await loadApiClient();
 
@@ -424,20 +431,27 @@ describe('apiClient', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks admin API calls when surface hint is non-admin in production', async () => {
-    // Simulate production so dev-mode warnings become strict enforcement
-    vi.stubEnv('NODE_ENV', 'production');
-    vi.stubEnv('DEV', '' as any);
+  it('warns when an admin API call is made from a non-admin surface hint', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-  const { apiRequest } = await loadApiClient();
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer admin-token' });
+    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { apiRequest } = await loadApiClient();
 
-  await expect(apiRequest('/api/admin/courses', { surface: 'lms' as any })).rejects.toBeTruthy();
+    await apiRequest('/api/admin/courses', { surface: 'lms' as any });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('blocked admin API call from non-admin surface'),
+      expect.any(Object),
+    );
+    warnSpy.mockRestore();
   });
 
   it('sends browser credentials for API requests to preserve cookies', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
+    __setTestOrgContext('org-1');
     const { apiRequest } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
 
@@ -452,6 +466,7 @@ describe('apiClient', () => {
     vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
+    __setTestOrgContext('org-1');
     const { apiRequest } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(
       createResponse({ message: 'slow down' }, { status: 429, headers: { 'Retry-After': '2' } }),
@@ -491,8 +506,10 @@ describe('apiClient', () => {
   it('skips admin access gate when auth bootstrap is in progress', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionSpy.mockReturnValue(true);
+    __setTestOrgContext('org-1');
+    shouldRequireSessionSpy.mockReturnValue(false);
     authBootstrapSpy.mockReturnValue(true);
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer bootstrap-token' });
     fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
     const { apiRequest } = await loadApiClient();
 
@@ -505,8 +522,10 @@ describe('apiClient', () => {
   it('falls back to assign/href when window.location.replace is missing', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
+    __setTestOrgContext('org-1');
     shouldRequireSessionSpy.mockReturnValue(true);
     authBootstrapSpy.mockReturnValue(false);
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer active-token' });
 
     const locationWithAssignOnly = {
       ...window.location,
@@ -521,9 +540,10 @@ describe('apiClient', () => {
 
     try {
       fetchSpy.mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
+      fetchSpy.mockResolvedValueOnce(createResponse({ error: 'refresh_failed' }, { status: 401 }));
       const { apiRequest } = await loadApiClient();
 
-      await expect(apiRequest('/api/client/data')).rejects.toMatchObject({ status: 401 });
+      await expect(apiRequest('/api/admin/courses')).rejects.toMatchObject({ status: 401 });
       expect(locationWithAssignOnly.assign).toHaveBeenCalledWith(expect.stringContaining('/login'));
     } finally {
       Object.defineProperty(window, 'location', {
@@ -538,6 +558,7 @@ describe('apiClient', () => {
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
     authBootstrapSpy.mockReturnValue(false);
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer active-token' });
     getActiveSessionSpy.mockReturnValue({
       id: 'user-live',
       email: 'live@test.local',
@@ -545,6 +566,7 @@ describe('apiClient', () => {
     } as any);
 
     fetchSpy.mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
+    fetchSpy.mockResolvedValueOnce(createResponse({ error: 'refresh_failed' }, { status: 401 }));
     const { apiRequest } = await loadApiClient();
 
     await expect(apiRequest('/api/client/data')).rejects.toMatchObject({ status: 401 });

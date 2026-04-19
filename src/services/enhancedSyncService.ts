@@ -280,15 +280,20 @@ class EnhancedSyncService extends EventEmitter {
     try {
       // Guard: prevent dangerous direct client-side writes to protected tables.
       // Browser code must go through backend APIs for these domains (RLS / security).
-      const PROTECTED_TABLES = new Set(['assignments', 'course_assignments', 'survey_assignments']);
-      if (typeof window !== 'undefined') {
-        for (const op of operations) {
-          if (PROTECTED_TABLES.has(op.table)) {
-            const msg = `Client attempts to write protected table "${op.table}". Route this through the server API instead.`;
-            // Loud fail in the browser so developers notice during testing/dev.
-            console.error(msg, { operation: op });
-            throw new Error(msg);
+      // Use centralized guard so enforcement is consistent and testable.
+      try {
+        const { assertNotProtectedTable } = await import('../utils/protectedTables');
+        if (typeof window !== 'undefined') {
+          for (const op of operations) {
+            assertNotProtectedTable(op.table);
           }
+        }
+      } catch (err) {
+        // If guard import fails for any reason, fail safe by blocking the batch in the browser.
+        if (typeof window !== 'undefined') {
+          const msg = 'Protected table guard failed to initialize. Blocking client-side batch to be safe.';
+          console.error(msg, err);
+          throw new Error(msg);
         }
       }
 

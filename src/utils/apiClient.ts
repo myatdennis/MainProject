@@ -617,6 +617,16 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
 
+  if (
+    attachAuth &&
+    requiresSession &&
+    LEARNER_OR_CLIENT_API_PATTERN.test(pathname) &&
+    !headers.Authorization &&
+    !isE2EBypassActive()
+  ) {
+    throw buildNotAuthenticatedError(url);
+  }
+
   if (!headers['X-CSRF-Token']) {
     const csrfToken = resolveCSRFToken();
     if (csrfToken) {

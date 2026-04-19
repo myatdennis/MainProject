@@ -220,6 +220,20 @@ describe('assignmentStorage session enforcement', () => {
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
   });
 
+  it('reports unauthorized assignment reads as unauthenticated in outcome mode', async () => {
+    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockApiRequest.mockRejectedValue(new MockApiError(401));
+
+    const { getAssignmentsForUserWithOutcome } = await importModule();
+    const result = await getAssignmentsForUserWithOutcome('user-123', 'org-1');
+
+    expect(result).toEqual({
+      outcome: 'unauthenticated',
+      assignments: [],
+      error: 'auth_session_unavailable',
+    });
+  });
+
   it('falls back to local assignments when API request fails', async () => {
     mockGetUserSession.mockReturnValue({ id: 'user-123' });
     mockApiRequest.mockRejectedValue(new Error('network down'));
