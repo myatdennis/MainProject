@@ -28,27 +28,16 @@ vi.mock('../../utils/apiClient', () => ({
 
 vi.mock('../../lib/secureStorage', () => ({
   getUserSession: mockGetUserSession,
+  getActiveOrgPreference: () => 'org-1',
   secureGet: secureGetMock,
   secureSet: secureSetMock,
   secureRemove: secureRemoveMock,
-}));
-
-const mockGetSupabase = vi.fn(async () => null);
-
-vi.mock('../../lib/supabaseClient', () => ({
-  getSupabase: mockGetSupabase,
-  hasSupabaseConfig: () => false,
 }));
 
 vi.mock('../../dal/sync', () => ({
   syncService: {
     logSyncEvent: vi.fn(),
   },
-}));
-
-vi.mock('../../state/runtimeStatus', () => ({
-  isSupabaseOperational: vi.fn(() => false),
-  subscribeRuntimeStatus: vi.fn(() => () => {}),
 }));
 
 const importModule = async () => {
@@ -72,7 +61,7 @@ describe('assignmentStorage session enforcement', () => {
     mockGetUserSession.mockReturnValue(null);
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123');
+    const result = await getAssignmentsForUser('user-123', 'org-1');
 
     expect(result).toEqual([]);
     expect(mockApiRequest).not.toHaveBeenCalled();
@@ -82,7 +71,7 @@ describe('assignmentStorage session enforcement', () => {
     mockGetUserSession.mockReturnValue({ id: 'another-user' });
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123');
+    const result = await getAssignmentsForUser('user-123', 'org-1');
 
     expect(result).toEqual([]);
     expect(mockApiRequest).not.toHaveBeenCalled();
@@ -110,9 +99,10 @@ describe('assignmentStorage session enforcement', () => {
     mockApiRequest.mockResolvedValue({ data: apiAssignments });
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123');
+    const result = await getAssignmentsForUser('user-123', 'org-1');
 
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    expect(mockApiRequest).toHaveBeenCalledWith('/api/learner/assignments?include_completed=true&orgId=org-1');
     expect(result).toEqual([
       {
         id: 'assign-1',
@@ -151,7 +141,7 @@ describe('assignmentStorage session enforcement', () => {
     ]);
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123');
+    const result = await getAssignmentsForUser('user-123', 'org-1');
 
     expect(result).toEqual([
       expect.objectContaining({
@@ -224,7 +214,7 @@ describe('assignmentStorage session enforcement', () => {
     mockApiRequest.mockRejectedValue(new MockApiError(401));
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123');
+    const result = await getAssignmentsForUser('user-123', 'org-1');
 
     expect(result).toEqual([]);
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
@@ -233,6 +223,8 @@ describe('assignmentStorage session enforcement', () => {
   it('falls back to local assignments when API request fails', async () => {
     mockGetUserSession.mockReturnValue({ id: 'user-123' });
     mockApiRequest.mockRejectedValue(new Error('network down'));
+
+    const { getAssignmentsForUser } = await importModule();
 
     const cachedAssignment: CourseAssignment = {
       id: 'assign-1',
@@ -250,26 +242,18 @@ describe('assignmentStorage session enforcement', () => {
     };
     secureStore.set('huddle_course_assignments_v1', [cachedAssignment]);
 
-    const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123');
+    const result = await getAssignmentsForUser('user-123', 'org-1');
 
-    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    expect(mockApiRequest).toHaveBeenCalled();
     expect(result).toEqual([cachedAssignment]);
   });
 
   it('fetches remote assignments when the requested user is email-based but the session is id-based', async () => {
     mockGetUserSession.mockReturnValue({ id: 'user-123' });
-    mockGetSupabase.mockResolvedValue({
-      auth: {
-        getSession: vi.fn(async () => ({
-          data: {
-            session: {
-              user: { id: 'user-123', email: 'learner@example.com' },
-            },
-          },
-        })),
-      },
-    } as any);
+    vi.doMock('../../lib/canonicalAuth', () => ({
+      getCanonicalSession: () => ({ userId: 'user-123', userEmail: 'learner@example.com' }),
+      waitForAuthReady: vi.fn(async () => ({ userId: 'user-123', userEmail: 'learner@example.com' })),
+    }));
 
     const now = new Date().toISOString();
     mockApiRequest.mockResolvedValue({
@@ -287,7 +271,7 @@ describe('assignmentStorage session enforcement', () => {
     });
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('learner@example.com');
+    const result = await getAssignmentsForUser('learner@example.com', 'org-1');
 
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
     expect(result).toEqual([

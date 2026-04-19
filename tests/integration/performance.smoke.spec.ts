@@ -121,7 +121,7 @@ describe('performance smoke', () => {
         expect(res.status).toBe(200);
       }),
       await measure('learnerAssignments', async () => {
-        const res = await server!.fetch('/api/client/assignments?include_completed=true', {
+        const res = await server!.fetch('/api/learner/assignments?include_completed=true&orgId=d28e403a-cdab-42cd-8fc7-2c9327ca40f8', {
           headers: learnerHeaders,
         });
         expect(res.status).toBe(200);

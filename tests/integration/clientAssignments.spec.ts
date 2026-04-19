@@ -9,6 +9,7 @@ import {
 } from './utils/server.ts';
 
 describe('Client assignments API', () => {
+  const DEMO_ORG_ID = 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8';
   let server: TestServerHandle | null = null;
 
   beforeAll(async () => {
@@ -56,7 +57,7 @@ describe('Client assignments API', () => {
       'x-user-role': 'member',
     };
 
-    const response = await server!.fetch('/api/client/assignments', {
+    const response = await server!.fetch(`/api/learner/assignments?orgId=${DEMO_ORG_ID}`, {
       headers,
     });
     expect(response.status).toBe(200);
@@ -64,7 +65,7 @@ describe('Client assignments API', () => {
     expect(payload).toMatchObject({
       data: [],
       count: 0,
-      orgId: null,
+      orgId: DEMO_ORG_ID,
     });
   });
 

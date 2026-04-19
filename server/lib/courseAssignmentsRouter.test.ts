@@ -104,7 +104,7 @@ describe('course assignments router', () => {
   });
 
   it('returns learner assignments from the extracted client route', async () => {
-    const response = await fetch(`${baseUrl}/api/client/assignments`);
+    const response = await fetch(`${baseUrl}/api/learner/assignments?orgId=org-1`);
     const payload = await response.json();
 
     expect(response.status).toBe(200);

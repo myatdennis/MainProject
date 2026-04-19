@@ -85,8 +85,10 @@ export const createCourseAssignmentsRouter = ({
   });
 
   router.post('/admin/courses/:id/assign', controller.adminAssign);
+  router.get('/learner/assignments', controller.clientList);
   router.post('/client/assignments/progress', controller.clientUpdateProgress);
   router.get('/client/assignments', controller.clientList);
+  router.post('/learner/assignments/progress', controller.clientUpdateProgress);
   router.get('/admin/courses/:id/assignments', controller.adminList);
   router.delete('/admin/assignments/:assignmentId', controller.adminDelete);
 

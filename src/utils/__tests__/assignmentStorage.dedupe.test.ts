@@ -18,22 +18,15 @@ describe('assignmentStorage request dedupe', () => {
       },
     ]);
 
-    vi.doMock('../../lib/supabaseClient', () => ({
-      getSupabase: vi.fn().mockResolvedValue(null),
-      hasSupabaseConfig: vi.fn().mockReturnValue(false),
-    }));
     vi.doMock('../../dal/sync', () => ({
       syncService: {
         subscribe: () => () => {},
         logSyncEvent: vi.fn(),
       },
     }));
-    vi.doMock('../../state/runtimeStatus', () => ({
-      isSupabaseOperational: () => false,
-      subscribeRuntimeStatus: () => () => {},
-    }));
     vi.doMock('../../lib/secureStorage', () => ({
       getUserSession: () => ({ id: 'user-123', email: 'user@example.com' }),
+      getActiveOrgPreference: () => 'org-1',
       secureGet: vi.fn(() => null),
       secureSet: vi.fn(),
       secureRemove: vi.fn(),
@@ -53,11 +46,12 @@ describe('assignmentStorage request dedupe', () => {
     const { getAssignmentsForUser } = await import('../assignmentStorage');
 
     const [first, second] = await Promise.all([
-      getAssignmentsForUser('user-123'),
-      getAssignmentsForUser('user-123'),
+      getAssignmentsForUser('user-123', 'org-1'),
+      getAssignmentsForUser('user-123', 'org-1'),
     ]);
 
     expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    expect(apiRequestMock).toHaveBeenCalledWith('/api/learner/assignments?include_completed=true&orgId=org-1');
     expect(first).toEqual(second);
     expect(first).toHaveLength(1);
   });

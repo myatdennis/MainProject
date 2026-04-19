@@ -121,7 +121,7 @@ describe('Admin/learner golden path', () => {
     expect(assignmentsRes.status).toBe(200);
 
     const learnerHeadersResolved = await learnerHeaders(learnerId, `learner+${slug}@example.com`);
-    const clientAssignments = await server!.fetch('/api/client/assignments', {
+    const clientAssignments = await server!.fetch('/api/learner/assignments?orgId=d28e403a-cdab-42cd-8fc7-2c9327ca40f8', {
       headers: learnerHeadersResolved,
     });
     expect(clientAssignments.status).toBe(200);

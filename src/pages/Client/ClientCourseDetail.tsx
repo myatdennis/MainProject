@@ -13,10 +13,12 @@ import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { evaluateCourseAvailability } from '../../utils/courseAvailability';
 import { getUserSession } from '../../lib/secureStorage';
+import { useSecureAuth } from '../../contexts/SecureAuthContext';
 
 const ClientCourseDetail = () => {
   const navigate = useNavigate();
   const { courseId } = useParams();
+  const { activeOrgId } = useSecureAuth();
 
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
@@ -56,7 +58,7 @@ const ClientCourseDetail = () => {
     const fetchAssignment = async () => {
       if (!normalizedId) return;
       try {
-        const record = await getAssignment(normalizedId, learnerId);
+        const record = await getAssignment(normalizedId, learnerId, activeOrgId);
         if (isMounted) {
           setAssignment(record);
         }
@@ -73,7 +75,7 @@ const ClientCourseDetail = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalizedId, learnerId]);
+  }, [normalizedId, learnerId, activeOrgId]);
 
   useEffect(() => {
     let isMounted = true;

@@ -177,7 +177,10 @@ test.describe('Learner progress persistence regression (isolated)', () => {
       // 1-2) learner has assigned course and opens it.
       const initialCard = await waitForAssignedCourseCard(page, created.title);
 
-      const assignmentsResponse = await page.request.get('/api/client/assignments', { failOnStatusCode: false });
+      const assignmentsResponse = await page.request.get(
+        `/api/learner/assignments?orgId=${encodeURIComponent(TEST_ORG_ID)}`,
+        { failOnStatusCode: false },
+      );
       if (assignmentsResponse.ok()) {
         const assignmentsPayload = await assignmentsResponse.json();
         const rows = Array.isArray(assignmentsPayload?.data) ? assignmentsPayload.data : [];
@@ -282,7 +285,10 @@ test.describe('Learner progress persistence regression (isolated)', () => {
           { failOnStatusCode: false },
         );
         const backendProgressBody = await backendProgressResponse.text();
-        const assignmentsResponse = await page.request.get('/api/client/assignments', { failOnStatusCode: false });
+        const assignmentsResponse = await page.request.get(
+          `/api/learner/assignments?orgId=${encodeURIComponent(TEST_ORG_ID)}`,
+          { failOnStatusCode: false },
+        );
         const assignmentsBody = await assignmentsResponse.text();
         const coursesResponse = await page.request.get('/api/client/courses', { failOnStatusCode: false });
         const coursesBody = await coursesResponse.text();

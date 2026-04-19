@@ -31,7 +31,7 @@ const {
     lastError: null,
     detail: null,
   })),
-  getAssignmentsForUserMock: vi.fn(async (_userId?: string | null) => [] as any[]),
+  getAssignmentsForUserMock: vi.fn(async (_userId?: string | null, _orgId?: string | null) => [] as any[]),
   buildLearnerProgressSnapshotMock: vi.fn(() => ({ overallProgress: 0 })),
   loadStoredCourseProgressMock: vi.fn(() => ({
     completedLessonIds: [],
@@ -66,7 +66,7 @@ vi.mock('../../../context/SecureAuthContext', () => ({
 }));
 
 vi.mock('../../../utils/assignmentStorage', () => ({
-  getAssignmentsForUser: (userId?: string | null) => getAssignmentsForUserMock(userId),
+  getAssignmentsForUser: (userId?: string | null, orgId?: string | null) => getAssignmentsForUserMock(userId, orgId),
 }));
 
 vi.mock('../../../store/courseStore', () => ({
@@ -148,7 +148,7 @@ describe('ClientDashboard', () => {
     expect(await screen.findByRole('heading', { name: /No assignments yet/i })).toBeInTheDocument();
 
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
+    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123', 'org-1');
   });
 
   it('does not start assignment loading before learner auth is ready', async () => {

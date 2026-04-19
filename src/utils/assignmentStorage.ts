@@ -1,17 +1,10 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
 import type { AssignmentKind, CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
-import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
-import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secureStorage';
+import { getUserSession, getActiveOrgPreference, secureGet, secureSet, secureRemove } from '../lib/secureStorage';
 import { readBridgeSnapshot } from '../store/courseStoreOrgBridge';
 import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
-const ASSIGNMENTS_TABLE = 'assignments';
-let assignmentsTableUnavailable = false;
-let assignmentsTableWarningLogged = false;
-let assignmentsProgressColumnMissing = false;
-let assignmentsProgressWarningLogged = false;
 const ASSIGNMENTS_API_CACHE_TTL_MS = 10_000;
 // Maximum allowed JSON payload bytes per secure storage key. Guard against
 // oversized writes that would trigger QuotaExceededError in some browsers.
@@ -44,105 +37,11 @@ const ASSIGNMENT_PERSIST_SIZE_THRESHOLD = (() => {
 let assignmentsApiCache:
   | {
       expiresAt: number;
+      orgId: string | null;
       rows: CourseAssignment[];
     }
   | null = null;
 let assignmentsApiInflight: Promise<{ rows: CourseAssignment[]; failed: boolean }> | null = null;
-
-const isAssignmentsTableMissingError = (error: unknown): boolean => {
-  if (!error) {
-    return false;
-  }
-  const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code?: string }).code : null;
-  const messageCandidate =
-    typeof (error as { message?: string })?.message === 'string'
-      ? (error as { message?: string }).message
-      : error instanceof Error
-      ? error.message
-      : '';
-  const message = (messageCandidate ?? '').toLowerCase();
-  if (code === 'PGRST205') {
-    return true;
-  }
-  if (!message) return false;
-  return (
-    message.includes(`could not find the table 'public.${ASSIGNMENTS_TABLE}`) ||
-    message.includes(`relation \"public.${ASSIGNMENTS_TABLE}`)
-  );
-};
-
-const handleAssignmentsTableMissing = (context: string, error: unknown): boolean => {
-  if (!isAssignmentsTableMissingError(error)) {
-    return false;
-  }
-  assignmentsTableUnavailable = true;
-  if (!assignmentsTableWarningLogged) {
-    assignmentsTableWarningLogged = true;
-    console.warn(
-      `[assignmentStorage] Supabase table "${ASSIGNMENTS_TABLE}" is missing; disabling remote assignment sync (${context}).`,
-      error,
-    );
-  }
-  return true;
-};
-
-const isAssignmentsProgressColumnMissingError = (error: unknown): boolean => {
-  if (!error) return false;
-  const message = typeof (error as { message?: string })?.message === 'string' ? (error as { message?: string })?.message : '';
-  if (!message) return false;
-  const normalized = message.toLowerCase();
-  return normalized.includes("'progress' column") && normalized.includes(`'${ASSIGNMENTS_TABLE}`);
-};
-
-const handleAssignmentsProgressColumnMissing = (context: string, error: unknown): boolean => {
-  if (!isAssignmentsProgressColumnMissingError(error)) {
-    return false;
-  }
-  const wasMissing = assignmentsProgressColumnMissing;
-  assignmentsProgressColumnMissing = true;
-  if (!assignmentsProgressWarningLogged) {
-    assignmentsProgressWarningLogged = true;
-    console.warn('[assignments.schema_mismatch]', {
-      context,
-      column: 'progress',
-      table: ASSIGNMENTS_TABLE,
-      message: (error as { message?: string })?.message ?? null,
-    });
-  }
-  return !wasMissing;
-};
-
-const supabaseReady = () => hasSupabaseConfig() || isSupabaseOperational();
-
-const getAuthedSupabaseClient = async () => {
-  try {
-    const supabase = await getSupabase();
-    if (!supabase) return null;
-    // Ensure a canonical session exists before returning a Supabase client
-    // capable of making authenticated requests.
-    try {
-      const { getCanonicalSession, waitForAuthReady } = await import('../lib/canonicalAuth');
-      const cs = getCanonicalSession();
-      if (!cs || !cs.accessToken) {
-        const ready = await waitForAuthReady(2000).catch(() => null);
-        if (!ready || !ready.accessToken) {
-          return null;
-        }
-      }
-    } catch (e) {
-      // If canonicalAuth is unavailable treat as unauthenticated
-      return null;
-    }
-    return supabase;
-  } catch (error) {
-    console.warn('[assignmentStorage] Unable to resolve Supabase auth session:', error);
-    return null;
-  }
-};
-
-const hasSupabaseFrom = (client: any): client is { from: (...args: any[]) => any } => {
-  return Boolean(client && typeof client.from === 'function');
-};
 
 type SupabaseAssignmentRow = {
   id: string;
@@ -206,6 +105,26 @@ const hasAuthenticatedSessionSnapshot = (): boolean => {
     // ignore and fall back to secureStorage
   }
   return Boolean(getSessionUserId() || getSessionUserEmail());
+};
+
+const resolveAssignmentOrgId = (explicitOrgId?: string | null): string | null => {
+  const normalizedExplicit = normalizeUserId(explicitOrgId);
+  if (normalizedExplicit) return normalizedExplicit;
+  try {
+    const bridge = readBridgeSnapshot();
+    const bridgeOrgId = normalizeUserId(bridge?.activeOrgId ?? bridge?.orgId ?? null);
+    if (bridgeOrgId) return bridgeOrgId;
+  } catch {
+    // ignore
+  }
+  try {
+    const session = getUserSession();
+    const sessionOrgId = normalizeUserId(session?.activeOrgId ?? session?.organizationId ?? null);
+    if (sessionOrgId) return sessionOrgId;
+  } catch {
+    // ignore
+  }
+  return normalizeUserId(getActiveOrgPreference());
 };
 
 const resolveLiveSessionContext = async (): Promise<{ id: string | null; email: string | null }> => {
@@ -545,45 +464,7 @@ const invalidateAssignmentsApiCache = () => {
 
 let inflightLocalSync: Promise<void> | null = null;
 
-const buildSupabaseAssignmentRecord = (assignment: CourseAssignment, includeProgress: boolean) => ({
-  id: assignment.id,
-  course_id: assignment.courseId,
-  survey_id: assignment.surveyId ?? null,
-  assignment_type: assignment.assignmentType ?? 'course',
-  user_id: assignment.userId,
-  organization_id: assignment.organizationId ?? null,
-  status: assignment.status,
-  ...(includeProgress ? { progress: assignment.progress ?? 0 } : {}),
-  due_at: assignment.dueDate ?? null,
-  note: assignment.note ?? null,
-  assigned_by: assignment.assignedBy ?? null,
-  created_at: assignment.createdAt ?? new Date().toISOString(),
-  updated_at: assignment.updatedAt ?? new Date().toISOString(),
-  active: assignment.active ?? true,
-});
-
-const buildUpsertOptions = () =>
-  (ASSIGNMENTS_TABLE as string) === 'course_assignments' ? { onConflict: 'course_id,user_id' } : undefined;
-
-const executeAssignmentsMutation = async <T>(
-  label: string,
-  operation: (includeProgressField: boolean) => Promise<T>,
-) => {
-  try {
-    return await operation(!assignmentsProgressColumnMissing);
-  } catch (error) {
-    if (handleAssignmentsProgressColumnMissing(label, error)) {
-      return operation(false);
-    }
-    throw error;
-  }
-};
-
 const syncLocalAssignmentsToSupabase = async () => {
-  if (!supabaseReady()) {
-    return;
-  }
-
   if (inflightLocalSync) {
     return inflightLocalSync;
   }
@@ -608,20 +489,23 @@ const syncLocalAssignmentsToSupabase = async () => {
 
         for (const [courseId, rows] of byCourse.entries()) {
           const userIds = rows.map((r) => r.userId).filter(Boolean);
-          const orgId = rows.find((r) => r.organizationId)?.organizationId ?? null;
+          const orgId = resolveAssignmentOrgId(rows.find((r) => r.organizationId)?.organizationId ?? null);
           if (userIds.length === 0) continue;
+          if (!orgId) {
+            console.warn('[assignmentStorage] Skipping local assignment sync without orgId', {
+              courseId,
+              queuedAssignments: rows.length,
+            });
+            continue;
+          }
           try {
             const payload: any = { user_ids: Array.from(new Set(userIds)), organization_id: orgId };
             // preserve optional fields if available on the first row
             const first = rows[0];
             if (first.dueDate) payload.due_at = first.dueDate;
             if (first.note) payload.note = first.note;
-            await apiRequest(`/api/admin/courses/${encodeURIComponent(courseId)}/assign`, { method: 'POST', body: payload });
+            await apiRequest(`/api/admin/courses/${encodeURIComponent(courseId)}/assign?orgId=${encodeURIComponent(orgId)}`, { method: 'POST', body: payload });
           } catch (err) {
-            if (handleAssignmentsTableMissing('sync', err)) {
-              // table missing -> leave local queue intact
-              return;
-            }
             console.warn('[assignmentStorage] Failed to sync local assignments to backend API:', err);
           }
         }
@@ -639,18 +523,12 @@ const syncLocalAssignmentsToSupabase = async () => {
 };
 
 if (typeof window !== 'undefined') {
-  if (supabaseReady() && hasAuthenticatedSessionSnapshot()) {
+  if (hasAuthenticatedSessionSnapshot()) {
     void syncLocalAssignmentsToSupabase();
   }
 
-  subscribeRuntimeStatus((status) => {
-    if (status.supabaseConfigured && status.supabaseHealthy && hasAuthenticatedSessionSnapshot()) {
-      void syncLocalAssignmentsToSupabase();
-    }
-  });
-
   window.addEventListener('online', () => {
-    if (supabaseReady() && hasAuthenticatedSessionSnapshot()) {
+    if (hasAuthenticatedSessionSnapshot()) {
       void syncLocalAssignmentsToSupabase();
     }
   });
@@ -660,8 +538,6 @@ const emitLocalEvent = (
   type: 'assignment_created' | 'assignment_updated' | 'assignment_deleted',
   assignment: CourseAssignment
 ) => {
-  if (supabaseReady()) return;
-
   syncService.logSyncEvent({
     type,
     data: assignment,
@@ -670,25 +546,6 @@ const emitLocalEvent = (
     timestamp: Date.now(),
     source: 'client',
   });
-};
-
-const withSupabaseFallback = async <T>(
-  supabaseFn: () => Promise<T>,
-  localFn: () => Promise<T> | T
-): Promise<T> => {
-  if (assignmentsTableUnavailable) {
-    return await Promise.resolve(localFn());
-  }
-  if (!supabaseReady()) {
-    return await Promise.resolve(localFn());
-  }
-
-  try {
-    return await supabaseFn();
-  } catch (error) {
-    console.error('[assignmentStorage] Supabase operation failed, using local fallback:', error);
-    return await Promise.resolve(localFn());
-  }
 };
 
 const buildLocalAssignment = (
@@ -730,34 +587,29 @@ export async function legacyAddAssignments(
 
   const now = new Date().toISOString();
 
-  return withSupabaseFallback<CourseAssignment[]>(
-    async () => {
-      // POST to backend admin assign endpoint so browser never writes directly
-      // to the Supabase assignments table.
+  try {
       if (normalizedIds.length === 0) return [];
-      try {
-        const payload: any = {
-          user_ids: normalizedIds,
-          organization_id: options.organizationId ?? null,
-        };
-        if (options.dueDate) payload.due_at = options.dueDate;
-        if (options.note) payload.note = options.note;
-        if (options.assignedBy) payload.assigned_by = options.assignedBy;
-
-        const response = await apiRequest<{ data?: any }>(`/api/admin/courses/${encodeURIComponent(
-          courseId,
-        )}/assign`, { method: 'POST', body: payload });
-        const rows = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : [];
-        invalidateAssignmentsApiCache();
-        return mapAssignmentsFromApiRows(rows);
-      } catch (error) {
-        // If the backend indicates the assignments table is missing or other infra
-        // problems exist, surface as before and let fallback path run.
-        console.warn('[assignmentStorage] Remote admin assign failed, falling back to local', error);
-        throw error;
+      const orgId = resolveAssignmentOrgId(options.organizationId ?? null);
+      if (!orgId) {
+        throw new Error('organization_id_required');
       }
-    },
-    () => {
+      const payload: any = {
+        user_ids: normalizedIds,
+        organization_id: orgId,
+      };
+      if (options.dueDate) payload.due_at = options.dueDate;
+      if (options.note) payload.note = options.note;
+      if (options.assignedBy) payload.assigned_by = options.assignedBy;
+
+      const response = await apiRequest<{ data?: any }>(
+        `/api/admin/courses/${encodeURIComponent(courseId)}/assign?orgId=${encodeURIComponent(orgId)}`,
+        { method: 'POST', body: payload },
+      );
+      const rows = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : [];
+      invalidateAssignmentsApiCache();
+      return mapAssignmentsFromApiRows(rows);
+  } catch (error) {
+      console.warn('[assignmentStorage] Remote admin assign failed, falling back to local', error);
       const existing = loadLocalAssignments();
       const results: CourseAssignment[] = [];
 
@@ -791,8 +643,7 @@ export async function legacyAddAssignments(
       persistLocalAssignments(existing);
       results.forEach((assignment) => emitLocalEvent('assignment_created', assignment));
       return results;
-    }
-  );
+  }
 }
 
 export { legacyAddAssignments as addAssignments };
@@ -829,9 +680,9 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
     .filter((row): row is CourseAssignment => Boolean(row));
 };
 
-const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
+const fetchAssignmentsViaApi = async (orgId: string): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
   const now = Date.now();
-  if (assignmentsApiCache && assignmentsApiCache.expiresAt > now) {
+  if (assignmentsApiCache && assignmentsApiCache.expiresAt > now && assignmentsApiCache.orgId === orgId) {
     return { rows: assignmentsApiCache.rows, failed: false };
   }
   if (assignmentsApiInflight) {
@@ -842,8 +693,9 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
   try {
     const params = new URLSearchParams({
       include_completed: 'true',
+      orgId,
     });
-    const response = await apiRequest<any[] | { data?: any[] }>(`/api/client/assignments?${params.toString()}`);
+    const response = await apiRequest<any[] | { data?: any[] }>(`/api/learner/assignments?${params.toString()}`);
     const rows = Array.isArray(response)
       ? response
       : Array.isArray(response?.data)
@@ -852,6 +704,7 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
     if (!rows.length) {
       assignmentsApiCache = {
         expiresAt: Date.now() + ASSIGNMENTS_API_CACHE_TTL_MS,
+        orgId,
         rows: [],
       };
       return { rows: [], failed: false };
@@ -859,6 +712,7 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
     const mappedRows = mapAssignmentsFromApiRows(rows);
     assignmentsApiCache = {
       expiresAt: Date.now() + ASSIGNMENTS_API_CACHE_TTL_MS,
+      orgId,
       rows: mappedRows,
     };
     return { rows: mappedRows, failed: false };
@@ -887,6 +741,7 @@ const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; fai
  */
 export const getAssignmentsForUserWithOutcome = async (
   userId?: string | null,
+  orgId?: string | null,
 ): Promise<{
   outcome: 'success' | 'empty' | 'error' | 'unauthenticated';
   assignments: CourseAssignment[];
@@ -896,6 +751,7 @@ export const getAssignmentsForUserWithOutcome = async (
   if (!normalized) {
     return { outcome: 'unauthenticated', assignments: [], error: 'invalid_user' };
   }
+  const resolvedOrgId = resolveAssignmentOrgId(orgId);
 
   const sessionUserId = getSessionUserId();
   const sessionUserEmail = getSessionUserEmail();
@@ -933,9 +789,12 @@ export const getAssignmentsForUserWithOutcome = async (
   if (!sessionUserIdResolved && !sessionUserEmail && !liveSessionId && !liveSessionEmail) {
     return { outcome: 'unauthenticated', assignments: loadLocalForUser(), error: 'no_authenticated_session' };
   }
+  if (!resolvedOrgId) {
+    return { outcome: 'unauthenticated', assignments: loadLocalForUser(), error: 'missing_org' };
+  }
 
   try {
-    const { rows, failed } = await fetchAssignmentsViaApi();
+    const { rows, failed } = await fetchAssignmentsViaApi(resolvedOrgId);
     if (failed) {
       // Remote call failed — surface as an error outcome but return local fallback
       return { outcome: 'error', assignments: loadLocalForUser(), error: 'remote_failed' };
@@ -961,7 +820,7 @@ export const getAssignmentsForUserWithOutcome = async (
   }
 };
 
-export const getAssignmentsForUser = async (userId?: string | null): Promise<CourseAssignment[]> => {
+export const getAssignmentsForUser = async (userId?: string | null, orgId?: string | null): Promise<CourseAssignment[]> => {
   const normalized = normalizeUserId(userId) ?? null;
   if (!normalized) {
     console.warn('[assignmentStorage] getAssignmentsForUser called without a valid user id. Returning empty assignments.');
@@ -970,6 +829,7 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
 
   const sessionUserId = getSessionUserId();
   const sessionUserEmail = getSessionUserEmail();
+  const resolvedOrgId = resolveAssignmentOrgId(orgId);
   let liveSessionId: string | null = null;
   let liveSessionEmail: string | null = null;
   let sessionUserIdResolved = sessionUserId;
@@ -1011,7 +871,7 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
   if (liveSessionEmail) sessionJoiningKeys.add(liveSessionEmail);
 
   const loadRemoteAssignments = async () => {
-    const { rows, failed } = await fetchAssignmentsViaApi();
+    const { rows, failed } = await fetchAssignmentsViaApi(resolvedOrgId);
     if (!failed) {
       const filtered = rows.filter((record) => {
         const assignmentType = (record.assignmentType ?? 'course') as AssignmentKind;
@@ -1032,15 +892,20 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
     console.info('[assignmentStorage] Skipping remote assignment fetch (no authenticated session).');
     return loadLocalForUser();
   }
+  if (!resolvedOrgId) {
+    console.info('[assignmentStorage] Skipping remote assignment fetch (missing org context).');
+    return loadLocalForUser();
+  }
 
   return await loadRemoteAssignments();
 };
 
 export const getAssignment = async (
   courseId: string,
-  userId: string
+  userId: string,
+  orgId?: string | null,
 ): Promise<CourseAssignment | undefined> => {
-  const assignments = await getAssignmentsForUser(userId);
+  const assignments = await getAssignmentsForUser(userId, orgId);
   return assignments.find((record) => record.courseId === courseId);
 };
 
@@ -1054,45 +919,24 @@ export const updateAssignmentProgress = async (
   const clampedProgress = Math.min(Math.max(progress, 0), 100);
   const status: CourseAssignmentStatus =
     clampedProgress >= 100 ? 'completed' : clampedProgress > 0 ? 'in-progress' : 'assigned';
+  const orgId = resolveAssignmentOrgId(null);
 
-  return withSupabaseFallback<CourseAssignment | undefined>(
-    async () => {
-      // Route progress updates through backend API so clients don't update
-      // assignments table directly and avoid RLS failures.
-      try {
-        const payload = { course_id: courseId, user_id: normalized, progress: clampedProgress };
-        const response = await apiRequest<{ data?: any }>(`/api/client/assignments/progress`, { method: 'POST', body: payload });
-        const row = Array.isArray(response) ? response[0] : response?.data ? (Array.isArray(response.data) ? response.data[0] : response.data) : null;
-        if (row) {
-          invalidateAssignmentsApiCache();
-          return mapSupabaseAssignment(row as SupabaseAssignmentRow);
-        }
-        return undefined;
-      } catch (error) {
-        if (handleAssignmentsTableMissing('updateAssignmentProgress', error)) {
-          const localAssignments = loadLocalAssignments();
-          const index = localAssignments.findIndex(
-            (record) => record.courseId === courseId && record.userId === normalized,
-          );
-          if (index !== -1) {
-            const updated: CourseAssignment = {
-              ...localAssignments[index],
-              progress: clampedProgress,
-              status,
-              updatedAt: now,
-            };
-            localAssignments[index] = updated;
-            persistLocalAssignments(localAssignments);
-            emitLocalEvent('assignment_updated', updated);
-            void syncLocalAssignmentsToSupabase();
-            return updated;
-          }
-          return undefined;
-        }
-        throw error;
+  try {
+      if (!orgId) {
+        throw new Error('organization_id_required');
       }
-    },
-    () => {
+      const payload = { course_id: courseId, user_id: normalized, progress: clampedProgress };
+      const response = await apiRequest<{ data?: any }>(
+        `/api/learner/assignments/progress?orgId=${encodeURIComponent(orgId)}`,
+        { method: 'POST', body: payload },
+      );
+      const row = Array.isArray(response) ? response[0] : response?.data ? (Array.isArray(response.data) ? response.data[0] : response.data) : null;
+      if (row) {
+        invalidateAssignmentsApiCache();
+        return mapSupabaseAssignment(row as SupabaseAssignmentRow);
+      }
+      return undefined;
+  } catch (error) {
       const assignments = loadLocalAssignments();
       const index = assignments.findIndex(
         (record) => record.courseId === courseId && record.userId === normalized
@@ -1112,8 +956,7 @@ export const updateAssignmentProgress = async (
       emitLocalEvent('assignment_updated', updated);
       void syncLocalAssignmentsToSupabase();
       return updated;
-    }
-  );
+  }
 };
 
 export const markAssignmentComplete = async (

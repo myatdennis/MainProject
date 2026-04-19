@@ -80,7 +80,7 @@ const ClientProfile = () => {
         }
 
         const [courses, surveys] = await Promise.all([
-          getAssignmentsForUser(learnerId),
+          getAssignmentsForUser(learnerId, activeOrgId),
           fetchAssignedSurveysForLearner(),
         ]);
 
@@ -106,7 +106,7 @@ const ClientProfile = () => {
     return () => {
       isMounted = false;
     };
-  }, [learnerAuthFailed, learnerAuthPending, learnerId]);
+  }, [activeOrgId, learnerAuthFailed, learnerAuthPending, learnerId]);
 
   const courseTitleMap = useMemo(() => {
     const map = new Map<string, string>();

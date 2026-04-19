@@ -337,7 +337,7 @@ const ClientDashboard = () => {
         setCatalogError(null);
       }
       try {
-        const records = await getAssignmentsForUser(learnerId);
+        const records = await getAssignmentsForUser(learnerId, activeOrgId);
         if (isMounted) {
           setAssignments(records);
         }

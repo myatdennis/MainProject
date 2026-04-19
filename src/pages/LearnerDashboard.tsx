@@ -35,6 +35,7 @@ import Badge from '../components/ui/Badge';
 import ProgressBar from '../components/ui/ProgressBar';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { mapErrorToBootMeta, useBootTrace, type BootStep, type BootStepError } from '../hooks/useBootTrace';
+import { useSecureAuth } from '../context/SecureAuthContext';
 
 const filterOptions: Array<{ value: 'all' | 'in-progress' | 'not-started' | 'completed'; label: string }> = [
   { value: 'all', label: 'All' },
@@ -66,6 +67,7 @@ const LearnerDashboard = () => {
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
   const { user } = useUserProfile();
+  const { activeOrgId } = useSecureAuth();
   const { steps, resetTrace, startStep, markStepSuccess, markStepError, runningStep, lastErrorStep } = useBootTrace();
   const learnerId = useMemo(() => {
     if (user?.id) return String(user.id).toLowerCase();
@@ -100,7 +102,7 @@ const LearnerDashboard = () => {
           .map((course) => normalizeCourse(course))
           .filter((course) => course.status === 'published');
 
-        const assignmentRecords = await getAssignmentsForUser(learnerId);
+        const assignmentRecords = await getAssignmentsForUser(learnerId, activeOrgId);
         markStepSuccess(assignmentsStepId);
         const mergedCourses = [...normalizedCourses];
         assignmentRecords.forEach((record) => {
@@ -157,7 +159,7 @@ const LearnerDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [learnerId, bootAttempt, resetTrace, startStep, markStepSuccess, markStepError]);
+  }, [activeOrgId, learnerId, bootAttempt, resetTrace, startStep, markStepSuccess, markStepError]);
 
   const handleRetryBoot = () => {
     resetTrace();
@@ -170,7 +172,7 @@ const LearnerDashboard = () => {
 
     const loadAssignments = async () => {
       try {
-        const records = await getAssignmentsForUser(learnerId);
+        const records = await getAssignmentsForUser(learnerId, activeOrgId);
         if (isMounted) {
           setAssignments(records);
         }
@@ -184,12 +186,12 @@ const LearnerDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [learnerId]);
+  }, [activeOrgId, learnerId]);
 
   useEffect(() => {
     const refreshAssignments = async () => {
       try {
-        const records = await getAssignmentsForUser(learnerId);
+        const records = await getAssignmentsForUser(learnerId, activeOrgId);
         setAssignments(records);
       } catch (error) {
         console.error('Failed to refresh assignments:', error);
@@ -220,7 +222,7 @@ const LearnerDashboard = () => {
       unsubProgress?.();
       unsubComplete?.();
     };
-  }, [learnerId]);
+  }, [activeOrgId, learnerId]);
 
 
   useEffect(() => {

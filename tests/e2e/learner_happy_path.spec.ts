@@ -167,7 +167,7 @@ test.describe('learner happy path', () => {
       if (!courseCardVisible) {
         const [assignedCoursesRes, assignmentsRes] = await Promise.all([
           page.request.get('/api/client/courses', { failOnStatusCode: false }),
-          page.request.get('/api/client/assignments', { failOnStatusCode: false }),
+          page.request.get(`/api/learner/assignments?orgId=${encodeURIComponent(TEST_ORG_ID)}`, { failOnStatusCode: false }),
         ]);
         const assignedCoursesBody = await assignedCoursesRes.text();
         const assignmentsBody = await assignmentsRes.text();

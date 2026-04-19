@@ -1702,7 +1702,7 @@ const ensureAssignmentScopedCatalog = async (
     Boolean(catalog && Object.keys(catalog).length > 0);
 
   try {
-    const outcome = await getAssignmentsForUserWithOutcome(userId);
+    const outcome = await getAssignmentsForUserWithOutcome(userId, orgId);
     // outcome.outcome: 'success' | 'empty' | 'error' | 'unauthenticated'
     if (outcome.outcome === 'error') {
       console.error('[courseStore] assignment_fetch_error', { userId, orgId, error: outcome.error ?? 'remote_failed', surface: 'learner' });

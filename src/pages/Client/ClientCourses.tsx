@@ -187,7 +187,7 @@ const ClientCourses = () => {
 
       const request = (async () => {
         try {
-          const records = await getAssignmentsForUser(learnerId);
+          const records = await getAssignmentsForUser(learnerId, activeOrgId);
           if (isMounted) {
             setAssignments(records);
           }
@@ -225,7 +225,7 @@ const ClientCourses = () => {
       unsubscribeUpdate?.();
       unsubscribeDelete?.();
     };
-  }, [learnerId, learnerAuthReady]);
+  }, [activeOrgId, learnerId, learnerAuthReady]);
 
   const courseCardModels = useMemo(() => {
     const assignmentLookup = new Map<string, CourseAssignment & { courseId: string }>();
