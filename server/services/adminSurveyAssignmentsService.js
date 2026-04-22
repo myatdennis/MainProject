@@ -272,6 +272,25 @@ export const createAdminSurveyAssignmentsService = ({
         return persistedRows;
       };
 
+      // Pre-check: ensure the survey being assigned exists and is a valid UUID.
+      try {
+        if (!isUuid(surveyId)) {
+          const err = new Error('Invalid survey_id');
+          err.code = 'invalid_survey_id';
+          throw err;
+        }
+        const { data: surveyRow, error: surveyFetchErr } = await supabase.from('surveys').select('id').eq('id', surveyId).maybeSingle();
+        if (surveyFetchErr) throw surveyFetchErr;
+        if (!surveyRow) {
+          const err = new Error('survey_not_found');
+          err.code = 'survey_not_found';
+          throw err;
+        }
+      } catch (surveyPreErr) {
+        logger.warn('survey_assignment_precheck_failed', { requestId: req.requestId ?? null, surveyId, error: surveyPreErr?.message || String(surveyPreErr) });
+        throw surveyPreErr;
+      }
+
       const mergeMetadata = (existingMeta) => (!existingMeta || typeof existingMeta !== 'object' ? metadata : { ...existingMeta, ...metadata });
       const buildRecord = (userId) => ({
         survey_id: surveyId,

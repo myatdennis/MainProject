@@ -874,7 +874,63 @@ export const createCourseAssignmentsService = ({
       let insertedRows = [];
       if (inserts.length > 0) {
         const payload = inserts.map((record) => sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }));
-  const { data: newRows, error: insertError } = await safeInsert('assignments', payload, { select: '*', requestId: req.requestId ?? null, verify: true, verifyTimeoutMs: 5000 });
+          // --- Pre-checks: ensure referenced course_id and survey_id (if present) are valid UUIDs and exist
+          try {
+            const courseIds = new Set();
+            const surveyIds = new Set();
+            for (const r of payload) {
+              if (r.course_id) courseIds.add(r.course_id);
+              if (r.survey_id) surveyIds.add(r.survey_id);
+            }
+
+            // Validate UUID format
+            for (const cid of Array.from(courseIds)) {
+              if (!isUuid(cid)) {
+                const err = new Error('Invalid course_id');
+                err.code = 'invalid_course_id';
+                throw err;
+              }
+            }
+            for (const sid of Array.from(surveyIds)) {
+              if (!isUuid(sid)) {
+                const err = new Error('Invalid survey_id');
+                err.code = 'invalid_survey_id';
+                throw err;
+              }
+            }
+
+            // Verify existence via Supabase
+            if (courseIds.size > 0) {
+              const { data: foundCourses, error: courseErr } = await supabase.from('courses').select('id').in('id', Array.from(courseIds));
+              if (courseErr) throw courseErr;
+              const foundSet = new Set((foundCourses || []).map((r) => r.id));
+              const missing = Array.from(courseIds).filter((c) => !foundSet.has(c));
+              if (missing.length > 0) {
+                const err = new Error('course_not_found');
+                err.code = 'course_not_found';
+                err.meta = { missing };
+                throw err;
+              }
+            }
+            if (surveyIds.size > 0) {
+              const { data: foundSurveys, error: surveyErr } = await supabase.from('surveys').select('id').in('id', Array.from(surveyIds));
+              if (surveyErr) throw surveyErr;
+              const foundSet = new Set((foundSurveys || []).map((r) => r.id));
+              const missing = Array.from(surveyIds).filter((s) => !foundSet.has(s));
+              if (missing.length > 0) {
+                const err = new Error('survey_not_found');
+                err.code = 'survey_not_found';
+                err.meta = { missing };
+                throw err;
+              }
+            }
+          } catch (precheckErr) {
+            // Log and rethrow so the outer catch handles response mapping
+            logger.warn('course_assignment_precheck_failed', { requestId: req.requestId ?? null, error: safeSerializeError(precheckErr) });
+            throw precheckErr;
+          }
+
+    const { data: newRows, error: insertError } = await safeInsert('assignments', payload, { select: '*', requestId: req.requestId ?? null, verify: true, verifyTimeoutMs: 5000 });
         if (insertError) {
           const errorText = `${insertError?.constraint || ''} ${insertError?.message || ''} ${insertError?.details || ''}`.toLowerCase();
           const isIdempotencyConflict =

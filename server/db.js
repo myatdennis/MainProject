@@ -406,10 +406,16 @@ export const getDatabaseConnectionInfo = () => ({
   tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
 })
 
-export async function testConnection (retries = 3) {
+export async function testConnection (retries = 3, attempt = 1) {
   try {
+    if (shouldLogDbDiagnostics) {
+      console.info('[server/db] connection_test_attempt', { attempt, retriesRemaining: retries })
+    }
     const client = await pool.connect()
     client.release()
+    if (shouldLogDbDiagnostics) {
+      console.info('[server/db] connection_test_success', { attempt })
+    }
     return true
   } catch (error) {
     const sslSelfSigned =
@@ -419,14 +425,14 @@ export async function testConnection (retries = 3) {
       console.warn('[server/db] connection_test_self_signed_tolerated', {
         message: error?.message || String(error),
         code: error?.code || null,
-        retriesAttempted: (retries ?? 0),
+        attempt,
       })
       return true
     }
     if (canFailOverToDirectConnection(error, activeConnectionMetadata)) {
       const switched = activateConnectionMetadata(directFallbackMetadata, 'pooler_resolution_failed', error)
       if (switched) {
-        return testConnection(retries)
+        return testConnection(retries, attempt + 1)
       }
     }
     if (retries <= 0) {
@@ -434,11 +440,15 @@ export async function testConnection (retries = 3) {
         message: error?.message || String(error),
         code: error?.code || null,
         stack: error?.stack || null,
+        attempts: attempt,
       })
       throw error
     }
+    if (shouldLogDbDiagnostics) {
+      console.warn('[server/db] connection_test_retry', { attempt, retriesRemaining: retries, message: error?.message || String(error) })
+    }
     await wait(2000)
-    return testConnection(retries - 1)
+    return testConnection(retries - 1, attempt + 1)
   }
 }
 

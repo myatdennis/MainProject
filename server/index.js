@@ -429,7 +429,7 @@ const resolveUserIdentifierToUuid = async (req, identifier) => {
   return null;
 };
 
-import sql, { pool, getDatabaseConnectionInfo } from './db.js';
+import sql, { pool, getDatabaseConnectionInfo, dbStartupHealthy } from './db.js';
 import {
   computeLevelProgress,
   deriveGrowthInsights,
@@ -506,6 +506,32 @@ if (supabaseProjectRef && databaseProjectRef && supabaseProjectRef !== databaseP
     databaseHost: databaseConnectionInfo.host ?? null,
     databaseSource: databaseConnectionInfo.sourceEnv ?? null,
   });
+}
+
+// Startup diagnostics: concise environment summary (no secrets) and
+// fail-fast when the DB is not healthy in production/non-demo runs.
+try {
+  console.info('[startup] diagnostics', {
+    NODE_ENV: process.env.NODE_ENV || null,
+    port: process.env.PORT || null,
+    supabaseHost: supabaseUrlHost || null,
+    databaseHost: databaseHost || null,
+  });
+} catch (e) {
+  // non-fatal
+}
+
+try {
+  const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+  if (!dbStartupHealthy && !isDev && !isDemoMode && !E2E_TEST_MODE) {
+    console.error('[startup] FATAL CONFIG: database not reachable at startup. Aborting.');
+    process.exit(1);
+  }
+  if (!dbStartupHealthy) {
+    console.warn('[startup] database_health_check=unhealthy - continuing because running in dev/demo/E2E');
+  }
+} catch (e) {
+  // non-fatal
 }
 
 const schemaHealth = {
