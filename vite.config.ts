@@ -37,7 +37,7 @@ export default async () => {
       // Confirms which bundle is running after a deploy. Check: console.log(__APP_BUILD_TIME__)
       __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
       ...(process.env.NODE_ENV === 'development'
-        ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://localhost:8888/ws') }
+        ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://127.0.0.1:8888/ws') }
         : {}),
     },
     plugins: [
@@ -109,10 +109,10 @@ export default async () => {
       proxy: {
         '/api': {
           // Allow the proxy target to be overridden at startup so E2E runs can
-          // point directly at the E2E API server (port 8888, E2E_TEST_MODE=true)
-          // instead of the regular dev server (port 8888).  The default is now
-          // localhost:8888 for local/E2E consistency.
-          target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8888',
+          // point directly at the E2E API server (port 8888, E2E_TEST_MODE=true).
+          // For local/E2E consistency default to 127.0.0.1:8888 (avoid localhost
+          // which can resolve differently in some environments).
+          target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8888',
           changeOrigin: true,
           secure: false,
           ws: true,
@@ -159,7 +159,7 @@ export default async () => {
         '/ws': {
           target: process.env.VITE_API_PROXY_TARGET
             ? process.env.VITE_API_PROXY_TARGET.replace(/^http/, 'ws')
-            : 'ws://localhost:8888',
+            : 'ws://127.0.0.1:8888',
           ws: true,
           changeOrigin: true,
           secure: false,

@@ -691,8 +691,8 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
   }
 
   if (inserts.length > 0) {
-    const { error } = await supabase.from('assignments').insert(inserts);
-    if (error) throw error;
+  const { safeInsert } = await import('../lib/safeWrites.js');
+  await safeInsert('assignments', inserts, { logger, requestId: req.requestId ?? null });
 
     // Broadcast created assignment events for the inserted rows (best-effort)
     try {
@@ -799,8 +799,8 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
   }
 
   if (inserts.length > 0) {
-    const { error } = await supabase.from('assignments').insert(inserts);
-    if (error) throw error;
+  const { safeInsert } = await import('../lib/safeWrites.js');
+  await safeInsert('assignments', inserts, { logger, requestId: req.requestId ?? null });
 
     // Broadcast created survey assignment events (best-effort)
     try {
