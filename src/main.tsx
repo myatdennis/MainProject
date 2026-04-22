@@ -15,7 +15,7 @@ import {
   installLocalStorageGuards,
   cleanupLegacySensitiveKeys,
 } from './lib/secureStorage';
-import { getApiBaseUrl } from './config/apiBase';
+import { getApiBaseUrl, __setApiBaseUrlOverride } from './config/apiBase';
 import { registerApiNavigationGuard } from './utils/apiNavigationGuard';
 import { toast } from 'react-hot-toast';
 import AppErrorBoundary from './components/errors/AppErrorBoundary';
@@ -55,6 +55,20 @@ try {
     apiBase: import.meta.env.VITE_API_BASE_URL ?? null,
     supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? null,
   });
+} catch (e) {
+  // ignore
+}
+// Defensive guard: if a developer accidentally set VITE_API_BASE_URL to the
+// Supabase Functions host (e.g. https://<proj>.supabase.co/functions/v1) then
+// client requests like /api/auth/login will resolve to the functions URL and
+// trigger 404/CORS issues. Detect and override at runtime to `/api` so the
+// dev server proxy (or same-origin API host) receives auth traffic.
+try {
+  const rawApiBase = String(import.meta.env.VITE_API_BASE_URL ?? '').trim();
+  if (rawApiBase && /supabase\.co\/functions\/v1/i.test(rawApiBase)) {
+    console.error('[ENV][api] Detected VITE_API_BASE_URL pointing at Supabase Functions — overriding to /api to avoid misrouting auth requests.');
+    __setApiBaseUrlOverride('/api');
+  }
 } catch (e) {
   // ignore
 }

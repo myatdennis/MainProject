@@ -679,7 +679,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const method = String(options?.method ?? 'GET').toUpperCase();
       const shouldDedupe =
         method === 'GET' &&
-        (path === '/auth/session' || path === '/api/auth/session' || path === '/api/admin/me');
+        (path === '/api/auth/session' || path === '/api/admin/me');
 
       const execute = async (): Promise<T> => {
       let response: Response;
@@ -911,7 +911,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       try {
         setMembershipStatus('loading');
         const fetchPayload = async () => {
-          const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
+          const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
             method: 'GET',
             signal,
             requireAuth: true,
