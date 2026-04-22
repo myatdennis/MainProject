@@ -10,7 +10,11 @@ export const createAdminNotificationsController = ({ logger, service }) => ({
       return sendOk(res, result.data, { status: result.status, meta: result.meta });
     } catch (error) {
       logger.error('admin_notifications_list_failed', { requestId: req.requestId ?? null, message: error?.message ?? String(error) });
-      return sendError(res, 500, 'notifications_fetch_failed', 'Unable to fetch notifications');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Notifications service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
 
@@ -23,7 +27,11 @@ export const createAdminNotificationsController = ({ logger, service }) => ({
       return sendOk(res, result.data, { status: result.status, meta: result.meta });
     } catch (error) {
       logger.error('admin_notifications_create_failed', { requestId: req.requestId ?? null, message: error?.message ?? String(error) });
-      return sendError(res, 500, 'notifications_create_failed', 'Unable to create notification');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Notifications service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
 
@@ -36,7 +44,11 @@ export const createAdminNotificationsController = ({ logger, service }) => ({
       return sendOk(res, result.data, { status: result.status, meta: result.meta });
     } catch (error) {
       logger.error('admin_notifications_broadcast_failed', { requestId: req.requestId ?? null, message: error?.message ?? String(error) });
-      return sendError(res, 500, 'notifications_broadcast_failed', 'Unable to broadcast notifications');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Notifications service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
 
@@ -53,7 +65,11 @@ export const createAdminNotificationsController = ({ logger, service }) => ({
         notificationId: req.params.id,
         message: error?.message ?? String(error),
       });
-      return sendError(res, 500, 'notifications_update_failed', 'Unable to update notification');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Notifications service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
 
@@ -70,7 +86,11 @@ export const createAdminNotificationsController = ({ logger, service }) => ({
         notificationId: req.params.id,
         message: error?.message ?? String(error),
       });
-      return sendError(res, 500, 'notifications_delete_failed', 'Unable to delete notification');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Notifications service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
 });

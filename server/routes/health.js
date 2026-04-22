@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import {
   supabaseAuthClient,
   isSupabaseConfigured,
@@ -56,20 +57,48 @@ const probeDatabase = async () => {
   try {
     client = await pool.connect();
     await client.query('select 1');
-    await client.query('begin');
+
+    // Prefer an explicit insert/delete probe against a lightweight health
+    // table when available. This detects both write and delete permissions.
+    const probeId = randomUUID();
     try {
-      await client.query('create temp table if not exists health_write_probe (id integer) on commit drop');
-      await client.query('insert into health_write_probe(id) values (1)');
-    } finally {
-      await client.query('rollback');
+      await client.query('BEGIN');
+      const insertSql = `INSERT INTO ${HEALTH_PROBE_TABLE} (id, created_at) VALUES ($1, now())`;
+      await client.query(insertSql, [probeId]);
+      const delSql = `DELETE FROM ${HEALTH_PROBE_TABLE} WHERE id = $1`;
+      await client.query(delSql, [probeId]);
+      await client.query('COMMIT');
+      return {
+        ok: true,
+        code: 'OK',
+        table: HEALTH_PROBE_TABLE,
+        writable: true,
+      };
+    } catch (err) {
+      // If the explicit probe fails (table missing or permission issue),
+      // try a temporary table + rollback fallback which should be safe.
+      try {
+        await client.query('ROLLBACK');
+      } catch (__) {}
+      try {
+        await client.query('BEGIN');
+        await client.query('create temp table if not exists health_write_probe (id integer) on commit drop');
+        await client.query('insert into health_write_probe(id) values (1)');
+      } finally {
+        try {
+          await client.query('ROLLBACK');
+        } catch (__) {}
+      }
+      return {
+        ok: true,
+        code: 'OK_TEMP_FALLBACK',
+        table: HEALTH_PROBE_TABLE,
+        writable: true,
+        fallback: true,
+        fallbackError: err instanceof Error ? err.message : String(err),
+      };
     }
 
-    return {
-      ok: true,
-      code: 'OK',
-      table: HEALTH_PROBE_TABLE,
-      writable: true,
-    };
   } catch (error) {
     return {
       ok: false,

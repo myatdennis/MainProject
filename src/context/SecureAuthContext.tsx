@@ -61,7 +61,7 @@ import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 // are stripped from production bundles during refactors.
 const axios: any = (globalThis as any).axios ?? { isCancel: (_: any) => false, defaults: undefined };
 const logAuthRedirect = (_source?: string, _data?: any) => {};
-const setCanonicalSession = (_: any) => {};
+import { setCanonicalSession } from '../lib/canonicalAuth';
 const resolveLoginPath = () => '/login';
 const isLoginPath = () => false;
 const isAdminSurface = (_path?: string) => false;
@@ -578,6 +578,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             activeOrgId: resolvedState.activeOrgId ?? null,
             authenticated: true,
           });
+          if (import.meta.env?.DEV) {
+            // Helpful debug trace when running locally so developers can see
+            // that the in-memory canonical session snapshot was populated.
+            // This log is intentionally verbose and only enabled in dev.
+            // eslint-disable-next-line no-console
+            console.debug('[AUTH DEBUG] canonical session set', {
+              userId: session.id ?? null,
+              accessTokenPresent: Boolean(payload.accessToken ?? getAccessToken()),
+              activeOrgId: resolvedState.activeOrgId ?? null,
+            });
+          }
         } catch (e) {
           console.warn('[SecureAuth] setCanonicalSession failed', e);
         }
@@ -1229,9 +1240,59 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       try {
         // STEP 1: Load local session tokens (supabase/canonical)
               try {
-                await readSupabaseSessionTokens({ refreshIfMissing: true });
+                // Read any locally persisted Supabase/canonical tokens.
+                const { accessToken: _localAccess, refreshToken: _localRefresh } = await readSupabaseSessionTokens({ refreshIfMissing: true });
+                // If no local session is present and we're running in DEV (not E2E),
+                // attempt a non-interactive debug login to auto-bootstrap a session.
+                // This calls the server's dev-only /api/auth/_debug/demo-login endpoint
+                // which is enabled when ALLOW_DEBUG_LOGIN=true on the backend.
+                const hasLocalToken = Boolean(_localAccess || _localRefresh);
+                if (!hasLocalToken && import.meta.env?.DEV && !(typeof window !== 'undefined' && (window as any).__E2E_BYPASS)) {
+                  try {
+                    if (import.meta.env?.DEV) console.info('[AUTH DEBUG] attempting auto demo-login');
+                    const demoEmail = (import.meta as any)?.env?.VITE_DEMO_SMOKE_EMAIL ?? 'mya@the-huddle.co';
+                    const demoPassword = (import.meta as any)?.env?.VITE_DEMO_SMOKE_PASSWORD ?? 'admin123';
+                    const res = await apiRequestRaw('/api/auth/_debug/demo-login', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: { email: demoEmail, password: demoPassword },
+                      allowAnonymous: true,
+                      skipAdminGateCheck: true,
+                    });
+                    if (res && res.ok) {
+                      const body = await res.json().catch(() => null);
+                      const normalized = normalizeSessionResponsePayload(body ?? null);
+                      if (normalized) {
+                        if (import.meta.env?.DEV) console.info('[AUTH DEBUG] demo-login returned session payload — applying');
+                        applySessionPayload(normalized, { persistTokens: true, reason: 'debug_auto_login' });
+                      }
+                    } else {
+                      if (import.meta.env?.DEV) console.warn('[AUTH DEBUG] demo-login request did not succeed', res && typeof res.status === 'number' ? res.status : res);
+                    }
+                  } catch (dbgErr) {
+                    console.warn('[AUTH DEBUG] demo-login failed', dbgErr);
+                  }
+                }
               } catch (e) {
                 console.warn('[SecureAuth] failed to read local session tokens', e);
+              }
+              // Install a fail-fast timer so the UI won't remain stuck on the
+              // initializing spinner indefinitely while developers iterate.
+              try {
+                clearBootstrapFailOpenTimer();
+                if (typeof window !== 'undefined') {
+                  bootstrapFailOpenTimerRef.current = window.setTimeout(() => {
+                    if (authInitializing) {
+                      console.error('AUTH BOOTSTRAP FAILED: no session');
+                      setAuthInitializing(false);
+                      setAuthStatus('unauthenticated', 'bootstrap:timeout');
+                      setSessionStatus('unauthenticated', 'bootstrap:timeout');
+                      setBootstrapError('AUTH BOOTSTRAP FAILED: no session');
+                    }
+                  }, 8000);
+                }
+              } catch (timerErr) {
+                // ignore timer setup failures in non-browser environments
               }
         if (isStale()) return;
 
@@ -1413,6 +1474,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         } catch (_) { void 0; }
       } finally {
         if (!isStale()) {
+          // Clear the fail-open timer (if installed) so we don't fire a timeout
+          // after the bootstrap run already completed.
+          try {
+            clearBootstrapFailOpenTimer();
+          } catch (e) {
+            /* ignore */
+          }
           setAuthInitializing(false);
           setAuthBootstrapping(false);
           console.debug('[AUTH BOOTSTRAP] complete', { ts: Date.now() });

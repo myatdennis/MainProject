@@ -9,15 +9,18 @@ import { isProduction } from '../config/runtimeFlags.js';
 // Explicit paths that should bypass JWT validation when no Authorization header is present.
 // Only include the auth endpoints that must be reachable without a bearer token.
 // Do NOT permit a blanket '/auth' bypass — that broadens the attack surface.
+// Paths (relative to /api) that should bypass JWT validation when no
+// Authorization header is present. Stored without a leading slash so the
+// normalized path comparison in `shouldBypass` matches correctly.
 const JWT_AUTH_BYPASS_PATHS = [
-  '/health',
-  '/auth/login',
-  '/auth/refresh',
-  '/auth/logout',
-  '/auth/_debug/demo-login',
-  '/audit-log',
-  '/analytics',
-  '/client/courses',
+  'health',
+  'auth/login',
+  'auth/refresh',
+  'auth/logout',
+  'auth/_debug/demo-login',
+  'audit-log',
+  'analytics',
+  'client/courses',
 ];
 const DEMO_MODE_ENABLED =
   String(process.env.DEMO_MODE || process.env.ALLOW_DEMO || process.env.DEV_FALLBACK || '').toLowerCase() === 'true';

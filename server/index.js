@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env/loadEnv.js';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -2024,8 +2024,21 @@ app.get('/api/diagnostics/metrics', async (req, res, next) => {
 if (isProduction) {
   app.set('trust proxy', 1);
 }
-const PORT = Number(process.env.PORT) || 3000;
-logger.info('server_port', { port: PORT });
+let PORT = Number(process.env.PORT) || 3000;
+// Log the raw env value so operators can see intent vs. reality.
+logger.info('startup_port_env', { envPort: process.env.PORT ?? null });
+// If PORT is unset or explicitly 0 (ephemeral), default to 8888 for local/dev runs.
+if (!PORT || PORT === 0) {
+  PORT = 8888;
+  logger.warn('server_port_defaulted', { reason: 'env_port_missing_or_zero', defaultPort: PORT });
+}
+// Validate final port value to avoid silent failures.
+if (typeof PORT !== 'number' || Number.isNaN(PORT) || PORT <= 0 || PORT > 65535) {
+  console.error('[startup] FATAL CONFIG: invalid PORT value', { envPort: process.env.PORT });
+  process.exit(1);
+}
+// Emit both env and final for clarity.
+logger.info('server_port', { envPort: process.env.PORT ?? null, port: PORT });
 
 // Core middleware ordering: cookies -> JSON -> request metadata.
 // NOTE: corsMiddleware is registered at app creation (above) so it runs before
@@ -5540,8 +5553,8 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async (
     if (!inserts.length) return;
 
     try {
-      const { safeInsert } = await import('./lib/safeWrites.js');
-      await runTimedQuery('survey.assignments.materialize', () => safeInsert('assignments', inserts, { logger, requestId: null }), 10000);
+  const { safeInsert } = await import('./lib/safeWrites.js');
+  await runTimedQuery('survey.assignments.materialize', () => safeInsert('assignments', inserts, { logger, requestId: null, verify: true, verifyTimeoutMs: 5000 }), 10000);
     } catch (error) {
       logger.error('survey_assignments_materialize_failed', {
         // No request object in this helper; include what we can
@@ -5672,9 +5685,9 @@ const ensureCourseAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
     if (!inserts.length) return;
 
     try {
-    // Use safeInsert wrapper to prefer admin client and log invariants for course assignments
-    const { safeInsert } = await import('./lib/safeWrites.js');
-    await safeInsert('assignments', inserts, { logger, requestId: null });
+  // Use safeInsert wrapper to prefer admin client and log invariants for course assignments
+  const { safeInsert } = await import('./lib/safeWrites.js');
+  await safeInsert('assignments', inserts, { logger, requestId: null, verify: true, verifyTimeoutMs: 5000 });
     } catch (error) {
       logger.error('course_assignments_materialize_failed', {
         userId: userId ?? null,
@@ -17711,9 +17724,22 @@ const server = http.createServer(app);
 
 startupChecksPromise
   .then(() => {
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
-    });
+      server.listen(PORT, '0.0.0.0', () => {
+        logger.info('server_listening', { port: PORT, host: '0.0.0.0' });
+        console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
+
+        // Runtime self-check: hit the health endpoint to ensure Express is reachable
+        // Log result but do not crash the process on a transient failure.
+        (async () => {
+          try {
+            const res = await fetch(`http://127.0.0.1:${PORT}/api/health`);
+            const ok = res && res.status === 200;
+            logger.info('runtime_health_check', { port: PORT, status: res.status, ok });
+          } catch (err) {
+            logger.warn('runtime_health_check_failed', { port: PORT, error: err?.message || String(err) });
+          }
+        })();
+      });
   })
   .catch((error) => {
     console.error('[startup] refusing_to_listen_due_to_failed_startup_checks', {

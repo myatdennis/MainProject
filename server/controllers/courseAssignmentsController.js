@@ -8,7 +8,7 @@ export const createCourseAssignmentsController = ({
   requireOrgAccess,
   isFallbackMode,
 }) => ({
-  adminAssign: async (req, res) => {
+    adminAssign: async (req, res) => {
     if (!ensureSupabase(res)) return;
     try {
       const result = await service.assignAdminCourse({ req, res, requireUserContext, requireOrgAccess });
@@ -39,8 +39,13 @@ export const createCourseAssignmentsController = ({
         requestId: req.requestId ?? null,
         code: error?.code ?? null,
         message: error?.message ?? null,
+        stack: error?.stack ?? null,
       });
-      return sendError(res, 500, 'assignment_failed', 'Unable to assign course');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Assignment service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
   clientList: async (req, res) => {
@@ -86,7 +91,11 @@ export const createCourseAssignmentsController = ({
         stack: error?.stack ?? null,
         query: req.query ?? null,
       });
-      return sendError(res, 500, 'fetch_failed', 'Unable to load assignments');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Assignments service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
   clientUpdateProgress: async (req, res) => {
@@ -103,8 +112,13 @@ export const createCourseAssignmentsController = ({
         requestId: req.requestId ?? null,
         code: error?.code ?? null,
         message: error?.message ?? null,
+        stack: error?.stack ?? null,
       });
-      return sendError(res, 500, 'assignment_update_failed', 'Unable to update assignment progress');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Assignments service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
   adminList: async (req, res) => {
@@ -124,8 +138,13 @@ export const createCourseAssignmentsController = ({
         requestId: req.requestId ?? null,
         code: error?.code ?? null,
         message: error?.message ?? null,
+        stack: error?.stack ?? null,
       });
-      return sendError(res, 500, 'assignments_load_failed', 'Unable to load assignments');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Assignments service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
   adminDelete: async (req, res) => {
@@ -140,8 +159,13 @@ export const createCourseAssignmentsController = ({
         requestId: req.requestId ?? null,
         code: error?.code ?? null,
         message: error?.message ?? null,
+        stack: error?.stack ?? null,
       });
-      return sendError(res, 500, 'assignment_delete_failed', 'Unable to remove assignment');
+      const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+      if (isDbDown) {
+        return sendError(res, 503, 'database_unavailable', 'Assignments service temporarily unavailable');
+      }
+      return sendError(res, 503, error?.code ?? 'service_unavailable', error?.message ?? 'Service temporarily unavailable');
     }
   },
 });

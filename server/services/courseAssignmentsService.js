@@ -865,7 +865,7 @@ export const createCourseAssignmentsService = ({
         // Use safeUpsert to perform idempotent update via admin client.
         const sanitized = sanitizeAssignmentRecordForSchema(changes, { includeUserIdUuid: assignmentsSupportUserIdUuid });
         const upsertPayload = [{ id: patchId, ...sanitized }];
-        const { data: upserted, error: upsertError } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null });
+  const { data: upserted, error: upsertError } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null, verify: true, verifyTimeoutMs: 5000 });
         if (upsertError) throw upsertError;
         const updatedRow = Array.isArray(upserted) ? upserted[0] : upserted;
         if (updatedRow) updatedRows.push(updatedRow);
@@ -874,7 +874,7 @@ export const createCourseAssignmentsService = ({
       let insertedRows = [];
       if (inserts.length > 0) {
         const payload = inserts.map((record) => sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }));
-        const { data: newRows, error: insertError } = await safeInsert('assignments', payload, { select: '*', requestId: req.requestId ?? null });
+  const { data: newRows, error: insertError } = await safeInsert('assignments', payload, { select: '*', requestId: req.requestId ?? null, verify: true, verifyTimeoutMs: 5000 });
         if (insertError) {
           const errorText = `${insertError?.constraint || ''} ${insertError?.message || ''} ${insertError?.details || ''}`.toLowerCase();
           const isIdempotencyConflict =

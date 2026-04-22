@@ -374,6 +374,27 @@ const allowDemoBypassForRequest = (req) => {
   return explicitBypassSignal;
 };
 
+// Backwards-compatible dev helper: allow the dev-only debug login endpoint to be
+// exercised without E2E test mode when the environment explicitly enables it.
+// This is safe because it's gated to non-production and to requests that appear
+// to originate from local/dev hosts (see `isDevRequest`). Keep this small and
+// explicit to avoid widening the attack surface.
+const allowDevDebugLogin = (req) => {
+  try {
+    const enabled = String(process.env.ALLOW_DEBUG_LOGIN || '').trim().toLowerCase() === 'true';
+    if (!enabled) return false;
+    if (isProduction) return false;
+    // Only allow when request looks like a developer/local request.
+    return isDevRequest(req);
+  } catch (e) {
+    return false;
+  }
+};
+
+const shouldAllowDemoBypass = (req) => {
+  return allowDemoBypassForRequest(req) || allowDevDebugLogin(req);
+};
+
 const buildDemoAuthContextPayload = ({ role = 'learner' } = {}) => {
   const wantsAdmin = String(role || '').toLowerCase() === 'admin';
   const demoUser = wantsAdmin
@@ -916,7 +937,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     });
   }
 
-  if (!token && allowDemoBypassForRequest(req)) {
+  if (!token && shouldAllowDemoBypass(req)) {
     authLog('warn', 'granting_demo_auto_auth_bypass', {
       path: req.originalUrl || req.url,
       host: req.headers?.host,
@@ -970,7 +991,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     }
 
     if (!supabase) {
-      if (allowDemoBypassForRequest(req)) {
+      if (shouldAllowDemoBypass(req)) {
         authLog('warn', 'supabase_unavailable_demo_auto_auth_bypass', {
           path: req.originalUrl || req.url,
           host: req.headers?.host,
@@ -993,7 +1014,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   }
 
   if (!supabaseUser) {
-    if (allowDemoBypassForRequest(req)) {
+    if (shouldAllowDemoBypass(req)) {
       authLog('warn', 'token_validation_failed_demo_auto_auth_bypass', {
         path: req.originalUrl || req.url,
       });

@@ -92,19 +92,18 @@ export const createClientSurveyAssignmentsController = ({
         });
 
         // Fail fast for DB/service availability issues with a clear 503 envelope
-        const isServiceUnavailable =
-          error?.statusCode === 503 ||
-          String(error?.code || '').toUpperCase() === 'DATABASE_UNAVAILABLE' ||
-          String(error?.code || '').toUpperCase() === 'SUPABASE_TIMEOUT';
-        if (isServiceUnavailable) {
-          return sendError(res, 503, 'SERVICE_UNAVAILABLE', 'Survey service temporarily unavailable');
+        const isDbDown = error?.statusCode === 503 || String(error?.code || '').toLowerCase().includes('database') || String(error?.code || '').toLowerCase().includes('timeout');
+        if (isDbDown) {
+          return sendError(res, 503, 'database_unavailable', 'Survey service temporarily unavailable');
         }
 
+        // Unknown/unexpected errors are returned as a normalized service-unavailable
+        // envelope rather than a raw 500 to avoid leaking internals to clients.
         return sendError(
           res,
-          error?.statusCode ?? 500,
-          error?.code ?? 'client_assigned_surveys_failed',
-          error?.userMessage ?? error?.message ?? 'Unable to load assigned surveys',
+          503,
+          error?.code ?? 'service_unavailable',
+          error?.userMessage ?? error?.message ?? 'Service temporarily unavailable',
         );
       }
     },
