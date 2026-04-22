@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 
-const BASE = process.env.ANALYTICS_SMOKE_BASE || 'http://127.0.0.1:3000';
+const BASE = process.env.ANALYTICS_SMOKE_BASE || 'http://127.0.0.1:8888';
 const ORG_ID = process.env.ANALYTICS_SMOKE_ORG_ID || process.env.E2E_SANDBOX_ORG_ID || 'demo-sandbox-org';
 const USE_E2E_BYPASS = String(process.env.SMOKE_USE_E2E_BYPASS || '').toLowerCase() === 'true';
 const SMOKE_USER_ID = process.env.SMOKE_USER_ID || '00000000-0000-0000-0000-000000000002';

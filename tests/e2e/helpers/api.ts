@@ -18,9 +18,13 @@ async function apiPost(path: string, body: any, extraHeaders?: Record<string, st
   try {
     console.log('[E2E apiPost] POST', url, JSON.stringify(body));
   } catch {}
+  // In E2E mode we prefer using the explicit x-e2e-bypass / x-user-role headers
+  // so the server can synthesize a demo session. Avoid sending a spurious
+  // Authorization header with an invalid token which can cause the server to
+  // attempt token validation and sometimes reject the request before the
+  // demo-bypass path is considered.
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: 'Bearer e2e-access-token',
     'x-user-role': 'admin',
     'x-e2e-bypass': 'true',
     'x-org-id': TEST_ORG_ID,
@@ -160,7 +164,19 @@ export async function provisionUser(overrides: {
     membershipRole,
   });
 
-  return { email, organizationId, ...response };
+  // Normalize server response shapes: some server wrappers place metadata
+  // under a `meta` object while older endpoints returned top-level keys.
+  const normalized = Object.assign({}, response);
+  if (!normalized.setupLink && normalized.meta?.setupLink) normalized.setupLink = normalized.meta.setupLink;
+  if (normalized.created === undefined && normalized.meta?.created !== undefined) normalized.created = normalized.meta.created;
+  if (normalized.existingAccount === undefined && normalized.meta?.existingAccount !== undefined)
+    normalized.existingAccount = normalized.meta.existingAccount;
+  if (normalized.membershipCreated === undefined && normalized.meta?.membershipCreated !== undefined)
+    normalized.membershipCreated = normalized.meta.membershipCreated;
+  if (normalized.emailSent === undefined && normalized.meta?.emailSent !== undefined) normalized.emailSent = normalized.meta.emailSent;
+  if (normalized.emailStatus === undefined && normalized.meta?.emailStatus !== undefined) normalized.emailStatus = normalized.meta.emailStatus;
+
+  return { email, organizationId, ...normalized };
 }
 
 export default { createAndPublishCourse, assignCourseToAll, provisionUser };

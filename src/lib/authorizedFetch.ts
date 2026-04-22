@@ -1,7 +1,7 @@
 import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { getCanonicalAccessToken, waitForAuthReady } from './canonicalAuth';
 import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
-import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
+import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest, pathRequiresOrgHeader } from './orgContext';
 import { resolveApiUrl } from '../config/apiBase';
 
 export class NotAuthenticatedError extends Error {
@@ -251,7 +251,24 @@ export default async function authorizedFetch(
       }
     }
 
-    const orgId = resolveOrgHeaderForRequest(url);
+    // Resolve org header and enforce presence for guarded API paths.
+    let orgId: string | null = null;
+    try {
+      orgId = resolveOrgHeaderForRequest(url);
+    } catch (e) {
+      // resolveOrgHeaderForRequest may throw when missing org context for
+      // non-admin endpoints. We'll normalize behavior here.
+      orgId = null;
+    }
+    // If the path requires an org and we couldn't resolve one, block the request.
+    if (pathRequiresOrgHeader(url) && !orgId) {
+      const err = new Error('missing_org_context');
+      // Provide diagnostic metadata on the error to aid debugging.
+      (err as any).code = 'missing_org_context';
+      (err as any).requestId = requestId;
+      console.error('[authorizedFetch] blocked request due to missing org context', { url: extractPathname(url), requestId });
+      throw err;
+    }
     if (orgId) {
       headers.set(ORG_HEADER_NAME, orgId);
       headers.set(LEGACY_ORG_HEADER_NAME, orgId);

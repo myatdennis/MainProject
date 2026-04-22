@@ -1,3 +1,5 @@
+import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
+
 export const createAdminSurveysService = ({
   logger,
   supabase,
@@ -276,7 +278,7 @@ export const createAdminSurveysService = ({
     }
 
     await runSupabaseQueryWithRetry('admin.surveys.delete.assignments', () =>
-      supabase.from('survey_assignments').delete().eq('survey_id', surveyIdForDelete),
+      safeDelete('survey_assignments', (q) => q.eq('survey_id', surveyIdForDelete), { requestId: req.requestId ?? null }),
     );
     await runSupabaseQueryWithRetry('admin.surveys.delete', () =>
       supabase.from('surveys').delete().eq('id', surveyIdForDelete),

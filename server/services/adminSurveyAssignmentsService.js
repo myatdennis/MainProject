@@ -1,3 +1,5 @@
+import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
+
 export const createAdminSurveyAssignmentsService = ({
   supabase,
   sql,
@@ -747,10 +749,10 @@ export const createAdminSurveyAssignmentsService = ({
       }
 
       if (hardDelete) {
-        const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
+        const { error } = await safeDelete('assignments', (q) => q.eq('id', assignmentId), { requestId: req.requestId ?? null });
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('assignments').update({ active: false }).eq('id', assignmentId);
+        const { data: upserted, error } = await safeUpsert('assignments', [{ id: assignmentId, active: false }], { select: '*', requestId: req.requestId ?? null });
         if (error) throw error;
       }
 

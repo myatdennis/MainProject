@@ -36,9 +36,10 @@ export const renderAuthState = ({
     return <BootstrapLoading />;
   }
 
-  const shouldBypassErrorOverlay = authStatus === 'error' && isPublicAuthPath;
+  // ...existing code...
 
-  if (bootstrapError && authStatus !== 'authenticated') {
+  // Always show error overlay if bootstrapError is set and not initializing, regardless of authStatus
+  if (bootstrapError && !authInitializing) {
     return (
       <BootstrapErrorOverlay
         message={bootstrapError}
@@ -48,7 +49,7 @@ export const renderAuthState = ({
     );
   }
 
-  if (authStatus === 'error' && !shouldBypassErrorOverlay) {
+  if (authStatus === 'error') {
     return (
       <BootstrapErrorOverlay
         message={bootstrapError || 'We could not restore your session. Please try again.'}
@@ -58,23 +59,12 @@ export const renderAuthState = ({
     );
   }
 
-  if (authStatus === 'error' && shouldBypassErrorOverlay) {
-    return <>{children}</>;
-  }
-
   if (authStatus === 'unauthenticated') {
     if (!isAuthenticatedUser && (isPublicAuthPath || isMarketingLanding)) {
       return <>{children}</>;
     }
     if (authInitializing) {
-      console.debug('[AUTH REDIRECT DECISION]', {
-        decision: 'suppressed_bootstrap_in_progress',
-        authStatus,
-        authInitializing,
-        shouldRedirectToLogin,
-        pathname,
-        ts: Date.now(),
-      });
+      // ...existing code...
       if (isProtectedAppRoute && !isPublicAuthPath) return <>{children}</>;
       return <BootstrapLoading />;
     }

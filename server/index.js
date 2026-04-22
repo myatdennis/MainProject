@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 import { createClient } from '@supabase/supabase-js';
+import { safeInsert, safeUpsert, safeDelete } from './lib/safeWrites.js';
 // --- ENV CHECK: backend startup diagnostics (do NOT log secrets) ---
 try {
   console.info('[ENV CHECK][BACKEND]', {
@@ -26,6 +27,19 @@ try {
 try {
   if (process.env.E2E_TEST_MODE && Number(process.env.PORT || 0) === 3000) {
     console.error('[startup] FATAL CONFIG: E2E_TEST_MODE must not run on port 3000. Aborting startup.');
+    process.exit(1);
+  }
+} catch (e) {
+  // non-fatal
+}
+
+// Fail-fast: require SUPABASE_SERVICE_ROLE_KEY in non-demo, non-dev production runs.
+try {
+  const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+  const isDemo = String(process.env.DEMO_MODE || '').toLowerCase() === 'true';
+  const isE2E = Boolean(process.env.E2E_TEST_MODE);
+  if (!isDev && !isDemo && !isE2E && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('[startup] FATAL CONFIG: SUPABASE_SERVICE_ROLE_KEY is required in production. Aborting startup.');
     process.exit(1);
   }
 } catch (e) {
@@ -5863,8 +5877,8 @@ const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedT
 
   if (!hasAssignments) {
     try {
-      const { error } = await supabase.from('survey_assignments').delete().eq('survey_id', surveyId);
-      if (error) throw error;
+    const { safeDelete } = await import('./lib/safeWrites.js');
+    await safeDelete('survey_assignments', (q) => q.eq('survey_id', surveyId), { logger });
     } catch (error) {
       if (isMissingRelationError(error) || isMissingColumnError(error)) {
         logger.warn('survey_assignments_delete_skipped', {
@@ -5880,7 +5894,7 @@ const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedT
   }
 
   try {
-    const { error } = await supabase.from('survey_assignments').upsert(payload);
+    const { data, error } = await safeUpsert('survey_assignments', payload, { requestId: requestId ?? null });
     if (error) throw error;
   } catch (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
@@ -10980,7 +10994,7 @@ async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
       } catch (selErr) {
         // continue
       }
-      return supabase.from('assignments').delete().eq('user_id', userId);
+      return safeDelete('assignments', (q) => q.eq('user_id', userId), { requestId });
     },
     { userId, requestId },
   );
@@ -11010,13 +11024,13 @@ async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
           }
         }
       } catch (selErr) {}
-      return supabase.from('assignments').delete().eq('user_id_uuid', userId);
+      return safeDelete('assignments', (q) => q.eq('user_id_uuid', userId), { requestId });
     },
     { userId, requestId },
   );
   await runOptionalCleanupMutation(
     'delete_user.survey_assignments',
-    () => supabase.from('survey_assignments').delete().contains('user_ids', [userId]),
+    () => safeDelete('survey_assignments', (q) => q.contains('user_ids', [userId]), { requestId }),
     { userId, requestId },
   );
   await runOptionalCleanupMutation(
@@ -14422,7 +14436,7 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
             }
           }
         } catch (selErr) {}
-        return supabase.from('assignments').delete().eq('organization_id', id);
+        return safeDelete('assignments', (q) => q.eq('organization_id', id), { requestId: req.requestId ?? null });
       },
       { orgId: id, requestId: req.requestId ?? null },
     );
@@ -14451,13 +14465,13 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
             }
           }
         } catch (selErr) {}
-        return supabase.from('assignments').delete().eq('org_id', id);
+        return safeDelete('assignments', (q) => q.eq('org_id', id), { requestId: req.requestId ?? null });
       },
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
       'delete_org.survey_assignments',
-      () => supabase.from('survey_assignments').delete().contains('organization_ids', [id]),
+      () => safeDelete('survey_assignments', (q) => q.contains('organization_ids', [id]), { requestId: req.requestId ?? null }),
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(

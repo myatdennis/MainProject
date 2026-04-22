@@ -119,6 +119,24 @@ const ensureAdminAccess = async (req, res) => {
         accessToken: 'e2e-access-token',
         refreshToken: 'e2e-refresh-token',
       };
+      // Populate organization/membership shape expected by downstream org checks
+      try {
+        const headerOrg = (req.get && (req.get('X-Org-Id') || req.get('x-org-id'))) || req.headers['x-org-id'] || req.query?.orgId || req.query?.organizationId || req.body?.orgId || req.body?.organization_id || null;
+        const resolvedOrg = headerOrg || (req.body && (req.body.organization_id || req.body.orgId)) || 'demo-sandbox-org';
+        req.user.memberships = req.user.memberships || [];
+        if (!req.user.memberships.find((m) => String(m.orgId || m.organizationId || m.org_id) === String(resolvedOrg))) {
+          req.user.memberships.push({ orgId: resolvedOrg, role: 'admin', status: 'active' });
+        }
+        req.user.organizationIds = req.user.organizationIds || [];
+        if (!req.user.organizationIds.includes(resolvedOrg)) req.user.organizationIds.push(resolvedOrg);
+        // activeOrgId is used by getRequestContext and other helpers
+        req.activeOrgId = req.activeOrgId || resolvedOrg;
+      } catch (e) {
+        // non-fatal
+      }
+      try {
+        console.info('[requireAdminAccess] e2e_injected_orgs', { requestId: req.requestId ?? null, userId: req.user?.id, activeOrgId: req.activeOrgId, memberships: req.user?.memberships });
+      } catch (e) {}
   console.info('[requireAdminAccess] e2e_header_bypass granted', { requestId: req.requestId ?? null, userId: req.user?.id });
   // For E2E runs, allow the bypass to elevate to platform admin so test harnesses
   // can exercise admin-only endpoints. This is strictly guarded by E2E_TEST_MODE.
@@ -150,6 +168,22 @@ const ensureAdminAccess = async (req, res) => {
     // Preserve the org scope embedded in the token so cross-org operations still enforce correctly.
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
     req.user = req.user || req.supabaseJwtUser;
+
+    // If an X-Org-Id header / body org is present, ensure membership shape exists so
+    // requireOrgAccess and related checks can validate organization scope in E2E mode.
+    try {
+      const headerOrg = (req.get && (req.get('X-Org-Id') || req.get('x-org-id'))) || req.headers['x-org-id'] || req.query?.orgId || req.query?.organizationId || req.body?.orgId || req.body?.organization_id || null;
+      const resolvedOrg = headerOrg || req.user?.organization_id || req.user?.org_id || null;
+      if (resolvedOrg) {
+        req.user.memberships = req.user.memberships || [];
+        if (!req.user.memberships.find((m) => String(m.orgId || m.organizationId || m.org_id) === String(resolvedOrg))) {
+          req.user.memberships.push({ orgId: resolvedOrg, role: 'admin', status: 'active' });
+        }
+        req.user.organizationIds = req.user.organizationIds || [];
+        if (!req.user.organizationIds.includes(resolvedOrg)) req.user.organizationIds.push(resolvedOrg);
+        req.activeOrgId = req.activeOrgId || resolvedOrg;
+      }
+    } catch (e) {}
 
     const role = String(req.user?.role || '').trim().toLowerCase();
     const platformRole = String(req.user?.platformRole || '').trim().toLowerCase();

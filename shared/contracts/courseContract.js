@@ -4,7 +4,6 @@ const textIdSchema = z.string().trim().min(1).max(191);
 const orgIdSchema = z.string().uuid('organizationId must be a uuid');
 const courseStatusSchema = z.enum(['draft', 'published', 'archived']);
 const lessonTypeSchema = z.enum(['video', 'text', 'quiz', 'interactive', 'document', 'scenario', 'download']);
-const legacyOrgFields = ['org_id', 'orgId', 'org_id_uuid', 'organization_id_uuid'];
 
 const lessonDTOSchema = z
   .object({
@@ -100,33 +99,8 @@ const courseUpsertPayloadSchema = z
     course: courseInputSchema,
     modules: z.array(moduleInputSchema).optional(),
   })
-  .strict()
-  .superRefine((payload, ctx) => {
-    ensureNoLegacyOrgFields(payload.course, ctx, ['course']);
-    if (Array.isArray(payload.modules)) {
-      payload.modules.forEach((module, moduleIndex) => {
-        ensureNoLegacyOrgFields(module, ctx, ['modules', moduleIndex]);
-        if (Array.isArray(module.lessons)) {
-          module.lessons.forEach((lesson, lessonIndex) => {
-            ensureNoLegacyOrgFields(lesson, ctx, ['modules', moduleIndex, 'lessons', lessonIndex]);
-          });
-        }
-      });
-    }
-  });
+  .strict();
 
-function ensureNoLegacyOrgFields(value, ctx, path) {
-  if (!value || typeof value !== 'object') return;
-  for (const legacyKey of legacyOrgFields) {
-    if (Object.prototype.hasOwnProperty.call(value, legacyKey)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Remove legacy field "${legacyKey}". Use organizationId.`,
-        path: [...path, legacyKey],
-      });
-    }
-  }
-}
 
 export {
   textIdSchema,

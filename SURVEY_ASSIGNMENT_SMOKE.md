@@ -29,7 +29,7 @@ Run:
 ```bash
 SMOKE_ADMIN_BEARER_TOKEN="<admin_token>" \
 SMOKE_LEARNER_BEARER_TOKEN="<learner_token>" \
-SURVEY_SMOKE_API_BASE_URL="http://127.0.0.1:3000" \
+SURVEY_SMOKE_API_BASE_URL="http://127.0.0.1:8888" \
 SURVEY_SMOKE_ORG_ID="demo-sandbox-org" \
 npm run smoke:survey-assignment:real-db
 ```
@@ -65,7 +65,7 @@ If you want to verify against real auth, provide both admin and learner bearer t
 ```bash
 SMOKE_ADMIN_BEARER_TOKEN="<admin_token>" \
 SMOKE_LEARNER_BEARER_TOKEN="<learner_token>" \
-SURVEY_SMOKE_API_BASE_URL="http://localhost:3000" \
+SURVEY_SMOKE_API_BASE_URL="http://127.0.0.1:8888" \
 SURVEY_SMOKE_ORG_ID="demo-sandbox-org" \
 npm run smoke:survey-assignment
 ```

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-const inferredPort = Number(process.env.PORT) || 3000;
-const baseUrl = process.env.HEALTH_BASE_URL || `http://localhost:${inferredPort}`;
+// Default health check target uses the E2E API port 8888 for local/dev checks
+// to match Playwright/E2E orchestration which runs the API on 8888.
+const inferredPort = Number(process.env.PORT) || 8888;
+const baseUrl = process.env.HEALTH_BASE_URL || `http://127.0.0.1:${inferredPort}`;
 const normalizeBase = (value) => value.replace(/\/$/, '');
 const normalizedBase = normalizeBase(baseUrl);
 

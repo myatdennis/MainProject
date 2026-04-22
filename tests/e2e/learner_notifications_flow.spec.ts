@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { getApiBaseUrl, getFrontendBaseUrl, waitForOk } from './helpers/env';
+import createE2ERequestContext from './helpers/requestContext';
 
 const apiBase = getApiBaseUrl();
 const frontendBase = getFrontendBaseUrl();
@@ -46,7 +47,9 @@ test.describe('learner notifications end-to-end', () => {
     await expect(page.getByLabel('Notifications')).toBeVisible({ timeout: 20_000 });
 
     if (notificationsDisabled || !notificationId) {
-      const learnerList = await page.request.get('/api/learner/notifications', { failOnStatusCode: false });
+      const apiCtx = await createE2ERequestContext({ baseURL: apiBase });
+      const learnerList = await apiCtx.get('/api/learner/notifications');
+      await apiCtx.dispose();
       expect(learnerList.status()).toBeLessThan(500);
 
       await page.getByLabel('Notifications').click();
@@ -54,9 +57,10 @@ test.describe('learner notifications end-to-end', () => {
       return;
     }
 
+    const apiCtx = await createE2ERequestContext({ baseURL: apiBase });
     let visibleInLearnerApi = false;
     for (let attempt = 0; attempt < 25; attempt += 1) {
-      const response = await page.request.get('/api/learner/notifications', { failOnStatusCode: false });
+      const response = await apiCtx.get('/api/learner/notifications');
       if (response.ok()) {
         const payload = await response.json();
         const records = Array.isArray(payload?.data) ? payload.data : [];
@@ -67,6 +71,7 @@ test.describe('learner notifications end-to-end', () => {
       }
       await page.waitForTimeout(400);
     }
+    await apiCtx.dispose();
     expect(visibleInLearnerApi).toBe(true);
 
     await page.getByLabel('Notifications').click();
@@ -75,10 +80,9 @@ test.describe('learner notifications end-to-end', () => {
     await page.getByText(title).click();
 
     let unreadCleared = false;
+    const apiCtx2 = await createE2ERequestContext({ baseURL: apiBase });
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const unreadResponse = await page.request.get('/api/learner/notifications?unread_only=true', {
-        failOnStatusCode: false,
-      });
+      const unreadResponse = await apiCtx2.get('/api/learner/notifications?unread_only=true');
       if (unreadResponse.ok()) {
         const unreadPayload = await unreadResponse.json();
         const unreadRecords = Array.isArray(unreadPayload?.data) ? unreadPayload.data : [];
@@ -89,6 +93,7 @@ test.describe('learner notifications end-to-end', () => {
       }
       await page.waitForTimeout(400);
     }
+    await apiCtx2.dispose();
 
     expect(unreadCleared).toBe(true);
   });

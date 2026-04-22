@@ -1,7 +1,7 @@
 import type { UserMembership, UserSession } from '../lib/secureStorage';
 import type { OrgContextSnapshot } from '../store/courseStoreOrgBridge';
 
-export type OrgResolutionStatus = 'idle' | 'resolving' | 'ready' | 'error';
+export type OrgResolutionStatus = 'idle' | 'resolving' | 'ready' | 'error' | 'degraded';
 export type ActiveOrgSource =
   | 'requested_hint'
   | 'preference'
@@ -80,7 +80,7 @@ export const deriveOrgContextSnapshot = ({
   lastActiveOrgId: string | null;
   user: UserSession | null;
 }): OrgContextSnapshot => {
-  const normalizedMembership = membershipStatus ?? 'idle';
+  const normalizedMembership = normalizeMembershipStatusFlag(membershipStatus ?? undefined, false);
   const sessionReady = sessionStatus === 'authenticated';
   const membershipReady = normalizedMembership === 'ready' || normalizedMembership === 'degraded';
 

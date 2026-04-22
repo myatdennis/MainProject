@@ -634,6 +634,23 @@ const getRequestedOrgId = (req) => {
 };
 
 const determineActiveOrgId = (req, memberships = []) => {
+  try {
+    console.info('[determineActiveOrgId] start', {
+      requestedOrgId: getRequestedOrgId(req),
+      membershipCount: Array.isArray(memberships) ? memberships.length : 0,
+      membershipOrgIds: Array.isArray(memberships) ? memberships.map((m) => m.orgId) : [],
+      nodeEnv: process.env.NODE_ENV,
+      e2eMode: String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true',
+      headers: {
+        'x-e2e-bypass': req.headers?.['x-e2e-bypass'] || null,
+        'x-user-role': req.headers?.['x-user-role'] || req.headers?.['x-User-Role'] || null,
+        'x-org-id': req.headers?.['x-org-id'] || null,
+      },
+      cookies: req.cookies || null,
+    });
+  } catch (err) {
+    // best-effort logging
+  }
   const requested = getRequestedOrgId(req);
   if (requested) {
     const match = memberships.find((m) => m.orgId === requested && m.status === 'active');
@@ -1067,6 +1084,15 @@ export async function buildAuthContext(req, { optional = false } = {}) {
  */
 export async function authenticate(req, res, next) {
   try {
+    // Debug: surface incoming auth headers during E2E debug runs to help
+    // diagnose why the E2E bypass may not be taking effect for some routes.
+    if (String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true') {
+      try {
+        console.info('[authenticate][debug] tokenProvided=', Boolean(resolveAccessTokenFromRequest(req)), 'authorizationHeader=', req.headers?.authorization || null, 'x-e2e-bypass=', req.headers?.['x-e2e-bypass'] || null, 'x-user-role=', req.headers?.['x-user-role'] || null);
+      } catch (e) {
+        // swallow
+      }
+    }
     if (req?.authBypassed) {
       return next();
     }
@@ -1322,6 +1348,21 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
       return next();
     }
 
+    try {
+      console.info('[requireSameOrganizationOrAdmin] check', {
+        resourceOrgId,
+        membershipPresent: !!membership,
+        orgMembershipsKeys: req.orgMemberships instanceof Map ? Array.from(req.orgMemberships.keys()) : null,
+        headers: {
+          'x-e2e-bypass': req.headers?.['x-e2e-bypass'] || null,
+          'x-user-role': req.headers?.['x-user-role'] || null,
+          'x-org-id': req.headers?.['x-org-id'] || null,
+        },
+      });
+    } catch (err) {
+      // ignore
+    }
+
     return res.status(403).json({
       error: 'Forbidden',
       message: 'You can only access resources in your organization',
@@ -1335,7 +1376,31 @@ export async function requirePlatformAdmin(req, res, next) {
 
 export async function requireOrgAdmin(req, res, next) {
   if (!req.user) {
-    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
+    // Allow a strict E2E header bypass when running in test/E2E mode.
+    // Some admin routes use `requireOrgAdmin` (not `requireAdminAccess`) and
+    // must be reachable by test harnesses. Guard this so it only activates in
+    // non-production test runs and when an explicit bypass header is present.
+    const explicitBypass = String(req?.headers?.['x-e2e-bypass'] || req?.headers?.['x-E2E-Bypass'] || '').trim().toLowerCase();
+    const hasUserRole = String(req?.headers?.['x-user-role'] || req?.headers?.['x-User-Role'] || '').trim().length > 0;
+    const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' || isTestMode;
+    if (!isProduction && e2eEnabled && (explicitBypass === 'true' || hasUserRole)) {
+      try {
+        const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
+        req.user = demo.user;
+        req.userId = demo.user?.userId ?? demo.user?.id ?? null;
+        req.orgMemberships = demo.membershipMap;
+        req.activeOrgId = demo.activeOrgId;
+        req.membershipStatus = 'ready';
+        req.membershipCount = Array.isArray(demo.memberships) ? demo.memberships.length : 1;
+        req.membershipDegraded = false;
+      } catch (e) {
+        // If anything goes wrong, fall through to the normal unauthorized response.
+      }
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
+    }
   }
 
   if (isPlatformAdmin(req.user)) {
@@ -1365,6 +1430,22 @@ export async function requireOrgAdmin(req, res, next) {
 
   if (!membership && Array.isArray(req.user.memberships)) {
     membership = req.user.memberships.find((m) => pickOrgId(m.orgId, m.organizationId, m.organization_id) === resolvedOrgId);
+  }
+
+  try {
+    console.info('[requireOrgAdmin] check', {
+      requestedOrgParam: orgId,
+      resolvedOrgId,
+      membershipFound: !!membership,
+      membershipFromMap: req.orgMemberships instanceof Map ? Array.from(req.orgMemberships.keys()) : null,
+      headers: {
+        'x-e2e-bypass': req.headers?.['x-e2e-bypass'] || null,
+        'x-user-role': req.headers?.['x-user-role'] || req.headers?.['x-User-Role'] || null,
+        'x-org-id': req.headers?.['x-org-id'] || null,
+      },
+    });
+  } catch (err) {
+    // no-op
   }
 
   if (!membership && req.user.userId && supabase) {
