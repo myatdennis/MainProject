@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from 'react';
 import { LazyImage } from '../../components/PerformanceComponents';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Clock, Search, Filter, ArrowRight, Inbox } from 'lucide-react';
@@ -8,7 +8,7 @@ import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import AsyncStatePanel from '../../components/system/AsyncStatePanel';
-import { courseStore } from '../../store/courseStore';
+import { courseStore, getInitState } from '../../store/courseStore';
 import { normalizeCourse } from '../../utils/courseNormalization';
 import { getAssignmentsForUser } from '../../utils/assignmentStorage';
 import {
@@ -51,6 +51,10 @@ const ClientCourses = () => {
     (sessionStatus !== 'authenticated' || membershipStatus === 'error');
   const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'completed' | 'not-started'>('all');
   const [coursesError, setCoursesError] = useState<string | null>(null);
+  // UI state: whether the app is blocked waiting for the user to select an org
+  // (courseStore.init may return early and emit diagnostics). We also listen
+  // for global missing-org events dispatched by apiClient.
+  const [orgSelectionRequired, setOrgSelectionRequired] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -90,6 +94,19 @@ const ClientCourses = () => {
   );
 
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
+  const [hydratingCourses, setHydratingCourses] = useState(false);
+
+  useEffect(() => {
+    // Emit mount-time auth snapshot for E2E tracing so we can see why init may not run.
+    console.info('[HYDRATION TRACE]', {
+      step: 'client_mount_snapshot',
+      learnerAuthReady,
+      learnerAuthLoading: learnerAuthLoading ?? false,
+      sessionStatus,
+      membershipStatus,
+      activeOrgId,
+    });
+  }, [learnerAuthReady, sessionStatus, membershipStatus, activeOrgId]);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const assignmentsRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const assignmentRefreshCooldownUntilRef = useRef(0);
@@ -97,22 +114,92 @@ const ClientCourses = () => {
   const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
   const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
   const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
+  const storeInitState = useSyncExternalStore(courseStore.subscribe, getInitState);
   const normalizedCoursesAll = useMemo(() => allCourses.map(normalizeCourse), [allCourses]);
 
   useEffect(() => {
-    if (!learnerAuthReady) {
-      return;
-    }
-    if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
-      return;
-    }
+    // Trigger a catalog init and await learner-catalog hydration so we can
+    // enforce ordering: assignments -> hydration -> store write -> UI render.
+    if (!learnerAuthReady) return;
+    let mounted = true;
     setCoursesError(null);
-    courseStore.init().catch((err) => {
-      console.warn('Failed to initialize course store:', err);
-      const message = err instanceof Error ? err.message : 'Unable to load course catalog right now.';
-      setCoursesError(message || 'Unable to load course catalog right now.');
-    });
+    (async () => {
+      try {
+        console.info('[HYDRATION TRACE]', { step: 'client_init_trigger', learnerId });
+        setHydratingCourses(true);
+        await courseStore.init();
+        // Reset org-selection UI state if init succeeded
+        if (mounted) setOrgSelectionRequired(false);
+  console.info('[HYDRATION TRACE]', { step: 'client_init_complete', learnerId, storeInitState: getInitState() });
+      } catch (err) {
+        console.warn('Failed to initialize course store:', err);
+        const message = err instanceof Error ? err.message : 'Unable to load course catalog right now.';
+        // If the init was blocked due to missing org, courseStore emits a
+        // diagnostic and we surface a user-friendly UI state instead of
+        // leaving the screen spinning indefinitely.
+        if (String(message).includes('org_selection_required') || String(message).includes('missing_org_context')) {
+          if (mounted) setOrgSelectionRequired(true);
+        }
+        if (mounted) setCoursesError(message || 'Unable to load course catalog right now.');
+      } finally {
+        if (mounted) setHydratingCourses(false);
+      }
+    })();
+    return () => { mounted = false; };
   }, [adminCatalogState.phase, learnerCatalogState.status, learnerAuthReady]);
+
+  // Listen for global catalog warnings and missing-org events so we can render
+  // an explicit fallback UI instead of an infinite spinner.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail || {};
+      const eventType = typeof detail.event === 'string' ? detail.event : null;
+      if (eventType === 'org_selection_required') {
+        setOrgSelectionRequired(true);
+      }
+    };
+    const orgRequiredHandler = () => {
+      // apiClient dispatches this when a guarded API call was blocked due to
+      // unresolved org context. Surface the selection required UI.
+      setOrgSelectionRequired(true);
+    };
+    window.addEventListener('huddle:catalog-warning', handler as EventListener);
+    window.addEventListener('huddle:org-required', orgRequiredHandler as EventListener);
+    return () => {
+      window.removeEventListener('huddle:catalog-warning', handler as EventListener);
+      window.removeEventListener('huddle:org-required', orgRequiredHandler as EventListener);
+    };
+  }, []);
+
+  const handleRetryInit = useCallback(() => {
+    setCoursesError(null);
+    setOrgSelectionRequired(false);
+    void courseStore.init({ force: true }).catch((error) => {
+      const message = error instanceof Error ? error.message : 'Unable to load course catalog right now.';
+      setCoursesError(message || 'Unable to load course catalog right now.');
+      // If init is still blocked, surface fallback
+      if (String(message).includes('org_selection_required') || String(message).includes('missing_org_context')) {
+        setOrgSelectionRequired(true);
+      }
+    });
+  }, []);
+
+  const openWorkspaceSelector = useCallback(() => {
+    try {
+      // Prefer navigating to a dedicated selector route if available.
+      navigate('/select-organization');
+    } catch (e) {
+      // ignore
+    }
+    try {
+      // Also dispatch a global event as a fallback for modal-based selectors.
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new Event('huddle:open-org-selector'));
+      }
+    } catch (e) {
+      // swallow
+    }
+  }, [navigate]);
 
   const resolvedAssignments = useMemo(
     () =>
@@ -350,15 +437,17 @@ const ClientCourses = () => {
   });
 
   useEffect(() => {
-    if (!import.meta.env?.DEV) return;
+    // Always emit visibility metrics so E2E can observe renders and correlate
+    // them with store notifications.
     console.info('[ClientCourses.visibility]', {
       assignments: resolvedAssignments.length,
       coursesInStore: allCourses.length,
       visibleCourses: courseCardModels.length,
       filteredCourses: filtered.length,
       learnerCatalogStatus: learnerCatalogState.status,
+      hydratingCourses,
     });
-  }, [resolvedAssignments.length, allCourses.length, courseCardModels.length, filtered.length, learnerCatalogState.status]);
+  }, [resolvedAssignments.length, allCourses.length, courseCardModels.length, filtered.length, learnerCatalogState.status, hydratingCourses]);
 
   const handleLaunchCourse = async (courseSlug: string, fallbackLessonId?: string | null) => {
     if (fallbackLessonId) {
@@ -384,7 +473,8 @@ const ClientCourses = () => {
     learnerAuthLoading ||
     adminCatalogState.phase === 'loading' ||
     learnerCatalogState.status === 'loading' ||
-    (learnerAuthReady && learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0);
+    hydratingCourses ||
+    (learnerAuthReady && (storeInitState !== 'hydrated' || (learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0)));
   const catalogErrorMessage = (() => {
     if (learnerAuthFailed) {
       return 'Your learner session is not ready. Sign in again to load assigned courses.';
@@ -397,29 +487,27 @@ const ClientCourses = () => {
     }
     return learnerCatalogState.lastError;
   })();
-  const showCatalogError =
-    !coursesLoading &&
-    Boolean(catalogErrorMessage) &&
-    (learnerCatalogState.status === 'error' || learnerAuthFailed || normalizedCoursesAll.length === 0);
+  // If the app is blocked waiting for an org selection, treat that as an
+  // explicit catalog error state so the AsyncStatePanel renders a clear
+  // call-to-action instead of leaving the page stuck loading.
+  const showCatalogError = orgSelectionRequired || (!coursesLoading && Boolean(catalogErrorMessage) && (learnerCatalogState.status === 'error' || learnerAuthFailed || normalizedCoursesAll.length === 0));
   const noCoursesAvailable = !coursesLoading && courseCardModels.length === 0;
-  const asyncState = coursesLoading ? 'loading' : showCatalogError ? 'error' : 'ready';
+  const asyncState = orgSelectionRequired ? 'error' : coursesLoading ? 'loading' : showCatalogError ? 'error' : 'ready';
 
   return (
     <div className="max-w-7xl px-6 py-10 lg:px-12">
       <AsyncStatePanel
         state={asyncState}
         loadingLabel={learnerAuthLoading ? 'Preparing your learner session...' : 'Loading courses...'}
-        title="We couldn’t load your courses"
-        message={catalogErrorMessage || undefined}
+        title={orgSelectionRequired ? 'Select an organization to continue' : 'We couldn’t load your courses'}
+        message={orgSelectionRequired ? 'Please select an organization from the workspace selector to load your assigned programs.' : (catalogErrorMessage || undefined)}
         onRetry={() => {
-          setCoursesError(null);
-          void courseStore.init().catch((error) => {
-            const message = error instanceof Error ? error.message : 'Unable to load course catalog right now.';
-            setCoursesError(message || 'Unable to load course catalog right now.');
-          });
+          // If the org is required, our retry attempts should specifically
+          // re-run init and let the user pick an org if needed.
+          handleRetryInit();
         }}
-        secondaryActionLabel="Back to dashboard"
-        onSecondaryAction={() => navigate('/client/dashboard')}
+        secondaryActionLabel={orgSelectionRequired ? 'Open workspace selector' : 'Back to dashboard'}
+        onSecondaryAction={orgSelectionRequired ? openWorkspaceSelector : () => navigate('/client/dashboard')}
       >
         <>
           <div className="mb-8">
