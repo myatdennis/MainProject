@@ -1,17 +1,11 @@
-import { test, expect, request } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import createE2ERequestContext from './helpers/requestContext';
 
 // Basic E2E to verify progress batch endpoint accepts events in demo mode
 
 test.describe('Progress Batch Endpoint', () => {
   test('accepts a single lesson_progress event', async () => {
-    const apiContext = await request.newContext({
-      baseURL: 'http://127.0.0.1:8888',
-      extraHTTPHeaders: {
-        'x-e2e-bypass': 'true',
-        'x-user-role': 'learner',
-        'x-org-id': 'demo-sandbox-org',
-      },
-    });
+    const apiContext = await createE2ERequestContext({ baseURL: 'http://127.0.0.1:8888' });
 
     const res = await apiContext.post('/api/client/progress/batch', {
       data: {

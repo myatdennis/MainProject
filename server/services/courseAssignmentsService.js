@@ -1,3 +1,5 @@
+import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
+
 export const createCourseAssignmentsService = ({
   supabase,
   logger,
@@ -860,30 +862,23 @@ export const createCourseAssignmentsService = ({
 
       for (const patch of updates) {
         const { id: patchId, ...changes } = patch;
-        const { data: updatedRow, error } = await supabase
-          .from('assignments')
-          .update(sanitizeAssignmentRecordForSchema(changes, { includeUserIdUuid: assignmentsSupportUserIdUuid }))
-          .eq('id', patchId)
-          .select('*')
-          .maybeSingle();
-        if (error) throw error;
+        // Use safeUpsert to perform idempotent update via admin client.
+        const sanitized = sanitizeAssignmentRecordForSchema(changes, { includeUserIdUuid: assignmentsSupportUserIdUuid });
+        const upsertPayload = [{ id: patchId, ...sanitized }];
+        const { data: upserted, error: upsertError } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null });
+        if (upsertError) throw upsertError;
+        const updatedRow = Array.isArray(upserted) ? upserted[0] : upserted;
         if (updatedRow) updatedRows.push(updatedRow);
       }
 
       let insertedRows = [];
       if (inserts.length > 0) {
-        const { data: newRows, error } = await supabase
-          .from('assignments')
-          .insert(
-            inserts.map((record) =>
-              sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }),
-            ),
-          )
-          .select('*');
-        if (error) {
-          const errorText = `${error?.constraint || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+        const payload = inserts.map((record) => sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }));
+        const { data: newRows, error: insertError } = await safeInsert('assignments', payload, { select: '*', requestId: req.requestId ?? null });
+        if (insertError) {
+          const errorText = `${insertError?.constraint || ''} ${insertError?.message || ''} ${insertError?.details || ''}`.toLowerCase();
           const isIdempotencyConflict =
-            error?.code === '23505' &&
+            insertError?.code === '23505' &&
             (errorText.includes('idempotency_key') || errorText.includes('assignments_idempotency_key_idx'));
           if (isIdempotencyConflict && assignmentIdempotencyKey) {
             const { data: existingByKey, error: existingByKeyError } = await supabase
@@ -910,7 +905,7 @@ export const createCourseAssignmentsService = ({
               };
             }
           }
-          throw error;
+          throw insertError;
         }
         insertedRows = newRows || [];
       }
@@ -1391,13 +1386,11 @@ export const createCourseAssignmentsService = ({
     if (!access) {
       return { status: 403, error: { code: 'org_access_denied', message: 'You do not have access to this organization.' } };
     }
-    const { data, error } = await supabase
-      .from('assignments')
-      .update({ active: false, removed_at: new Date().toISOString() })
-      .eq('id', assignmentId)
-      .select('*')
-      .maybeSingle();
-    if (error) throw error;
+    // perform the update via safeUpsert using the id to ensure admin client is used
+    const upsertPayload = [{ id: assignmentId, active: false, removed_at: new Date().toISOString() }];
+    const { data: upserted, error: upsertErr } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null });
+    if (upsertErr) throw upsertErr;
+    const data = Array.isArray(upserted) ? upserted[0] : upserted;
     return { status: 200, data, meta: { deleted: true } };
   };
 
@@ -1430,14 +1423,22 @@ export const createCourseAssignmentsService = ({
     const now = new Date().toISOString();
 
     try {
-      const { data, error } = await supabase
+      // Find existing assignment row first (read-only). Then upsert by id so writes go through admin client.
+      const { data: existing, error: lookupError } = await supabase
         .from('assignments')
-        .update({ progress: clamped, status: statusValue, updated_at: now })
+        .select('*')
         .eq('course_id', courseIdValue)
         .eq('user_id', userIdValue)
-        .select('*')
         .maybeSingle();
-      if (error) throw error;
+      if (lookupError) throw lookupError;
+      if (!existing) {
+        // preserve prior behavior: return 200 with null data when no row exists
+        return { status: 200, data: null, meta: null };
+      }
+      const upsertPayload = [{ id: existing.id, progress: clamped, status: statusValue, updated_at: now }];
+      const { data: upserted, error: upsertErr } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null });
+      if (upsertErr) throw upsertErr;
+      const data = Array.isArray(upserted) ? upserted[0] : upserted;
       return { status: 200, data, meta: null };
     } catch (error) {
       logger.error('client_update_assignment_progress_failed', {

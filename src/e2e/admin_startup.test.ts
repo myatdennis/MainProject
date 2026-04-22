@@ -26,9 +26,10 @@ afterEach(() => {
   if (originalFetch) globalThis.fetch = originalFetch;
   try {
     if (originalLocalStorageSet) window.localStorage.setItem = originalLocalStorageSet;
-  } catch {}
+  } catch (e) { void e; }
   clearCanonicalSession();
 });
+  
 
 test('ADMIN_STARTUP_STABILITY loads admin workspace safely under slow APIs and storage failure', async () => {
   // Intercept fetch and simulate slow endpoints for admin loads

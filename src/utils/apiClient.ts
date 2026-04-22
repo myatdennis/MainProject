@@ -759,6 +759,23 @@ const executeFetch = async (input: PreparedRequest): Promise<Response> => {
       linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
       return res;
     } catch (error: any) {
+      // If the failure is due to missing organization context on the client
+      // (authorizedFetch throws this when a guarded request was attempted
+      // without a resolved active org), surface a global window event so the
+      // UI can show a helpful banner/toast and avoid infinite loading.
+      try {
+        if (error && (error.code === 'missing_org_context' || String(error.message).includes('missing_org_context'))) {
+          if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            try {
+              window.dispatchEvent(new CustomEvent('huddle:org-required', { detail: { path: extractPathname(url), message: String(error.message) } }));
+            } catch (e) {
+              // non-fatal
+            }
+          }
+        }
+      } catch (inner) {
+        // swallow any unexpected errors while attempting to notify the UI
+      }
       // Abort / timeout — never retry.
       if (error?.name === 'AbortError') {
         if (timeoutId) clearTimeout(timeoutId);

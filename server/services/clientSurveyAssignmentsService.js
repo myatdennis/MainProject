@@ -153,6 +153,16 @@ export const createClientSurveyAssignmentsService = ({
       authResolved: Boolean(context.userId),
     });
 
+    logger.info('client_assigned_materialize_trigger', {
+      requestId,
+      route: '/api/client/surveys/assigned',
+      userId: context.userId,
+      scopedOrgIds,
+      includeCompleted,
+      materializeBudgetMs,
+      supabaseServiceRoleKeyPresent: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    });
+
     const materializePromise = ensureSurveyAssignmentsForUserFromOrgScope({
       userId: context.userId,
       orgIds: scopedOrgIds,

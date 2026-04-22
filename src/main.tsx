@@ -48,6 +48,16 @@ if (import.meta.env.DEV) {
   console.info('[BUILD_VERSION]', typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'unknown');
 }
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
+// Frontend runtime env check — print public values (safe to log)
+try {
+  // eslint-disable-next-line no-console
+  console.log('[ENV CHECK][FRONTEND]', {
+    apiBase: import.meta.env.VITE_API_BASE_URL ?? null,
+    supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? null,
+  });
+} catch (e) {
+  // ignore
+}
 const declaredBuildTag = serviceWorkerManager.getDeclaredVersionTag();
 if (import.meta.env.DEV) {
   console.info('[build] declared version tag:', declaredBuildTag);

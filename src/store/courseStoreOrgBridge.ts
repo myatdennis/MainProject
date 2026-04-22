@@ -31,23 +31,12 @@ export type OrgContextSnapshot = {
 
 export const BRIDGE_SNAPSHOT_EVENT = 'huddle:org_snapshot_updated';
 
-const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
-const DEBUG_BRIDGE = import.meta.env.DEV;
 
-if (typeof window !== 'undefined' && DEBUG_BRIDGE) {
-  console.debug('[TRACE BUILD]', {
-    token: TRACE_TOKEN,
-    source: 'courseStoreOrgBridge',
-    ts: Date.now(),
-  });
-}
 
 // ── Window-object singleton (survives Vite chunk duplication) ────────────────
 type BridgeStore = {
   latestSnapshot: OrgContextSnapshot | null;
   snapshotWrittenAt: number;
-  resolver: (() => OrgContextSnapshot | null) | null;
-  resolverRegistered: boolean;
 };
 
 declare global {
@@ -63,66 +52,19 @@ declare global {
 // Legacy build fingerprint retained via TRACE logs below.
 
 const _getStore = (): BridgeStore => {
-  if (typeof window === 'undefined') {
-    // SSR / non-browser: use a module-local fallback (never shared, but that's
-    // acceptable in SSR where there is no cross-chunk singleton problem).
-    return _ssrStore;
-  }
   if (!window.__courseStoreOrgBridge) {
     window.__courseStoreOrgBridge = {
       latestSnapshot: null,
       snapshotWrittenAt: 0,
-      resolver: null,
-      resolverRegistered: false,
     };
-    if (DEBUG_BRIDGE) {
-      console.debug('[TRACE BRIDGE WRITE]', {
-        token: TRACE_TOKEN,
-        event: 'singleton_created',
-        ts: Date.now(),
-      });
-    }
+    // ...existing code...
   } else {
-    if (DEBUG_BRIDGE) {
-      console.debug('[TRACE BRIDGE WRITE]', {
-        token: TRACE_TOKEN,
-        event: 'singleton_reused',
-        ts: Date.now(),
-      });
-    }
+    // ...existing code...
   }
   return window.__courseStoreOrgBridge;
 };
 
-// SSR-only fallback (module-local, used when window is undefined)
-const _ssrStore: BridgeStore = {
-  latestSnapshot: null,
-  snapshotWrittenAt: 0,
-  resolver: null,
-  resolverRegistered: false,
-};
 
-const logSnapshot = (label: string, snapshot: OrgContextSnapshot | null) => {
-  if (!DEBUG_BRIDGE) return;
-  const payload = snapshot
-    ? {
-    membershipStatus: snapshot.membershipStatus,
-    activeOrgId: snapshot.activeOrgId ?? snapshot.orgId ?? null,
-    role: snapshot.role ?? null,
-    userId: snapshot.userId ?? null,
-    status: snapshot.status,
-    updatedAt: (snapshot.updatedAt ?? _getStore().snapshotWrittenAt) ?? Date.now(),
-      }
-    : {
-        membershipStatus: 'null',
-        activeOrgId: null,
-        role: null,
-        userId: null,
-        status: 'null',
-        updatedAt: null,
-      };
-  console.debug(label, payload);
-};
 
 export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
   const store = _getStore();
@@ -139,13 +81,7 @@ export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
   };
   store.latestSnapshot = normalized;
   store.snapshotWrittenAt = normalized.updatedAt ?? Date.now();
-  if (DEBUG_BRIDGE) {
-    console.debug('[TRACE BRIDGE WRITE]', {
-      token: TRACE_TOKEN,
-      snapshot: normalized,
-      ts: store.snapshotWrittenAt,
-    });
-  }
+  // ...existing code...
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     try {
       window.dispatchEvent(
@@ -165,7 +101,7 @@ export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
 
 export const readBridgeSnapshot = (): OrgContextSnapshot | null => {
   const snapshot = _getStore().latestSnapshot;
-  logSnapshot('[BRIDGE SNAPSHOT READ]', snapshot);
+  // ...existing code...
   return snapshot;
 };
 
@@ -174,52 +110,30 @@ export const getBridgeSnapshotAge = (): number => {
   return snapshotWrittenAt > 0 ? Date.now() - snapshotWrittenAt : Infinity;
 };
 
-// ── Closure-based resolver (legacy / secondary) ──────────────────────────────
-export const registerCourseStoreOrgResolver = (
-  next: (() => OrgContextSnapshot | null) | null,
-): void => {
-  const store = _getStore();
-  store.resolver = next;
-  store.resolverRegistered = typeof next === 'function';
-};
+// Legacy closure-based resolver and SSR fallback removed. Only window singleton is used.
 
-/**
- * Returns the best available org context snapshot.
- *
- * Priority:
- *  1. Mutable snapshot written by writeBridgeSnapshot() — always up-to-date
- *  2. Closure resolver (legacy) — may lag a React render behind
- *  3. null
- */
-export const resolveOrgContextFromBridge = (): OrgContextSnapshot | null => {
-  const store = _getStore();
-  const result =
-    store.latestSnapshot !== null
-      ? store.latestSnapshot
-      : store.resolver
-        ? store.resolver()
-        : null;
-  logSnapshot('[BRIDGE SNAPSHOT READ]', result);
-  return result;
-};
-
-export const isOrgResolverRegistered = (): boolean => {
-  const store = _getStore();
-  return store.latestSnapshot !== null || store.resolverRegistered;
-};
-
-/** Clears all bridge state. Call on explicit logout only — never in effect cleanup. */
+/** Clears all bridge state. Call on explicit logout only. */
 export const clearBridgeSnapshot = (): void => {
   const store = _getStore();
   store.latestSnapshot = null;
   store.snapshotWrittenAt = 0;
-  store.resolver = null;
-  store.resolverRegistered = false;
-  if (DEBUG_BRIDGE) {
-    console.debug('[TRACE BRIDGE WRITE]', {
-      token: TRACE_TOKEN,
-      event: 'clear',
-      ts: Date.now(),
-    });
-  }
+  // ...existing code...
+};
+
+/**
+ * Backwards-compatible resolver used by older modules. Prefer `readBridgeSnapshot`
+ * for the canonical, synchronous read path, but keep this exported symbol so
+ * callers that import it don't break after the bridge refactor.
+ */
+export const resolveOrgContextFromBridge = (): OrgContextSnapshot | null => {
+  return readBridgeSnapshot();
+};
+
+/**
+ * Legacy registration API stub. The bridge no longer requires external
+ * resolvers to be registered; return false to indicate no external resolver
+ * is present.
+ */
+export const isOrgResolverRegistered = (): boolean => {
+  return false;
 };

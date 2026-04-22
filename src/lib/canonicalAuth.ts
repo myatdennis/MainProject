@@ -89,7 +89,7 @@ export function waitForAuthReady(timeoutMs = 10000): Promise<SessionSnapshot> {
         settled = true;
         try {
           unsub();
-        } catch {}
+        } catch (e) { void 0; }
         reject(new Error('waitForAuthReady: timeout'));
       }
     }, timeoutMs);
@@ -100,7 +100,7 @@ export function waitForAuthReady(timeoutMs = 10000): Promise<SessionSnapshot> {
         clearTimeout(timer);
         try {
           unsub();
-        } catch {}
+        } catch (e) { void 0; }
         resolve(getCanonicalSession());
       }
     });

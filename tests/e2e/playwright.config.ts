@@ -16,6 +16,11 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1280, height: 800 },
     actionTimeout: 10_000,
+    // Note: We intentionally avoid global extraHTTPHeaders here because
+    // that would add the headers to cross-origin requests (fonts, CDNs)
+    // and trigger CORS preflight failures. The tests use page.init scripts
+    // (helpers/auth.ts) to set a same-origin cookie and monkeypatch fetch
+    // to attach E2E headers only to same-origin requests.
   },
   webServer: shouldStartWebServer
     ? {

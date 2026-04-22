@@ -5,6 +5,7 @@ import { logger } from '../lib/logger.js';
 const supabase = supabaseClient || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
 const supabaseAdmin = supabaseAdminClient || supabase;
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
+import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
 import { broadcastToTopic } from '../lib/broadcaster.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { validateOrgId } from '../lib/inviteHelper.js';
@@ -672,7 +673,7 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
 
   for (const update of updates) {
     const { id, ...changes } = update;
-    const { error } = await supabase.from('assignments').update(changes).eq('id', id);
+    const { data: upserted, error } = await safeUpsert('assignments', [{ id, ...changes }], { select: '*', requestId: req.requestId ?? null });
     if (error) throw error;
 
     // Broadcast updated assignment row (best-effort)
@@ -691,8 +692,7 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
   }
 
   if (inserts.length > 0) {
-    const { error } = await supabase.from('assignments').insert(inserts);
-    if (error) throw error;
+    await safeInsert('assignments', inserts, { logger, requestId: req.requestId ?? null });
 
     // Broadcast created assignment events for the inserted rows (best-effort)
     try {
@@ -780,7 +780,7 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
 
   for (const update of updates) {
     const { id, ...changes } = update;
-    const { error } = await supabase.from('assignments').update(changes).eq('id', id);
+    const { data: upserted, error } = await safeUpsert('assignments', [{ id, ...changes }], { select: '*', requestId: req.requestId ?? null });
     if (error) throw error;
 
     // Broadcast updated survey assignment row (best-effort)
@@ -799,8 +799,8 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
   }
 
   if (inserts.length > 0) {
-    const { error } = await supabase.from('assignments').insert(inserts);
-    if (error) throw error;
+  const { safeInsert } = await import('../lib/safeWrites.js');
+  await safeInsert('assignments', inserts, { logger, requestId: req.requestId ?? null });
 
     // Broadcast created survey assignment events (best-effort)
     try {
