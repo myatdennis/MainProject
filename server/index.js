@@ -1,5 +1,6 @@
 import './env/loadEnv.js';
 import express from 'express';
+import cors from 'cors';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1192,6 +1193,24 @@ function savePersistedData(data) {
 }
 
 const app = express();
+
+// CORS: allow the production frontend origins and Netlify preview host.
+// This must be registered before any routes so preflight and error responses
+// include the proper CORS headers.
+app.use(cors({
+  origin: [
+    'https://the-huddle.co',
+    'https://www.the-huddle.co',
+    'https://api.the-huddle.co',
+    'https://the-huddleco.netlify.app'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Ensure preflight requests are handled for any route.
+app.options('*', cors());
 // GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
 // Also record presence/shape of the E2E bypass signal (header / cookie / query)
 // so we can confirm whether Playwright-injected bypass tokens reach the server.
