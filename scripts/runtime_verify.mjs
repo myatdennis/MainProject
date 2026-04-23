@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const API_BASE = process.env.E2E_BASE_URL || 'http://localhost:8888';
+const API_BASE = process.env.E2E_BASE_URL || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.E2E_FRONTEND_BASE || 'http://localhost:5175';
 
 const ADMIN_HEADERS = {

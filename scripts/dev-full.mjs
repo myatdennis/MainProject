@@ -45,7 +45,7 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-console.log('[dev-full] Starting API server on port 8888...');
+console.log('[dev-full] Starting API server on port 3000...');
 const serverProcess = startProcess('server', 'npm', ['run', 'start:server']);
 
 serverProcess.stdout?.on('data', (chunk) => {

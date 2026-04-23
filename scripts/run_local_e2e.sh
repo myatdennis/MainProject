@@ -42,7 +42,7 @@ SERVER_PID=$!
 # Wait for server to be healthy (poll /health or root)
 echo "Waiting for server to be ready..."
 for i in {1..30}; do
-  if curl -sS --fail ${VITE_API_BASE_URL:-http://localhost:8888}/health >/dev/null 2>&1; then
+  if curl -sS --fail ${VITE_API_BASE_URL:-http://localhost:3000}/health >/dev/null 2>&1; then
     echo "Server ready"
     break
   fi

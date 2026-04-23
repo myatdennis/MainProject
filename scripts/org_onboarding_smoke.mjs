@@ -4,7 +4,7 @@
  * Smoke test script for end-to-end organization onboarding.
  *
  * Requirements:
- *  - API_BASE_URL: base URL for the admin API (default http://localhost:8888)
+ *  - API_BASE_URL: base URL for the admin API (default http://localhost:3000)
  *  - ADMIN_BEARER_TOKEN or ADMIN_SESSION_COOKIE for authenticated admin requests
  *  - Optional COURSE_ID / SURVEY_ID to assign existing content
  *
@@ -14,7 +14,7 @@
 
 import crypto from 'node:crypto';
 
-const BASE_URL = process.env.API_BASE_URL || 'http://localhost:8888';
+const BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
 const ADMIN_TOKEN = process.env.ADMIN_BEARER_TOKEN || '';
 const ADMIN_COOKIE = process.env.ADMIN_SESSION_COOKIE || '';
 const COURSE_ID = process.env.COURSE_ID || process.env.ORG_SMOKE_COURSE_ID || '';

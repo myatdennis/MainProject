@@ -8,7 +8,7 @@
  *   LEARNER_BEARER_TOKEN - Optional learner token; defaults to admin token
  *
  * Context:
- *   API_BASE_URL  - Defaults to http://localhost:8888/api
+ *   API_BASE_URL  - Defaults to http://localhost:3000/api
  *   GUARD_ORG_ID / SMOKE_ORG_ID - Organization UUID used for import/publish tests
  *
  * Usage: npm run test:api-smoke
@@ -17,7 +17,7 @@
 import fetch from 'node-fetch';
 import { randomUUID } from 'node:crypto';
 
-const API_BASE_URL = (process.env.API_BASE_URL || 'http://localhost:8888/api').replace(/\/$/, '');
+const API_BASE_URL = (process.env.API_BASE_URL || 'http://localhost:3000/api').replace(/\/$/, '');
 const ADMIN_TOKEN = process.env.ADMIN_BEARER_TOKEN;
 const LEARNER_TOKEN = process.env.LEARNER_BEARER_TOKEN || ADMIN_TOKEN;
 const ORG_ID = process.env.GUARD_ORG_ID || process.env.SMOKE_ORG_ID;

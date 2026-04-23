@@ -169,7 +169,7 @@ describe('apiClient', () => {
 
     await apiRequest('/courses');
 
-  expect(fetchSpy).toHaveBeenCalledWith('http://localhost:8888/api/courses', expect.any(Object));
+  expect(fetchSpy).toHaveBeenCalledWith('http://localhost:3000/api/courses', expect.any(Object));
   });
 
   it('attaches auth headers on outgoing requests', async () => {

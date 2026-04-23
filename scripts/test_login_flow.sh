@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # test_login_flow.sh
-# End-to-end smoke test of the login lifecycle against local server (PORT=8888)
+# End-to-end smoke test of the login lifecycle against local server (PORT=3000)
 # Requires: server running (DEV_FALLBACK demo mode acceptable)
 # Demo credentials exercised: mya@the-huddle.co / admin123
 # Outputs a summary with PASS/FAIL for each stage.
 set -euo pipefail
-BASE_URL="http://localhost:8888/api/auth"
+BASE_URL="http://localhost:3000/api/auth"
 TMP_DIR="$(mktemp -d)"
 SUMMARY="$TMP_DIR/summary.txt"
 PASS_COUNT=0
@@ -17,7 +17,7 @@ fail(){ echo "FAIL: $1"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 
 check_health(){
   log "Health"
-  curl -s "http://localhost:8888/api/health" | jq . || true
+  curl -s "http://localhost:3000/api/health" | jq . || true
 }
 
 login(){

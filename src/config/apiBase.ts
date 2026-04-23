@@ -39,7 +39,7 @@ const getMetaEnv = (): MetaEnv => {
 
 const DEFAULT_DEV_API_BASE = '/api';
 const DEFAULT_PROD_API_BASE = '/api';
-const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
+const DEFAULT_NODE_ORIGIN = 'http://localhost:3000';
 
 const detectDevMode = () => {
   if (typeof import.meta !== 'undefined' && (import.meta as any)?.env) {

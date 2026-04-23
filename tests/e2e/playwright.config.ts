@@ -1,8 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
-// Prefer running UI on Vite dev (5174) and proxy API to the E2E helper (8888)
+// Prefer running UI on Vite dev (5174) and proxy API to the local API on 3000.
 process.env.E2E_BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:5174';
-process.env.E2E_API_BASE_URL = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:8888';
+process.env.E2E_API_BASE_URL = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:3000';
 process.env.E2E_TEST_MODE = process.env.E2E_TEST_MODE || 'true';
 process.env.DEV_FALLBACK = process.env.DEV_FALLBACK || 'true';
 

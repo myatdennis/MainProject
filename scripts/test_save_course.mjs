@@ -32,7 +32,7 @@ function requestJson({ method = 'GET', path = '/', data }) {
     const req = http.request(
       {
         host: 'localhost',
-        port: 8888,
+        port: 3000,
         method,
         path,
         headers: {

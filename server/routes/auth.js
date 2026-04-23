@@ -937,7 +937,7 @@ router.get('/session', async (req, res) => {
 
 /**
  * Manual verification (local):
- * curl -H "Authorization: Bearer <ACCESS>" http://localhost:8888/api/auth/session
+ * curl -H "Authorization: Bearer <ACCESS>" http://localhost:3000/api/auth/session
  */
 
 // ============================================================================

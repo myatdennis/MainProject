@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${BASE:-http://localhost:8888}"
+BASE="${BASE:-http://localhost:3000}"
 ORIGIN="${ORIGIN:-http://localhost:5174}"
 EMAIL="${EMAIL:-mya@the-huddle.co}"
 COOKIE_JAR="${COOKIE_JAR:-/tmp/mainproject.cookies}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
-  Start both the API (Express) server on 8888 and the Vite dev server on 5174.
+  Start both the API (Express) server on 3000 and the Vite dev server on 5174.
   Keep the parent process alive while both children are running.
 */
 const { spawn } = require('node:child_process');
@@ -35,7 +35,7 @@ function spawnProc(cmd, args, opts = {}) {
   return child;
 }
 
-const API_HEALTH_URL = 'http://127.0.0.1:8888/api/health';
+const API_HEALTH_URL = 'http://127.0.0.1:3000/api/health';
 const VITE_URL = 'http://localhost:5174';
 
 let api;
@@ -52,14 +52,14 @@ process.on('SIGTERM', cleanup);
 async function ensureApi() {
   try {
     await waitForUrl(API_HEALTH_URL, 2000);
-    console.log('[e2e-dev] API already running on 8888');
+    console.log('[e2e-dev] API already running on 3000');
     return;
   } catch {
     api = spawnProc('node', ['server/index.js'], {
-      env: { ...process.env, NODE_ENV: 'test', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '8888' },
+      env: { ...process.env, NODE_ENV: 'test', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '3000' },
     });
     await waitForUrl(API_HEALTH_URL, 30_000);
-    console.log('[e2e-dev] API ready on 8888');
+    console.log('[e2e-dev] API ready on 3000');
   }
 }
 
@@ -77,11 +77,11 @@ async function ensureVite() {
         VITE_PORT: '5174',
         VITE_E2E_TEST_MODE: 'true',
         VITE_DEV_FALLBACK: 'true',
-        // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
+        // Point Vite's /api and /ws proxies at the E2E API server (port 3000,
         // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
         // Without this, Vite would proxy to port 3000 (the regular dev server)
         // which does not have E2E_TEST_MODE set and therefore rejects e2e tokens.
-        VITE_API_PROXY_TARGET: 'http://127.0.0.1:8888',
+        VITE_API_PROXY_TARGET: 'http://127.0.0.1:3000',
         // Force API client to use relative /api (Vite proxy) instead of any pre-set external base
         VITE_API_BASE_URL: '',
         // Disable Supabase during E2E runs so the app uses demo mode and Vite proxy for /api

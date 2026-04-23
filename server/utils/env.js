@@ -27,7 +27,7 @@ const getString = (key, fallback = '') => {
 
 export const env = {
   NODE_ENV: getString('NODE_ENV', 'development'),
-  PORT: parseNumber(getString('PORT', ''), 8888),
+  PORT: parseNumber(getString('PORT', ''), 3000),
   DEV_FALLBACK: parseBoolean(process.env.DEV_FALLBACK, false),
   DEMO_MODE: parseBoolean(process.env.DEMO_MODE, false),
   E2E_TEST_MODE: parseBoolean(process.env.E2E_TEST_MODE, false),

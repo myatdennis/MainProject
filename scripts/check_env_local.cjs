@@ -16,9 +16,9 @@ function runChecks() {
   const failures = [];
   const warnings = [];
 
-  const port = process.env.PORT ? Number(process.env.PORT) : 8888;
+  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   if (!Number.isFinite(port)) {
-    failures.push('PORT must be a number (e.g., 8888).');
+    failures.push('PORT must be a number (e.g., 3000).');
   }
 
   const parseFlag = (value, { defaultValue = false } = {}) => {
@@ -33,16 +33,17 @@ function runChecks() {
   const websocketsEnabled = parseFlag(process.env.VITE_ENABLE_WS, { defaultValue: false });
 
   const apiBase = process.env.VITE_API_BASE_URL || '';
-  if (!apiBase || apiBase === '/api') {
-    warnings.push('VITE_API_BASE_URL not set (or /api) — dev server will rely on the Vite proxy.');
-  } else if (/^https?:\/\//i.test(apiBase)) {
-    warnings.push(`VITE_API_BASE_URL is absolute ("${apiBase}"). Prefer "/api" in dev and adjust the Vite proxy target instead.`);
+  const expectedApiBase = 'http://localhost:3000';
+  if (!apiBase) {
+    failures.push(`VITE_API_BASE_URL must be set explicitly to ${expectedApiBase} for local dev.`);
+  } else if (apiBase !== expectedApiBase) {
+    warnings.push(`VITE_API_BASE_URL is "${apiBase}". Expected ${expectedApiBase} for the standardized local setup.`);
   }
 
   const wsUrl = process.env.VITE_WS_URL;
   const shouldRequireWsUrl = websocketsEnabled && !devFallbackEnabled;
   if (shouldRequireWsUrl && !wsUrl) {
-    failures.push('VITE_WS_URL is required when VITE_ENABLE_WS=true and DEV_FALLBACK=false (e.g., ws://localhost:8888/ws).');
+    failures.push('VITE_WS_URL is required when VITE_ENABLE_WS=true and DEV_FALLBACK=false (e.g., ws://localhost:3000/ws).');
   } else if (wsUrl && !wsUrl.startsWith('ws://')) {
     warnings.push(`VITE_WS_URL should start with ws:// in dev, currently "${wsUrl}".`);
   } else if (!wsUrl && websocketsEnabled) {
@@ -50,7 +51,7 @@ function runChecks() {
   }
 
   if (!process.env.DEV_FALLBACK) {
-    warnings.push('DEV_FALLBACK is not set; defaulting to demo fallback=true.');
+    failures.push('DEV_FALLBACK must be set explicitly to false for the standardized local setup.');
   }
 
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {

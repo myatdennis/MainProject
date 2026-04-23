@@ -9,10 +9,10 @@
       --keep=first (default): keep the first occurrence in the list
       --keep=last: keep the last occurrence in the list
   - --dry-run: Print planned deletions without making changes
-  - API base may be overridden via API_URL env var (default http://localhost:8888)
+  - API base may be overridden via API_URL env var (default http://localhost:3000)
 */
 
-const API_BASE = process.env.API_URL || 'http://localhost:8888';
+const API_BASE = process.env.API_URL || 'http://localhost:3000';
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run') || args.includes('--dry');
 const KEEP = (() => {

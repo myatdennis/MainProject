@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORTS=(5174 8888)
+PORTS=(3000 5173)
 
 for port in "${PORTS[@]}"; do
   if pids=$(lsof -ti tcp:"${port}" 2>/dev/null); then

@@ -66,7 +66,7 @@ const courseData = JSON.stringify({
 
 const options = {
   hostname: 'localhost',
-  port: 8888,
+  port: 3000,
   path: '/api/admin/courses',
   method: 'POST',
   headers: {

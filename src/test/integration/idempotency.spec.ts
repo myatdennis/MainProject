@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 
-const API_BASE = 'http://localhost:8888';
+const API_BASE = 'http://localhost:3000';
 let serverProc: any = null;
 let adminAuthHeader: string | null = null;
 let integrationReady = false;
@@ -42,7 +42,7 @@ async function waitForHealth(timeout = 5000) {
 beforeAll(async () => {
   // Start server in E2E demo mode so it uses in-memory stores and RLS-free path
   serverProc = spawn(process.execPath, ['server/index.js'], {
-  env: { ...process.env, PORT: '8888', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true' },
+  env: { ...process.env, PORT: '3000', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true' },
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });

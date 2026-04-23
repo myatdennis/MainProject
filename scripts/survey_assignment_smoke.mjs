@@ -10,7 +10,7 @@
  *    - set SMOKE_ADMIN_BEARER_TOKEN and SMOKE_LEARNER_BEARER_TOKEN
  */
 
-const API_BASE = (process.env.SURVEY_SMOKE_API_BASE_URL || process.env.E2E_API_BASE_URL || 'http://127.0.0.1:8888').replace(/\/$/, '');
+const API_BASE = (process.env.SURVEY_SMOKE_API_BASE_URL || process.env.E2E_API_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const ORG_ID = process.env.SURVEY_SMOKE_ORG_ID || 'demo-sandbox-org';
 const ADMIN_USER_ID = process.env.SURVEY_SMOKE_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000001';
 const LEARNER_USER_ID = process.env.SURVEY_SMOKE_LEARNER_USER_ID || '00000000-0000-0000-0000-000000000002';
