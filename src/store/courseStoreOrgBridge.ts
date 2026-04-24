@@ -137,3 +137,11 @@ export const resolveOrgContextFromBridge = (): OrgContextSnapshot | null => {
 export const isOrgResolverRegistered = (): boolean => {
   return false;
 };
+
+/**
+ * Fixed missing export error by ensuring `registerCourseStoreOrgResolver` is exported.
+ */
+export const registerCourseStoreOrgResolver = () => {
+  // no-op; closure-based resolver registration is no longer used
+  return false;
+};

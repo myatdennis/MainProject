@@ -1,8 +1,6 @@
-// Production no-op debug/diagnostic functions for type compatibility
-// Production no-op debug/diagnostic functions for type compatibility
-const logAuthSessionState = () => {};
-// Removed unused no-op debug functions for production readiness.
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import {
   setSessionMetadata,
   setUserSession,
@@ -24,6 +22,7 @@ import { getSupabase } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 // import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
 import { writeBridgeSnapshot, clearBridgeSnapshot } from '../store/courseStoreOrgBridge';
+import { courseStore } from '../store/courseStore';
 // admin access snapshot helper intentionally unused in some builds
 // import { clearAdminAccessSnapshot } from '../lib/adminAccess';
 import { setAuthBootstrapping } from '../lib/authBootstrapState';
@@ -55,30 +54,11 @@ import type { RefreshOptions } from './authTypes';
 import { performLogout } from './sessionLifecycle';
 import { renderAuthState } from './authRenderState';
 import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
-// ...existing code...
-// Fallback stubs for optional modules that may be missing in trimmed builds.
-// These ensure the file remains syntactically valid when certain utilities
-// are stripped from production bundles during refactors.
-const axios: any = (globalThis as any).axios ?? { isCancel: (_: any) => false, defaults: undefined };
-const logAuthRedirect = (_source?: string, _data?: any) => {};
+import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { setCanonicalSession } from '../lib/canonicalAuth';
-const resolveLoginPath = () => '/login';
-const isLoginPath = () => false;
-const isAdminSurface = (_path?: string) => false;
-const toast: any = { error: (msg?: any) => { if (typeof console !== 'undefined') console.warn(msg); } };
-const courseStore: any = { init: async () => Promise.resolve() };
-// ...existing code...
-// Provider
-// ============================================================================
-// import type { OrgContextSnapshot } from '../store/courseStoreOrgBridge';
-// import { logAuthRedirect } from '../utils/logAuthRedirect';
-// import { setCanonicalSession } from '../lib/canonicalAuth';
+import { isAdminSurface, isLoginPath, resolveLoginPath } from '../utils/surface';
 
-// if (axios?.defaults) {
-//   axios.defaults.withCredentials = true;
-// }
-
-
+const logAuthSessionState = () => {};
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
@@ -166,14 +146,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     admin: false,
     client: false,
   });
-  // Removed unused lastMembershipStatusRef for production readiness.
-  // ...existing code...
-  // --- BEGIN: Fix context value object and close any unclosed blocks ---
-  // ...existing code...
-
-  // --- END: Fix context value object and close any unclosed blocks ---
-  // All debug and diagnostics logic removed for production hardening.
-
   // Ensure admin store initialization waits for final resolved auth/org state
   useEffect(() => {
     // Only initialize admin store if session/org/role is fully resolved and admin is allowed
@@ -288,12 +260,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // spam) cannot hammer the Supabase auth endpoint.
   const lastRetryTimestampRef = useRef(0);
   const lastSessionReloadRef = useRef(0);
-  // Removed unused hasLoggedAppLoadRef for production readiness.
   const hasAuthenticatedSessionRef = useRef(false);
   const hadAuthenticatedSessionRef = useRef(false);
-  // Removed unused orgContextLoggedRef for production readiness.
   const lastSessionFetchResultRef = useRef<'idle' | 'authenticated' | 'unauthenticated' | 'error'>('idle');
-  // removed bootstrapRunCountRef (unused)
   const refreshRunCountRef = useRef(0);
   const membershipSelfHealTrackerRef = useRef<{ shouldAttempt: (userId?: string | null, orgId?: string | null) => boolean; recordAttempt?: () => void }>(
     { shouldAttempt: () => false },
@@ -387,7 +356,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     };
   }, [clearMembershipRetryBackoff]);
   const refreshTokenCallbackRef = useRef<((options?: RefreshOptions) => Promise<boolean>) | null>(null);
-  // Removed unused authDebugSignatureRef for production readiness.
   const recordMembershipFetchMeta = useCallback((meta: Partial<MembershipFetchMeta>) => {
     setLastMembershipFetchMeta((prev) => ({
       ...prev,
@@ -451,7 +419,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setMembershipStatus('idle');
         setOrganizationIds([]);
         setActiveOrgIdState(null);
-  setActiveOrgIdState(null);
         clearActiveOrgPreference();
         membershipCacheRef.current = [];
         organizationIdsSnapshotRef.current = [];
@@ -690,7 +657,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const method = String(options?.method ?? 'GET').toUpperCase();
       const shouldDedupe =
         method === 'GET' &&
-        (path === '/api/auth/session' || path === '/api/admin/me');
+        (path === '/auth/session' || path === '/api/auth/session' || path === '/api/admin/me');
 
       const execute = async (): Promise<T> => {
       let response: Response;
@@ -852,10 +819,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   setAuthInitializing(false);
   setBootstrapError(reason.startsWith('bootstrap_') ? 'Session bootstrap failed. Please log in.' : null);
   lastSessionFetchResultRef.current = 'unauthenticated';
-  // ...existing code...
-  // --- BEGIN: Ensure all blocks are properly closed ---
-  // (If there are any unclosed braces or parentheses, close them here)
-  // --- END: Ensure all blocks are properly closed ---
     },
     [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError, setSessionStatus],
   );
@@ -918,11 +881,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           reason: meta.reason ?? null,
         });
       };
-      // ...existing code...
       try {
         setMembershipStatus('loading');
         const fetchPayload = async () => {
-          const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
+          const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
             method: 'GET',
             signal,
             requireAuth: true,
@@ -1051,7 +1013,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return false;
         }
         if (error instanceof ApiError) {
-          // ...existing code...
           const noTokenUnauth =
             error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
           if (noTokenUnauth) {
@@ -1247,7 +1208,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                 // This calls the server's dev-only /api/auth/_debug/demo-login endpoint
                 // which is enabled when ALLOW_DEBUG_LOGIN=true on the backend.
                 const hasLocalToken = Boolean(_localAccess || _localRefresh);
-                if (!hasLocalToken && import.meta.env?.DEV && !(typeof window !== 'undefined' && (window as any).__E2E_BYPASS)) {
+                const debugAutoLoginEnabled = String((import.meta as any)?.env?.VITE_ENABLE_DEBUG_LOGIN ?? '').toLowerCase() === 'true';
+                if (debugAutoLoginEnabled && !hasLocalToken && import.meta.env?.DEV && !(typeof window !== 'undefined' && (window as any).__E2E_BYPASS)) {
                   try {
                     if (import.meta.env?.DEV) console.info('[AUTH DEBUG] attempting auto demo-login');
                     const demoEmail = (import.meta as any)?.env?.VITE_DEMO_SMOKE_EMAIL ?? 'mya@the-huddle.co';
@@ -1613,7 +1575,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const hasOrgAccess = Boolean(orgId && organizationIds.includes(orgId));
       const normalized = orgId && (hasMembership || hasOrgAccess) ? orgId : null;
       setActiveOrgPreference(normalized);
-  setActiveOrgIdState(normalized);
       setActiveOrgIdState(normalized);
       setUser((prev) => {
         if (!prev) return prev;
@@ -1776,8 +1737,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       window.clearTimeout(failOpenTimer);
     };
   }, [authInitializing, user, memberships, activeOrgId]);
-
-  // Removed unused deriveOrgContextSnapshotCallback for production readiness.
 
   // Diagnostics removed for production: useAuthDiagnostics and related debug state.
 

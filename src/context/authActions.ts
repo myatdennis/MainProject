@@ -91,7 +91,7 @@ export const createAuthActions = ({
           }
 
           try {
-            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
+            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
               method: 'GET',
               requireAuth: true,
             });
@@ -102,7 +102,7 @@ export const createAuthActions = ({
           }
         } else {
           try {
-            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
+            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
               method: 'GET',
               requireAuth: true,
             });

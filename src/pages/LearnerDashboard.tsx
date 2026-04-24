@@ -251,13 +251,13 @@ const LearnerDashboard = () => {
     const unsubAssignUpdate = syncService.subscribe('assignment_updated', () => {
       void refreshAssignments();
     });
-  const unsubProgress = syncService.subscribe('user_progress', (event: any) => {
+  const unsubProgress = syncService.subscribe('user_progress', (event: { userId?: string; data?: { userId?: string } }) => {
       const targetId = event?.userId || event?.data?.userId;
       if (targetId?.toLowerCase?.() === learnerId) {
         void refreshAssignments();
       }
     });
-  const unsubComplete = syncService.subscribe('user_completed', (event: any) => {
+  const unsubComplete = syncService.subscribe('user_completed', (event: { userId?: string; data?: { userId?: string } }) => {
       const targetId = event?.userId || event?.data?.userId;
       if (targetId?.toLowerCase?.() === learnerId) {
         void refreshAssignments();
