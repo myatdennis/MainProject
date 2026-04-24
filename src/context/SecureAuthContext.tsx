@@ -20,7 +20,7 @@ import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
-// import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
+import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
 import { writeBridgeSnapshot, clearBridgeSnapshot } from '../store/courseStoreOrgBridge';
 import { courseStore } from '../store/courseStore';
 // admin access snapshot helper intentionally unused in some builds
@@ -118,15 +118,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // swallow
     }
   };
-  // Initialize bridge snapshot immediately so stores reading the bridge
-  // know that auth/org resolution is still pending. This prevents stores
-  // from incorrectly assuming a ready org when the provider is still
-  // bootstrapping — making org resolution deterministic.
-  try {
-    writeBridgeSnapshot({ status: 'idle', membershipStatus: 'idle', activeOrgId: null, orgId: null, role: null, userId: null });
-  } catch (e) {
-    // ignore in non-browser or test environments
-  }
   const logRefreshResult = () => {};
   // Additional refs for state tracking
   const lastAdminAllowedRef = useRef(false);
@@ -146,6 +137,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     admin: false,
     client: false,
   });
+
+  useEffect(() => {
+    writeBridgeSnapshot({ status: 'idle', membershipStatus: 'idle', activeOrgId: null, orgId: null, role: null, userId: null });
+  }, []);
+
+  useEffect(() => {
+    setGlobalActiveOrgIdForApi(activeOrgId);
+  }, [activeOrgId]);
   // Ensure admin store initialization waits for final resolved auth/org state
   useEffect(() => {
     // Only initialize admin store if session/org/role is fully resolved and admin is allowed
@@ -419,6 +418,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setMembershipStatus('idle');
         setOrganizationIds([]);
         setActiveOrgIdState(null);
+        setGlobalActiveOrgIdForApi(null);
         clearActiveOrgPreference();
         membershipCacheRef.current = [];
         organizationIdsSnapshotRef.current = [];
@@ -466,8 +466,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       membershipsSnapshotRef.current = resolvedMemberships;
       const orgIds = resolvedState.organizationIds;
       organizationIdsSnapshotRef.current = orgIds;
-  setActiveOrgIdState(resolvedState.activeOrgId);
-      setActiveOrgPreference(resolvedState.activeOrgId);
       const session: UserSession = buildUserSessionFromPayload({
         payload,
         organizationIds: orgIds,
@@ -479,7 +477,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setUser(session);
       setMemberships(resolvedMemberships);
       setOrganizationIds(orgIds);
+      setGlobalActiveOrgIdForApi(session.activeOrgId ?? null);
       setActiveOrgIdState(session.activeOrgId ?? null);
+      setActiveOrgPreference(session.activeOrgId ?? null);
       const authState = computeAuthState(session, surface);
       setIsAuthenticated(authState);
       setSurfaceAuthStatus({
@@ -499,8 +499,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             ? 'error'
             : 'loading',
         membershipStatus: resolvedState.membershipState,
-        activeOrgId: resolvedState.activeOrgId,
-        orgId: resolvedState.activeOrgId,
+        activeOrgId: session.activeOrgId ?? null,
+        orgId: session.activeOrgId ?? null,
         role: session.role ?? null,
         userId: session.id ?? null,
       });
@@ -1576,6 +1576,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const hasOrgAccess = Boolean(orgId && organizationIds.includes(orgId));
       const normalized = orgId && (hasMembership || hasOrgAccess) ? orgId : null;
       setActiveOrgPreference(normalized);
+      setGlobalActiveOrgIdForApi(normalized);
       setActiveOrgIdState(normalized);
       setUser((prev) => {
         if (!prev) return prev;

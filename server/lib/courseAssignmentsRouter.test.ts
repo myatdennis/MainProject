@@ -15,11 +15,31 @@ const createApp = () => {
         status: 'assigned',
         created_at: '2026-04-11T00:00:00.000Z',
       },
+      {
+        id: 'survey-assignment-1',
+        survey_id: 'survey-1',
+        organization_id: 'org-1',
+        user_id: 'learner-1',
+        assignment_type: 'survey',
+        active: true,
+        status: 'assigned',
+        created_at: '2026-04-11T00:00:00.000Z',
+      },
+      {
+        id: 'bad-course-assignment-1',
+        course_id: null,
+        organization_id: 'org-1',
+        user_id: 'learner-1',
+        assignment_type: 'course',
+        active: true,
+        status: 'assigned',
+        created_at: '2026-04-11T00:00:00.000Z',
+      },
     ],
   };
 
   const requireUserContext = vi.fn((req, _res) => {
-    const isLearner = req.path.startsWith('/client/');
+    const isLearner = req.path.startsWith('/client/') || req.path.startsWith('/learner/');
     return {
       userId: isLearner ? 'learner-1' : 'admin-1',
       organizationIds: ['org-1'],
@@ -110,6 +130,7 @@ describe('course assignments router', () => {
     expect(response.status).toBe(200);
     expect(payload.ok).toBe(true);
     expect(Array.isArray(payload.data)).toBe(true);
+    expect(payload.data).toHaveLength(1);
     expect(payload.data[0].course_id).toBe('course-1');
   });
 

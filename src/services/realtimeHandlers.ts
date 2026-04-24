@@ -6,6 +6,7 @@ import {
 } from '../dal/surveys';
 import orgService from './orgService';
 import { debounce } from '../utils/debounce';
+import { emitSurveyAssignmentsChanged } from '../utils/surveyAssignmentEvents';
 
 // Lightweight realtime handler to keep learner/admin surfaces fresh.
 // - Subscribes to assignment and course topics relevant to the current session.
@@ -28,11 +29,16 @@ const debouncedSurveyRefresh = debounce(() => {
 
 // Lightweight burst protection to dedupe micro-bursts of identical events
 let lastAssignmentEventTs = 0;
-function handleAssignmentEvent(_event?: any) {
+function handleAssignmentEvent(event?: any) {
   const now = Date.now();
   // If events arrive within 100ms of each other, ignore the later ones
   if (now - lastAssignmentEventTs < 100) return;
   lastAssignmentEventTs = now;
+  emitSurveyAssignmentsChanged({
+    reason: 'realtime_assignment_update',
+    assignmentId: event?.assignmentId ?? event?.assignment_id ?? null,
+    surveyId: event?.surveyId ?? event?.survey_id ?? null,
+  });
   debouncedSurveyRefresh();
 }
 

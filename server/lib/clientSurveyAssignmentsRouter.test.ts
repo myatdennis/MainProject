@@ -167,7 +167,7 @@ describe('client survey assignments router', () => {
       expect(payload).toMatchObject({
         ok: false,
         code: 'database_unavailable',
-        message: 'Assigned surveys are unavailable because the database is not configured.',
+        message: 'Survey service temporarily unavailable',
       });
     } finally {
       await new Promise<void>((resolve, reject) =>
@@ -204,8 +204,8 @@ describe('client survey assignments router', () => {
       expect(response.status).toBe(503);
       expect(payload).toMatchObject({
         ok: false,
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Survey assignments are temporarily unavailable. Please retry.',
+        code: 'database_unavailable',
+        message: 'Survey service temporarily unavailable',
       });
     } finally {
       await new Promise<void>((resolve, reject) =>

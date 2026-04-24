@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HelmetProvider } from 'react-helmet-async';
 import ClientSurveys from '../ClientSurveys';
@@ -8,6 +8,9 @@ import { DalError } from '../../../dal/http';
 
 const mockNavigate = vi.fn();
 const fetchAssignedSurveysForLearnerMock = vi.fn();
+const surveyAssignmentEvents = vi.hoisted(() => ({
+  listener: null as null | ((payload: any) => void),
+}));
 const secureAuthState = {
   value: {
     authInitializing: false,
@@ -27,11 +30,16 @@ vi.mock('react-router-dom', async () => {
 });
 
 vi.mock('../../../dal/surveys', () => ({
-  fetchAssignedSurveysForLearner: () => fetchAssignedSurveysForLearnerMock(),
+  fetchAssignedSurveysForLearner: (...args: any[]) => fetchAssignedSurveysForLearnerMock(...args),
 }));
 
 vi.mock('../../../utils/surveyAssignmentEvents', () => ({
-  subscribeSurveyAssignmentsChanged: () => () => {},
+  subscribeSurveyAssignmentsChanged: (listener: (payload: any) => void) => {
+    surveyAssignmentEvents.listener = listener;
+    return () => {
+      surveyAssignmentEvents.listener = null;
+    };
+  },
 }));
 
 vi.mock('../../../context/SecureAuthContext', () => ({
@@ -42,6 +50,7 @@ describe('ClientSurveys', () => {
   beforeEach(() => {
     mockNavigate.mockReset();
     fetchAssignedSurveysForLearnerMock.mockReset();
+    surveyAssignmentEvents.listener = null;
     secureAuthState.value = {
       authInitializing: false,
       sessionStatus: 'authenticated',
@@ -133,6 +142,46 @@ describe('ClientSurveys', () => {
 
     expect(await screen.findByText('No surveys assigned')).toBeInTheDocument();
     expect(screen.queryByText('Surveys are temporarily unavailable')).not.toBeInTheDocument();
+  });
+
+  it('refreshes assigned surveys when an assignment change event arrives', async () => {
+    fetchAssignedSurveysForLearnerMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          assignment: {
+            id: 'assignment-2',
+            surveyId: 'survey-2',
+            userId: 'user-1',
+            status: 'assigned',
+            progress: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          survey: {
+            id: 'survey-2',
+            title: 'Realtime Assignment',
+            description: 'Assigned while the learner workspace is open',
+          },
+        },
+      ]);
+
+    renderPage();
+
+    expect(await screen.findByText('No surveys assigned')).toBeInTheDocument();
+    expect(surveyAssignmentEvents.listener).toBeTypeOf('function');
+
+    act(() => {
+      surveyAssignmentEvents.listener?.({
+        reason: 'realtime_assignment_update',
+        surveyId: 'survey-2',
+        assignmentId: 'assignment-2',
+        at: new Date().toISOString(),
+      });
+    });
+
+    expect(await screen.findByText('Realtime Assignment')).toBeInTheDocument();
+    expect(fetchAssignedSurveysForLearnerMock).toHaveBeenLastCalledWith({ forceRefresh: true });
   });
 
   it('renders a survey-specific temporary unavailable state for 503 responses', async () => {

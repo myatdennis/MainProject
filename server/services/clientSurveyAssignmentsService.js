@@ -153,6 +153,12 @@ export const createClientSurveyAssignmentsService = ({
       authResolved: Boolean(context.userId),
     });
 
+    const waitForMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const materializeBudgetMs = Math.min(
+      Math.max(Number(process.env.SURVEY_ASSIGNMENT_MATERIALIZE_BUDGET_MS || 2500), 250),
+      8000,
+    );
+
     logger.info('client_assigned_materialize_trigger', {
       requestId,
       route: '/api/client/surveys/assigned',
@@ -172,12 +178,6 @@ export const createClientSurveyAssignmentsService = ({
     const materializeOutcome = materializePromise
       .then(() => ({ state: 'done' }))
       .catch((error) => ({ state: 'error', error }));
-
-    const waitForMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const materializeBudgetMs = Math.min(
-      Math.max(Number(process.env.SURVEY_ASSIGNMENT_MATERIALIZE_BUDGET_MS || 2500), 250),
-      8000,
-    );
 
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();

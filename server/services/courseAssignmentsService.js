@@ -1151,6 +1151,8 @@ export const createCourseAssignmentsService = ({
         if (!assignment || assignment.active === false) continue;
         const assignmentType = assignment.assignment_type ?? assignment.assignmentType ?? null;
         if (assignmentType && assignmentType !== 'course') continue;
+        const assignmentCourseId = assignment.course_id ?? assignment.courseId ?? null;
+        if (!assignmentCourseId) continue;
 
         const assignmentUserId = String(assignment.user_id || '').toLowerCase();
         if (assignmentUserId === normalizedUserId) {
@@ -1165,7 +1167,7 @@ export const createCourseAssignmentsService = ({
         );
         if (!assignmentOrgId || !allowedOrgIds.has(assignmentOrgId)) continue;
 
-        const courseId = assignment.course_id ?? assignment.courseId ?? null;
+        const courseId = assignmentCourseId;
         if (!courseId || orgScopedByCourseId.has(courseId)) continue;
 
         orgScopedByCourseId.set(courseId, {
@@ -1220,9 +1222,10 @@ export const createCourseAssignmentsService = ({
           resolvedOrgId,
         });
       } catch (e) {}
-      let query = supabase.from(table).select('*');
+      let query = supabase.from(table).select('*').not('course_id', 'is', null);
 
       if (table === 'assignments') {
+        query = query.or('assignment_type.eq.course,assignment_type.is.null');
         const isUserIdUuid = isUuid(queryUserId);
         if (assignmentsSupportUserIdUuid && isUserIdUuid) {
           query = query.or(`user_id.eq.${queryUserId},user_id_uuid.eq.${queryUserId}`);
@@ -1277,6 +1280,7 @@ export const createCourseAssignmentsService = ({
             const fallbackQuery = supabase
               .from(table)
               .select('*')
+              .not('course_id', 'is', null)
               .eq('user_id', queryUserId)
               .eq('org_id', resolvedOrgId)
               .order('updated_at', { ascending: false, nullsFirst: false })
@@ -1319,7 +1323,7 @@ export const createCourseAssignmentsService = ({
       return { status: 200, data: [], meta: { count: 0, orgId: resolvedOrgId } };
     }
 
-    const normalizedRows = rows.map((row) => normalizeAssignmentRow(row)).filter(Boolean);
+    const normalizedRows = rows.map((row) => normalizeAssignmentRow(row)).filter((row) => Boolean(row?.course_id));
     logger.info('client_assignments_response', { requestId, status: 200, count: normalizedRows.length, orgId: normalizedRows.length > 0 ? resolvedOrgId : null, table: sourceTable });
     return {
       status: 200,

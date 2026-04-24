@@ -606,44 +606,54 @@ const loginHandler = async (req, res) => {
 // at `/api/auth` by the main server — avoid duplicating the full path here.
 const loginRateLimiter = authLimiter;
 
-router.post('/login', loginRateLimiter, loginHandler);
+// Add fail-open fallback for login route
+router.post('/login', loginRateLimiter, asyncHandler(async (req, res, next) => {
+  try {
+    await loginHandler(req, res, next);
+  } catch (err) {
+    console.error('[LOGIN ROUTE] Fallback triggered due to error:', err);
+    return res.status(500).json({
+      ok: false,
+      error: 'login_fallback',
+      message: 'Login service is temporarily unavailable. Please try again later.'
+    });
+  }
+}));
 
 // Dev-only debug endpoint: allow exercising the demo-login branch without
 // setting global DEMO flags. This endpoint is only enabled in non-production
 // when ALLOW_DEBUG_LOGIN=true. This minimizes accidental exposure.
+const asyncHandler = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
 if (!isProduction && String(process.env.ALLOW_DEBUG_LOGIN || '').toLowerCase() === 'true') {
-  router.post('/_debug/demo-login', authLimiter, async (req, res) => {
-    try {
-      const { email, password } = req.body || {};
-      if (!email || !password) {
-        return res.status(400).json({ ok: false, error: 'missing_credentials', message: 'Email and password are required.' });
-      }
-      const normalizedEmail = typeof normalizeEmail === 'function' ? normalizeEmail(email) : String(email).trim().toLowerCase();
-      const matchingDemoUser = findAnyDemoUserByEmail(normalizedEmail);
-      if (!matchingDemoUser) {
-        return res.status(404).json({ ok: false, error: 'demo_user_not_found', message: 'No configured demo user found for that email.' });
-      }
-      const demoUser = matchingDemoUser;
-      const passwordMatches = demoUser.passwordHash ? await bcrypt.compare(password, demoUser.passwordHash) : password === demoUser.password;
-      if (!passwordMatches) {
-        return res.status(401).json({ ok: false, error: 'invalid_credentials', message: 'The email or password you entered is incorrect.' });
-      }
-      const tokens = generateTokens({
-        userId: demoUser.id,
-        email: normalizedEmail,
-        role: demoUser.role || 'user',
-        organizationId: demoUser.organizationId || null,
-        platformRole: demoUser.role === 'admin' ? 'platform_admin' : null,
-      });
-      const userPayload = buildDemoUserPayloadFromToken({ userId: demoUser.id, email: normalizedEmail, role: demoUser.role || 'user' });
-      attachAuthCookies(req, res, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
-      console.info('[DEBUG DEMO LOGIN]', { email: normalizedEmail, userId: demoUser.id });
-      return res.status(200).json(buildSessionResponse(userPayload, tokens));
-    } catch (err) {
-      console.error('[DEBUG DEMO LOGIN] error', err instanceof Error ? err.message : err);
-      return res.status(500).json({ ok: false, error: 'debug_demo_login_failed', message: 'Unable to complete demo login.' });
+  router.post('/_debug/demo-login', authLimiter, asyncHandler(async (req, res) => {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ ok: false, error: 'missing_credentials', message: 'Email and password are required.' });
     }
-  });
+    const normalizedEmail = typeof normalizeEmail === 'function' ? normalizeEmail(email) : String(email).trim().toLowerCase();
+    const matchingDemoUser = findAnyDemoUserByEmail(normalizedEmail);
+    if (!matchingDemoUser) {
+      return res.status(404).json({ ok: false, error: 'demo_user_not_found', message: 'No configured demo user found for that email.' });
+    }
+    const demoUser = matchingDemoUser;
+    const passwordMatches = demoUser.passwordHash ? await bcrypt.compare(password, demoUser.passwordHash) : password === demoUser.password;
+    if (!passwordMatches) {
+      return res.status(401).json({ ok: false, error: 'invalid_credentials', message: 'The email or password you entered is incorrect.' });
+    }
+    const tokens = generateTokens({
+      userId: demoUser.id,
+      email: normalizedEmail,
+      role: demoUser.role || 'user',
+      organizationId: demoUser.organizationId || null,
+      platformRole: demoUser.role === 'admin' ? 'platform_admin' : null,
+    });
+    const userPayload = buildDemoUserPayloadFromToken({ userId: demoUser.id, email: normalizedEmail, role: demoUser.role || 'user' });
+    attachAuthCookies(req, res, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
+    console.info('[DEBUG DEMO LOGIN]', { email: normalizedEmail, userId: demoUser.id });
+    return res.status(200).json(buildSessionResponse(userPayload, tokens));
+  }));
 } else {
   if (!isProduction) {
     console.info('[AUTH ROUTES] demo debug endpoint disabled; set ALLOW_DEBUG_LOGIN=true to enable /api/auth/_debug/demo-login (non-production only)');

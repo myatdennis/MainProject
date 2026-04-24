@@ -1205,6 +1205,36 @@ let initState: 'idle' | 'initializing' | 'hydrated' = 'idle';
 
 export const getInitState = () => initState;
 
+export const resetCourseStoreForTests = (): void => {
+  if (initTimeoutHandle) {
+    clearTimeout(initTimeoutHandle);
+    initTimeoutHandle = null;
+  }
+  clearScheduledInitRetry();
+  initPromise = null;
+  initState = 'idle';
+  lastInitAt = null;
+  initGeneration += 1;
+  lastInitOrgId = null;
+  bridgeLoadingStartedAt = null;
+  courses = {};
+  editingCourseId = null;
+  adminCatalogState = {
+    phase: 'idle',
+    adminLoadStatus: 'skipped',
+    lastUpdatedAt: null,
+    lastAttemptAt: null,
+    lastError: null,
+  };
+  learnerCatalogState = {
+    status: 'idle',
+    lastUpdatedAt: null,
+    lastError: null,
+    detail: null,
+  };
+  invalidateCourseCache();
+};
+
 // Lightweight retry helper for transient network calls used during hydration.
 const retryAsync = async <T>(fn: () => Promise<T>, attempts = 3, delayMs = 150): Promise<T> => {
   let lastErr: any = null;
@@ -1225,6 +1255,7 @@ const retryAsync = async <T>(fn: () => Promise<T>, attempts = 3, delayMs = 150):
 let initTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 // Prevent multiple concurrent retry timers from flooding init generations.
 let initRetryScheduled = false;
+let initRetryTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 // Timestamp of the last init() start — used to dedupe rapid duplicate calls.
 let lastInitAt: number | null = null;
 // Monotonic init generation to avoid stale responses overwriting newer state.
@@ -1241,6 +1272,14 @@ let lastInitOrgId: string | null = null;
 export const BRIDGE_RESOLUTION_TIMEOUT_MS = 8_000;
 /** Timestamp (Date.now()) when the bridge first entered 'loading' state. */
 let bridgeLoadingStartedAt: number | null = null;
+
+const clearScheduledInitRetry = (): void => {
+  if (initRetryTimeoutHandle) {
+    clearTimeout(initRetryTimeoutHandle);
+    initRetryTimeoutHandle = null;
+  }
+  initRetryScheduled = false;
+};
 
 /**
  * BroadcastChannel used to coordinate org-switch cache invalidation across
@@ -1869,7 +1908,11 @@ const ensureAssignmentScopedCatalog = async (
     // failures caused by indexing delays in E2E flows.
     try {
       console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_start', userId, orgId });
-      const published = await retryAsync(async () => fetchPublishedCourses(), 2, 200);
+      const published = await retryAsync(
+        async () => fetchPublishedCourses({ assignedOnly: true, orgId: orgId ?? undefined }),
+        2,
+        200,
+      );
       if (Array.isArray(published)) {
         published.forEach((c: Course) => {
           if (c && c.id) courseMap[c.id] = c;
@@ -2024,7 +2067,11 @@ const ensureAssignmentScopedCatalog = async (
             // propagating the new course into the client catalog index.
             try {
               console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_retry_start', attempt: attempt + 1 });
-              const publishedRetry = await retryAsync(async () => fetchPublishedCourses(), 2, 250);
+              const publishedRetry = await retryAsync(
+                async () => fetchPublishedCourses({ assignedOnly: true, orgId: orgId ?? undefined }),
+                2,
+                250,
+              );
               if (Array.isArray(publishedRetry)) {
                 publishedRetry.forEach((c: Course) => {
                   if (c && c.id) courseMap[c.id] = c;
@@ -2096,7 +2143,7 @@ const ensureAssignmentScopedCatalog = async (
       while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
         await sleep(POLL_INTERVAL_MS);
         try {
-          const published = await fetchPublishedCourses();
+          const published = await fetchPublishedCourses({ assignedOnly: true, orgId: orgId ?? undefined });
           if (Array.isArray(published)) {
             published.forEach((c: Course) => {
               if (c && c.id) courseMap[c.id] = c;
@@ -2656,6 +2703,12 @@ export const courseStore = {
       if (!effectiveOrgId) {
         emitCatalogDiagnostic('org_selection_required', { reason: initReason });
         console.warn('[courseStore.init] Missing organizationId; init blocked until org is selected', { reason: initReason });
+        setLearnerCatalogState({
+          status: 'error',
+          lastUpdatedAt: Date.now(),
+          lastError: 'org_selection_required',
+          detail: 'org_selection_required',
+        });
         // Treat this run as non-final and bail out early — caller may retry
         // once org is resolved via the auth/orig bridge snapshot.
         return;
@@ -3043,7 +3096,7 @@ export const courseStore = {
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
-              dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId });
+              dbCourses = await fetchPublishedCourses({ assignedOnly: true, orgId: orgContext.orgId });
             } else {
               console.warn(
                 '[courseStore.init] Missing organizationId; published fallback blocked for learner context.',
@@ -3436,7 +3489,8 @@ export const courseStore = {
           console.warn('[courseStore.init] no courses after init — scheduling retry', { reason: initReason });
           if (!initRetryScheduled) {
             initRetryScheduled = true;
-            setTimeout(() => {
+            initRetryTimeoutHandle = setTimeout(() => {
+              initRetryTimeoutHandle = null;
               initRetryScheduled = false;
               void courseStore.init({ reason: 'retry_empty_courses', retryCount: (options?.retryCount ?? 0) + 1 });
             }, 250);
@@ -3535,7 +3589,10 @@ export const courseStore = {
       clearTimeout(initTimeoutHandle);
       initTimeoutHandle = null;
     }
+    clearScheduledInitRetry();
     initPromise = null;
+    initState = 'idle';
+    lastInitAt = null;
     // Notify other tabs about the org switch so they can reset their initPromise
     // and avoid serving a stale catalog from the previous org.
     if (incomingOrgId !== null && incomingOrgId !== lastInitOrgId) {
@@ -3562,7 +3619,7 @@ export const courseStore = {
       phase: 'idle',
       adminLoadStatus: prev.adminLoadStatus === 'success' ? 'success' : prev.adminLoadStatus,
     }));
-    return courseStore.init({ reason: 'force_init' });
+    return courseStore.init({ reason: options?.reason ?? 'force_init', force: true });
   },
 
   getCourse: (id: string): Course | null => {

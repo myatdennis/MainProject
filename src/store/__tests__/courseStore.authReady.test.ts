@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { getAllCoursesFromDatabase } from '../../dal/adminCourses';
-import { courseStore } from '../courseStore';
+import { courseStore, resetCourseStoreForTests } from '../courseStore';
 
 vi.mock('../../dal/adminCourses', () => ({
   getAllCoursesFromDatabase: vi.fn().mockResolvedValue([]),
@@ -111,6 +111,7 @@ const resetMockImpls = () => {
 
 describe('courseStore bridge snapshot synchronization', () => {
   beforeEach(() => {
+    resetCourseStoreForTests();
     resolverSnapshot = {
       status: 'loading',
       membershipStatus: 'loading',
@@ -127,6 +128,7 @@ describe('courseStore bridge snapshot synchronization', () => {
   });
 
   afterEach(() => {
+    resetCourseStoreForTests();
     // clearAllMocks resets call counts but preserves mock implementations set
     // via vi.hoisted() factory fns — safe to use here.
     // restoreAllMocks would permanently strip those implementations.
@@ -242,6 +244,7 @@ describe('courseStore bridge snapshot synchronization', () => {
   });
 
   it('blocks learner catalog loading until a usable bearer session exists', async () => {
+    secureStorageState.session = null;
     secureStorageState.accessToken = null;
     apiAccessTokenMock.mockResolvedValue(null);
     resolverSnapshot = {
@@ -288,7 +291,7 @@ describe('courseStore bridge snapshot synchronization', () => {
     const initPromise = courseStore.forceInit({ flushCache: true, reason: 'test_slow_runtime_probe' });
 
     await vi.waitFor(() => {
-      expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ orgId: 'org-1' });
+      expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ assignedOnly: true, orgId: 'org-1' });
     });
 
     if (deferredResolve) {

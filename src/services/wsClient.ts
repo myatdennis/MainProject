@@ -86,6 +86,12 @@ class WSClient extends SimpleEmitter {
     this.enabled = this.computeEnabled();
     this.shouldReconnect = this.enabled;
     this.subscribeToRuntimeStatus();
+
+    // Add logging to diagnose WebSocket client behavior
+    console.info('[WSClient] Initializing WebSocket client with URL:', this.url);
+    console.info('[WSClient] WebSocket flag mode:', this.wsFlagMode);
+    console.info('[WSClient] Runtime WebSocket availability:', this.runtimeWsEnabled);
+    console.info('[WSClient] WebSocket enabled:', this.enabled);
   }
 
   private computeEnabled() {

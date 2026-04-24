@@ -3,7 +3,8 @@ const SURVEY_ASSIGNMENTS_CHANGED_EVENT = 'survey-assignments:changed';
 type SurveyAssignmentsChangedReason =
   | 'admin_assignment_saved'
   | 'learner_submission_completed'
-  | 'manual_refresh';
+  | 'manual_refresh'
+  | 'realtime_assignment_update';
 
 type SurveyAssignmentsChangedPayload = {
   reason: SurveyAssignmentsChangedReason;
