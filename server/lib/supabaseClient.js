@@ -3,6 +3,7 @@
  * Server-side Supabase client configuration
  */
 
+import '../env/loadEnv.js';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL;

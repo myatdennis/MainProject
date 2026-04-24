@@ -7,13 +7,22 @@ import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 import { createClient } from '@supabase/supabase-js';
 import { safeInsert, safeUpsert, safeDelete } from './lib/safeWrites.js';
+
+const readEnvFlag = (value) => ['true', '1', 'yes', 'y', 'on'].includes(String(value || '').trim().toLowerCase());
+const hasConfiguredDatabaseUrl = () => Boolean(
+  process.env.DATABASE_POOLER_URL ||
+    process.env.SUPABASE_DB_POOLER_URL ||
+    process.env.SUPABASE_DB_URL ||
+    process.env.DATABASE_URL
+);
+
 // --- ENV CHECK: backend startup diagnostics (do NOT log secrets) ---
 try {
   console.info('[ENV CHECK][BACKEND]', {
     supabase: !!process.env.SUPABASE_URL,
     serviceRole: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    db: !!process.env.DATABASE_URL,
-    e2eTestMode: !!process.env.E2E_TEST_MODE,
+    db: hasConfiguredDatabaseUrl(),
+    e2eTestMode: readEnvFlag(process.env.E2E_TEST_MODE),
     port: process.env.PORT || null,
   });
 } catch (e) {
@@ -34,7 +43,7 @@ console.log('[ENV CHECK]', {
 // for Playwright and curl (investigated in the regression triage). Abort
 // early to avoid serving stale data on the wrong port in E2E runs.
 try {
-  if (process.env.E2E_TEST_MODE && Number(process.env.PORT || 0) === 3000) {
+  if (readEnvFlag(process.env.E2E_TEST_MODE) && Number(process.env.PORT || 0) === 3000) {
     console.warn('[startup] E2E_TEST_MODE requested on legacy port 3000; continuing so HTTP health can bind.');
   }
 } catch (e) {
@@ -44,8 +53,8 @@ try {
 // Fail-fast: require SUPABASE_SERVICE_ROLE_KEY in non-demo, non-dev production runs.
 try {
   const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
-  const isDemo = String(process.env.DEMO_MODE || '').toLowerCase() === 'true';
-  const isE2E = Boolean(process.env.E2E_TEST_MODE);
+  const isDemo = readEnvFlag(process.env.DEMO_MODE);
+  const isE2E = readEnvFlag(process.env.E2E_TEST_MODE);
   if (!isDev && !isDemo && !isE2E && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.warn('[startup] SUPABASE_SERVICE_ROLE_KEY missing in production; continuing so HTTP health can bind.');
   }
@@ -1234,6 +1243,28 @@ function savePersistedData(data) {
 }
 
 const app = express();
+const REQUEST_LOGGING_ENABLED = !isProduction || readEnvFlag(process.env.REQUEST_LOGGING);
+const normalizeProbePath = (value) => {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    return value || '';
+  }
+};
+const isBlockedProbePath = (value) => {
+  const pathname = normalizeProbePath(value).toLowerCase();
+  return (
+    /(^|\/)\.(env(?:\.[\w-]+)?|aws(?:\/|$)|boto$|git(?:\/|$)|svn(?:\/|$)|hg(?:\/|$)|npmrc$|yarnrc$)/.test(pathname) ||
+    /\.php(?:$|[/?#])/.test(pathname)
+  );
+};
+
+app.use((req, res, next) => {
+  if (req.method === 'GET' && isBlockedProbePath(req.path || req.url)) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
+  return next();
+});
 
 // CORS: allow the production frontend origins and Netlify preview host.
 // This must be registered before any routes so preflight and error responses
@@ -1256,6 +1287,7 @@ app.options('*', cors());
 // Also record presence/shape of the E2E bypass signal (header / cookie / query)
 // so we can confirm whether Playwright-injected bypass tokens reach the server.
 app.use((req, res, next) => {
+  if (!REQUEST_LOGGING_ENABLED) return next();
   console.log(`[REQ IN] ${req.method} ${req.url}`);
   try {
     const headerBypass = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
@@ -1300,14 +1332,17 @@ app.use((req, res, next) => {
         const s = asyncLocalStorage.getStore();
         if (s && s.metrics) {
           const durationMs = Date.now() - (s.startAt || Date.now());
-          console.info('[request.metrics]', {
-            path: req.path,
-            method: req.method,
-            status: res.statusCode,
-            durationMs,
-            queries: s.metrics.queries || 0,
-            queryTop: (s.metrics.queryDetails || []).slice(0,5),
-          });
+          const shouldLogMetrics = REQUEST_LOGGING_ENABLED || res.statusCode >= 500;
+          if (shouldLogMetrics) {
+            console.info('[request.metrics]', {
+              path: req.path,
+              method: req.method,
+              status: res.statusCode,
+              durationMs,
+              queries: s.metrics.queries || 0,
+              queryTop: (s.metrics.queryDetails || []).slice(0,5),
+            });
+          }
         }
       } catch (err) {
         console.warn('[request.metrics] logging failed', err?.message ?? err);

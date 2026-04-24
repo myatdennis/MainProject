@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const parseEnvFlag = (value) => ['true', '1', 'yes', 'y', 'on'].includes(String(value || '').trim().toLowerCase());
 
 // Load .env.local first (developer override) and then fallback to .env
 try {
@@ -35,8 +36,8 @@ try {
 // Minimal non-sensitive diagnostics (do NOT print secrets)
 try {
   const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
-  const isDemo = String(process.env.DEMO_MODE || '').toLowerCase() === 'true';
-  const isE2E = Boolean(process.env.E2E_TEST_MODE);
+  const isDemo = parseEnvFlag(process.env.DEMO_MODE);
+  const isE2E = parseEnvFlag(process.env.E2E_TEST_MODE);
 
   console.info('[env/loadEnv] loaded env sample', {
     nodeEnv: process.env.NODE_ENV || 'development',
@@ -48,7 +49,7 @@ try {
       process.env.SUPABASE_DB_URL ||
       process.env.DATABASE_URL
     ),
-    allowDebugLogin: String(process.env.ALLOW_DEBUG_LOGIN || '').toLowerCase() === 'true',
+    allowDebugLogin: parseEnvFlag(process.env.ALLOW_DEBUG_LOGIN),
     demoMode: isDemo,
     e2eTestMode: isE2E,
   });

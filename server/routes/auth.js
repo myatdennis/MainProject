@@ -606,32 +606,7 @@ const loginHandler = async (req, res) => {
 // at `/api/auth` by the main server — avoid duplicating the full path here.
 const loginRateLimiter = authLimiter;
 
-router.post('/login', loginRateLimiter, async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
-    }
-
-    const user = await supabase
-      .from('user_profiles')
-      .select('id, email, password_hash')
-      .eq('email', email)
-      .maybeSingle();
-
-    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-      return res.status(401).json({ error: 'Invalid email or password.' });
-    }
-
-    const tokens = generateTokens({ userId: user.id, email: user.email });
-    attachAuthCookies(res, tokens);
-
-    return res.json({ message: 'Login successful.', tokens });
-  } catch (error) {
-    console.error('[LOGIN ERROR]', error);
-    return res.status(500).json({ error: 'An unexpected error occurred.' });
-  }
-});
+router.post('/login', loginRateLimiter, loginHandler);
 
 // Dev-only debug endpoint: allow exercising the demo-login branch without
 // setting global DEMO flags. This endpoint is only enabled in non-production
