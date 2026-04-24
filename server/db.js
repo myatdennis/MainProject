@@ -522,27 +522,28 @@ const sql = new Proxy(function sqlProxy () {}, {
 
 export let dbStartupHealthy = false
 
-try {
-  if (activeConnectionMetadata.connectionString) {
-    await testConnection()
-    dbStartupHealthy = true
-    if (shouldLogDbDiagnostics) {
-      console.info('[server/db] initial_connection_ready')
-    }
-  } else {
-    // Do not attempt connection tests when the DB isn't configured.
-    dbStartupHealthy = false
-    if (shouldLogDbDiagnostics) {
-      console.warn('[server/db] initial_connection_skipped_missing_connection_string')
-    }
-  }
-} catch (error) {
+if (activeConnectionMetadata.connectionString) {
+  testConnection()
+    .then(() => {
+      dbStartupHealthy = true
+      if (shouldLogDbDiagnostics) {
+        console.info('[server/db] initial_connection_ready')
+      }
+    })
+    .catch((error) => {
+      dbStartupHealthy = false
+      if (shouldLogDbDiagnostics) {
+        console.error('[server/db] initial_connection_failed', {
+          message: error?.message || String(error),
+          code: error?.code || null
+        })
+      }
+    })
+} else {
+  // Do not attempt connection tests when the DB isn't configured.
   dbStartupHealthy = false
   if (shouldLogDbDiagnostics) {
-    console.error('[server/db] initial_connection_failed', {
-      message: error?.message || String(error),
-      code: error?.code || null
-    })
+    console.warn('[server/db] initial_connection_skipped_missing_connection_string')
   }
 }
 

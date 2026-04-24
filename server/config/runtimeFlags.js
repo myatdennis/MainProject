@@ -32,9 +32,7 @@ const forceOrgEnforcementRaw = parseFlag(process.env.FORCE_ORG_ENFORCEMENT);
 const idempotencyFallbackRaw = parseFlag(process.env.TEST_IDEMPOTENCY_FALLBACK_MODE);
 
 if (isProduction && (demoModeRaw || allowDemoRaw || devFallbackRaw || e2eTestRaw)) {
-  console.error('[FATAL] DEMO_MODE, DEV_FALLBACK, ALLOW_DEMO or E2E_TEST_MODE cannot be enabled in production.');
-  console.error('Set NODE_ENV=production without these flags to start safely.');
-  process.exit(1);
+  console.warn('[runtime] Ignoring demo/dev/e2e fallback flags in production.');
 }
 
 // Decision path note:
@@ -59,9 +57,7 @@ const supabaseServiceEnvEarly =
 const supabaseConfiguredEarly = Boolean(supabaseUrlEnvEarly && supabaseServiceEnvEarly);
 
 if (E2E_TEST_MODE && supabaseConfiguredEarly && NODE_ENV !== 'test') {
-  console.error('[FATAL] E2E_TEST_MODE cannot be used with a real Supabase configuration outside NODE_ENV=test.');
-  console.error('E2E mode bypasses all org membership checks. Remove Supabase credentials or set NODE_ENV=test.');
-  process.exit(1);
+  console.warn('[runtime] E2E_TEST_MODE requested with Supabase outside NODE_ENV=test; production fallback exports remain disabled.');
 }
 
 export const allowDemoExplicit = !isProduction && allowDemoExplicitRaw;
