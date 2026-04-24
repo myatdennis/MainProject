@@ -42,7 +42,12 @@ try {
     nodeEnv: process.env.NODE_ENV || 'development',
     hasSupabaseUrl: !!process.env.SUPABASE_URL,
     hasServiceRole: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    hasDatabaseUrl: !!process.env.DATABASE_URL,
+    hasDatabaseUrl: !!(
+      process.env.DATABASE_POOLER_URL ||
+      process.env.SUPABASE_DB_POOLER_URL ||
+      process.env.SUPABASE_DB_URL ||
+      process.env.DATABASE_URL
+    ),
     allowDebugLogin: String(process.env.ALLOW_DEBUG_LOGIN || '').toLowerCase() === 'true',
     demoMode: isDemo,
     e2eTestMode: isE2E,
@@ -53,13 +58,21 @@ try {
     'SUPABASE_URL',
     'SUPABASE_ANON_KEY',
     'SUPABASE_SERVICE_ROLE_KEY',
-    'DATABASE_URL',
     'JWT_ACCESS_SECRET',
     'JWT_REFRESH_SECRET',
   ];
 
   if (!isDev && !isDemo && !isE2E) {
     const missing = requiredWhenProd.filter((k) => !process.env[k]);
+    const hasDatabaseUrl = Boolean(
+      process.env.DATABASE_POOLER_URL ||
+        process.env.SUPABASE_DB_POOLER_URL ||
+        process.env.SUPABASE_DB_URL ||
+        process.env.DATABASE_URL
+    );
+    if (!hasDatabaseUrl) {
+      missing.push('DATABASE_POOLER_URL | SUPABASE_DB_POOLER_URL | SUPABASE_DB_URL | DATABASE_URL');
+    }
     if (missing.length) {
       console.error('[env/loadEnv] FATAL: missing required env vars for production: ', missing);
       // Exit so deployment does not start in a misconfigured state

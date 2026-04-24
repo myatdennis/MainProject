@@ -604,11 +604,7 @@ const loginHandler = async (req, res) => {
 // Rate-limit login to reduce credential stuffing/account enumeration.
 // Register canonical login path relative to this router only. The router is mounted
 // at `/api/auth` by the main server — avoid duplicating the full path here.
-const loginRateLimiter = authLimiter({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: 'Too many login attempts from this IP, please try again later.',
-});
+const loginRateLimiter = authLimiter;
 
 router.post('/login', loginRateLimiter, async (req, res) => {
   try {

@@ -1,3 +1,5 @@
+import './env/loadEnv.js'
+
 // Lightweight Postgres client wrapper using the 'postgres' package
 // Usage:
 //  - set DATABASE_URL in your environment (see `.env.example`)

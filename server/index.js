@@ -476,23 +476,6 @@ console.info('[startup] Token expiration times:', {
   refreshTokenTtl: `${refreshTokenTtl} seconds`,
 });
 
-// Add Supabase connectivity check
-if (typeof supabase !== 'undefined' && supabase) {
-  supabase
-    .from('user_profiles')
-    .select('id')
-    .limit(1)
-    .then(() => {
-      console.info('[startup] Supabase database connection verified.');
-    })
-    .catch((error) => {
-      console.error('[startup] Supabase database connection failed:', error.message);
-      process.exit(1);
-    });
-} else {
-  console.warn('[startup] Supabase client is not configured.');
-}
-
 // Log cache configuration
 const MEMBERSHIP_CACHE_MS = Number(process.env.MEMBERSHIP_CACHE_MS || 60000);
 const TOKEN_CACHE_LIMIT = Number(process.env.TOKEN_CACHE_LIMIT || 10000);
