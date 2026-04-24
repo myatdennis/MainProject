@@ -30,13 +30,23 @@ try {
 }
 
 // Validate critical environment variable values at runtime
+// Backend environment variables
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const DATABASE_POOLER_URL = process.env.DATABASE_POOLER_URL;
+const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS;
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN;
+// Removed frontend-only variables
+
 console.log('[ENV CHECK]', {
-  SUPABASE_URL: process.env.SUPABASE_URL || 'https://abc123xyz.supabase.co',
-  DATABASE_POOLER_URL: process.env.DATABASE_POOLER_URL || 'postgresql://postgres.eprsgmfzqjptfywoecuy:ETWyHLaaJ9arfCm6@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
-  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'your-jwt-access-secret',
-  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'your-jwt-refresh-secret',
-  COOKIE_DOMAIN: process.env.COOKIE_DOMAIN,
-  CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS,
+  SUPABASE_URL: SUPABASE_URL || 'https://abc123xyz.supabase.co',
+  DATABASE_POOLER_URL: DATABASE_POOLER_URL || 'postgresql://postgres.eprsgmfzqjptfywoecuy:ETWyHLaaJ9arfCm6@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
+  JWT_ACCESS_SECRET: JWT_ACCESS_SECRET || 'your-jwt-access-secret',
+  JWT_REFRESH_SECRET: JWT_REFRESH_SECRET || 'your-jwt-refresh-secret',
+  COOKIE_DOMAIN: COOKIE_DOMAIN,
+  CORS_ALLOWED_ORIGINS: CORS_ALLOWED_ORIGINS,
 });
 // Startup guard: when running in E2E mode, do not allow the server to start
 // on the legacy port 3000. Running E2E on port 3000 previously caused
