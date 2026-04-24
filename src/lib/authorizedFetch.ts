@@ -65,6 +65,16 @@ const isPublicEndpoint = (target: string): boolean => {
   return PUBLIC_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 };
 
+const isAuthEndpoint = (target: string): boolean => extractPathname(target).startsWith('/api/auth');
+
+const readCookieSnapshot = (): string => {
+  try {
+    return typeof document !== 'undefined' ? document.cookie : '';
+  } catch {
+    return '';
+  }
+};
+
 const isE2EBypassActive = (): boolean => {
   if (typeof window === 'undefined') return false;
   return Boolean((window as any).__E2E_BYPASS);
@@ -291,7 +301,20 @@ export default async function authorizedFetch(
     let response: Response;
     const targetUrl = normalizeUrl(url);
     try {
-      response = await fetch(targetUrl, { ...init, headers, signal: controller.signal });
+      if (isAuthEndpoint(targetUrl)) {
+        console.log('[AUTH REQUEST]', targetUrl);
+        console.log('[COOKIES]', readCookieSnapshot());
+      }
+      response = await fetch(targetUrl, {
+        ...init,
+        credentials: init.credentials ?? 'include',
+        headers,
+        signal: controller.signal,
+      });
+      if (isAuthEndpoint(targetUrl)) {
+        console.log('[AUTH RESPONSE]', response.status);
+        console.log('[COOKIES]', readCookieSnapshot());
+      }
       console.info('[request_success]', { requestId, url: extractPathname(url), status: response.status, attempt });
     } catch (error: any) {
       cleanup();

@@ -40,7 +40,7 @@ const fetchWithTimeout = async (
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { credentials: 'include', ...options, signal: controller.signal });
   } finally {
     window.clearTimeout(timeoutId);
   }
@@ -87,7 +87,7 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
     try {
       const ping = await fetchWithTimeout(
         apiPingUrl,
-        { method: 'GET', credentials: 'omit' },
+        { method: 'GET', credentials: 'include' },
         HEALTH_TIMEOUT_MS,
       );
       next.serverReachable = ping.ok;
@@ -100,7 +100,7 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
     try {
       const healthResponse = await fetchWithTimeout(
         targetHealthUrl,
-        { method: 'GET', credentials: 'omit' },
+        { method: 'GET', credentials: 'include' },
         HEALTH_TIMEOUT_MS,
       );
       next.apiHealthy = healthResponse.ok;

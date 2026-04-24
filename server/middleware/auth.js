@@ -920,6 +920,27 @@ const resolveAccessTokenFromRequest = (req) => {
   return null;
 };
 
+// Enhance token validation with detailed error handling
+export const validateAccessToken = (req, res, next) => {
+  try {
+    const token = getAccessTokenFromRequest(req);
+    if (!token) {
+      return res.status(401).json({ error: 'Access token is missing.' });
+    }
+
+    const decoded = verifyAccessToken(token);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Invalid or expired access token.' });
+    }
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error('[TOKEN VALIDATION ERROR]', error);
+    return res.status(500).json({ error: 'Failed to validate access token.' });
+  }
+};
+
 export async function buildAuthContext(req, { optional = false } = {}) {
   const token = resolveAccessTokenFromRequest(req);
   const preValidatedUser = req.supabaseJwtUser || null;

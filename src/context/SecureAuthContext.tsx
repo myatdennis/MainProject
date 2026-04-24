@@ -888,6 +888,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             method: 'GET',
             signal,
             requireAuth: true,
+            credentials: 'include',
           });
           return normalizeSessionResponsePayload(payloadRaw);
         };

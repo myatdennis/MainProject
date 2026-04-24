@@ -27,3 +27,5 @@ export function getCSRFToken(): string | null {
 }
 
 export { CSRF_COOKIE_NAME };
+
+console.log('[COOKIES]', document.cookie);

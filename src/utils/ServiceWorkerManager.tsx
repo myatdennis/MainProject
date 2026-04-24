@@ -108,7 +108,7 @@ class ServiceWorkerManager {
 
   private async fetchManifestVersion(): Promise<string | null> {
     try {
-      const response = await fetch('/sw-version.json', { cache: 'no-store' });
+      const response = await fetch('/sw-version.json', { cache: 'no-store', credentials: 'include' });
       if (!response.ok) {
         return null;
       }

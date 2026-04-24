@@ -4,42 +4,8 @@ const ACCESS_TOKEN_COOKIE = process.env.ACCESS_TOKEN_COOKIE_NAME || 'access_toke
 const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_token';
 const ACTIVE_ORG_COOKIE = process.env.ACTIVE_ORG_COOKIE_NAME || 'active_org';
 
-const parseBoolean = (value, fallback = false) => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) return fallback;
-    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-  }
-  if (typeof value === 'number') {
-    return value !== 0;
-  }
-  return fallback;
-};
-
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-const configuredSameSite = (process.env.COOKIE_SAMESITE || '').trim().toLowerCase();
-const sameSite = ['lax', 'strict', 'none'].includes(configuredSameSite) ? configuredSameSite : '';
-const rawCookieSecure = process.env.COOKIE_SECURE;
-const secureByDefault =
-  rawCookieSecure === undefined || String(rawCookieSecure).trim() === ''
-    ? null
-    : parseBoolean(rawCookieSecure, isProduction);
-const configuredCookieDomain = (process.env.COOKIE_DOMAIN || '').trim();
-const primaryCookieDomain = configuredCookieDomain || '.the-huddle.co';
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
-
-const hostMatchesDomain = (host, domain) => {
-  if (!host || !domain) return false;
-  const normalizedHost = host.toLowerCase();
-  const normalizedDomain = domain.replace(/^\./, '');
-  return (
-    normalizedHost === normalizedDomain ||
-    normalizedHost.endsWith(`.${normalizedDomain}`)
-  );
-};
+const productionCookieDomain = (process.env.COOKIE_DOMAIN || '').trim() || '.the-huddle.co';
 
 // Shared helper to get request host for cookie logic
 function getRequestHost(req) {
@@ -60,37 +26,16 @@ function getRequestHost(req) {
   return '';
 }
 
-const isLocalHost = (host = '') => {
-  if (!host) return false;
-  const normalized = host.trim().toLowerCase();
-  if (!normalized) return false;
-  if (LOCAL_HOSTS.has(normalized)) return true;
-  if (normalized.endsWith('.local')) return true;
-  return false;
-};
-
-// Per-request cookie domain logic
-function resolveCookieDomain(req) {
-  const host = getRequestHost(req);
-  if (!host) return undefined;
-  return hostMatchesDomain(host, primaryCookieDomain) ? primaryCookieDomain : undefined;
+// Auth cookies must be host-only in local development. Browsers reject
+// `.the-huddle.co` cookies on localhost, which makes login appear to succeed
+// while the subsequent session bootstrap is unauthenticated.
+function resolveCookieDomain(_req) {
+  return isProduction ? productionCookieDomain : undefined;
 }
-function resolveCookieSameSite(req) {
-  if (sameSite) return sameSite;
-  const host = getRequestHost(req);
-  if (host && !isLocalHost(host)) {
-    return 'none';
-  }
-  return 'lax';
+function resolveCookieSameSite(_req) {
+  return isProduction ? 'none' : 'lax';
 }
-function resolveCookieSecure(req) {
-  if (typeof secureByDefault === 'boolean') {
-    return secureByDefault;
-  }
-  const host = getRequestHost(req);
-  if (host && !isLocalHost(host)) {
-    return true;
-  }
+function resolveCookieSecure(_req) {
   return isProduction;
 }
 export function getCookieOptions(req, { httpOnly = true, name } = {}) {
@@ -119,29 +64,11 @@ export function getCookieOptions(req, { httpOnly = true, name } = {}) {
 
 export const describeCookiePolicy = () => ({
   production: isProduction,
-  secure: typeof secureByDefault === 'boolean' ? secureByDefault : isProduction,
-  sameSite: sameSite || (isProduction ? 'none' : 'lax'),
-  domain: primaryCookieDomain || null,
+  secure: isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  domain: isProduction ? productionCookieDomain : null,
   path: '/',
 });
-
-const resolveMaxAge = (fallbackMs, expiresAt) => {
-  if (typeof expiresAt === 'number' && Number.isFinite(expiresAt)) {
-    const delta = expiresAt - Date.now();
-    if (delta > 0) {
-      return delta;
-    }
-  }
-  return fallbackMs;
-};
-
-const setCookie = (res, name, value, maxAgeMs, req, opts = {}) => {
-  const options = { ...getCookieOptions(req, { ...opts, name }), maxAge: Math.max(1000, maxAgeMs) };
-  if (options.sameSite === 'none' && !options.secure) {
-    options.secure = true;
-  }
-  res.cookie(name, value, options);
-};
 
 const applyCookie = (req, res, name, value, maxAgeSeconds, overrides = {}) => {
   const request = req || res.req || null;

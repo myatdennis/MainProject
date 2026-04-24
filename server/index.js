@@ -19,6 +19,15 @@ try {
 } catch (e) {
   // non-fatal
 }
+
+// Validate critical environment variable values at runtime
+console.log('[ENV CHECK]', {
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  DATABASE_POOLER_URL: !!process.env.DATABASE_POOLER_URL,
+  JWT_ACCESS_SECRET: !!process.env.JWT_ACCESS_SECRET,
+  COOKIE_DOMAIN: process.env.COOKIE_DOMAIN,
+  CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS,
+});
 // Startup guard: when running in E2E mode, do not allow the server to start
 // on the legacy port 3000. Running E2E on port 3000 previously caused
 // collisions with other local dev servers and led to mismatched API origins
@@ -439,6 +448,58 @@ import adminNotificationsRouter from './routes/adminNotifications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Add startup checks for critical environment variables
+const requiredEnvVars = [
+  'JWT_ACCESS_SECRET',
+  'JWT_REFRESH_SECRET',
+  'SUPABASE_JWT_SECRET',
+];
+const missingEnvVars = requiredEnvVars.filter((key) => !process.env[key]);
+if (missingEnvVars.length > 0) {
+  console.error('[startup] Missing required environment variables:', missingEnvVars);
+  process.exit(1);
+}
+
+// Fail-fast: require COOKIE_DOMAIN in production
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.COOKIE_DOMAIN) {
+    throw new Error('Missing COOKIE_DOMAIN in production');
+  }
+}
+
+// Log token expiration times
+const accessTokenTtl = Number(process.env.ACCESS_TOKEN_TTL_SECONDS || 900);
+const refreshTokenTtl = Number(process.env.REFRESH_TOKEN_TTL_SECONDS || 604800);
+console.info('[startup] Token expiration times:', {
+  accessTokenTtl: `${accessTokenTtl} seconds`,
+  refreshTokenTtl: `${refreshTokenTtl} seconds`,
+});
+
+// Add Supabase connectivity check
+if (typeof supabase !== 'undefined' && supabase) {
+  supabase
+    .from('user_profiles')
+    .select('id')
+    .limit(1)
+    .then(() => {
+      console.info('[startup] Supabase database connection verified.');
+    })
+    .catch((error) => {
+      console.error('[startup] Supabase database connection failed:', error.message);
+      process.exit(1);
+    });
+} else {
+  console.warn('[startup] Supabase client is not configured.');
+}
+
+// Log cache configuration
+const MEMBERSHIP_CACHE_MS = Number(process.env.MEMBERSHIP_CACHE_MS || 60000);
+const TOKEN_CACHE_LIMIT = Number(process.env.TOKEN_CACHE_LIMIT || 10000);
+console.info('[startup] Cache configuration:', {
+  membershipCacheTtl: `${MEMBERSHIP_CACHE_MS} ms`,
+  tokenCacheLimit: TOKEN_CACHE_LIMIT,
+});
 
 if (process.env.NODE_ENV !== 'production') {
   console.debug('[startup] server file path', __filename);
@@ -949,11 +1010,23 @@ const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+
+// Log CORS configuration at runtime
+console.log('[CORS]', process.env.CORS_ALLOWED_ORIGINS);
+
 const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
 const inferredCookieDomain = process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain || '(request hostname derived)';
 const cookieSameSite = cookiePolicySnapshot.sameSite;
 const cookieSecure = cookiePolicySnapshot.secure;
+
+// Log cookie configuration at runtime
+console.log('[COOKIE CONFIG]', {
+  domain: process.env.COOKIE_DOMAIN,
+  secure: process.env.NODE_ENV === 'production',
+  httpOnly: true,
+  sameSite: 'Strict'
+});
 
 // Confirm Supabase JWT secret status at startup using the same value the
 // JWT middleware captured at module-load time (SUPABASE_JWT_SECRET_CONFIGURED).
@@ -1200,7 +1273,7 @@ app.options('*', cors());
 // Also record presence/shape of the E2E bypass signal (header / cookie / query)
 // so we can confirm whether Playwright-injected bypass tokens reach the server.
 app.use((req, res, next) => {
-  console.log(`[REQ] ${req.method} ${req.url}`);
+  console.log(`[REQ IN] ${req.method} ${req.url}`);
   try {
     const headerBypass = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
     const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
@@ -1281,10 +1354,6 @@ app.use(setDoubleSubmitCSRF);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.get('/api/health', (_req, res) => {
-  res.status(200).json({ ok: true, timestamp: Date.now() });
-});
-
-app.post('/api/auth/login', (_req, res) => {
   res.json({ ok: true });
 });
 
@@ -2303,14 +2372,14 @@ const diagnosticsAllowedOrigins = new Set(
         'http://localhost:* (dev wildcard)',
       ],
 );
-const defaultCookieSameSite = (process.env.COOKIE_SAMESITE || '').trim() || (process.env.NODE_ENV === 'production' ? 'none' : 'lax');
-const defaultCookieSecure = process.env.NODE_ENV === 'production';
+const defaultCookieSameSite = cookiePolicySnapshot.sameSite;
+const defaultCookieSecure = cookiePolicySnapshot.secure;
 
 logger.debug('diagnostics_cookies_and_cors', {
   allowedOrigins: Array.from(diagnosticsAllowedOrigins),
   resolvedCorsOrigins,
   corsAllowCredentials: true,
-  cookieDomain: process.env.COOKIE_DOMAIN || '.the-huddle.co',
+  cookieDomain: cookiePolicySnapshot.domain || '(host-only)',
   cookieSameSite: defaultCookieSameSite,
   cookieSecureDefault: defaultCookieSecure,
 });

@@ -164,7 +164,7 @@ export async function apiFetchRaw(path: string, init: RequestInit = {}, options:
 
     let response: Response;
     try {
-      response = await fetch(url, { ...requestInit, signal: controller.signal });
+      response = await fetch(url, { ...requestInit, credentials: requestInit.credentials ?? 'include', signal: controller.signal });
     } catch (error: any) {
       cleanup();
       if (error instanceof DOMException && error.name === 'AbortError') {

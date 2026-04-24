@@ -6,6 +6,7 @@ const mockSetAccessToken = vi.fn();
 const mockSetRefreshToken = vi.fn();
 const mockGetSupabase = vi.fn();
 const mockResolveOrgHeaderForRequest = vi.fn();
+const mockPathRequiresOrgHeader = vi.fn();
 
 vi.mock('../secureStorage', () => ({
   getAccessToken: mockGetStoredAccessToken,
@@ -22,6 +23,7 @@ vi.mock('../orgContext', () => ({
   ORG_HEADER_NAME: 'X-Org-Id',
   LEGACY_ORG_HEADER_NAME: 'X-Organization-Id',
   resolveOrgHeaderForRequest: mockResolveOrgHeaderForRequest,
+  pathRequiresOrgHeader: mockPathRequiresOrgHeader,
 }));
 
 const originalFetch = globalThis.fetch;
@@ -68,6 +70,8 @@ describe('authorizedFetch E2E bypass invariants', () => {
     mockGetSupabase.mockReturnValue(null);
     mockResolveOrgHeaderForRequest.mockReset();
     mockResolveOrgHeaderForRequest.mockReturnValue(null);
+    mockPathRequiresOrgHeader.mockReset();
+    mockPathRequiresOrgHeader.mockReturnValue(false);
     (window as any).__E2E_BYPASS = true;
   });
 

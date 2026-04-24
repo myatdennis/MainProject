@@ -23,6 +23,8 @@ export default async () => {
   const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
   const requestedPort = Number(process.env.VITE_PORT || 5173);
   let activeViteOrigin = `http://localhost:${requestedPort}`;
+  const API_BASE = process.env.VITE_API_BASE_URL || '/api';
+
   if (isDev && (!process.env.VITE_API_BASE_URL || process.env.VITE_API_BASE_URL.trim() === '')) {
     process.env.VITE_API_BASE_URL = '/api';
   }
@@ -108,53 +110,9 @@ export default async () => {
       },
       proxy: {
         '/api': {
-          // Allow the proxy target to be overridden at startup so E2E runs can
-          // point directly at the E2E API server (port 8888, E2E_TEST_MODE=true).
-          // For local/E2E consistency default to 127.0.0.1:8888 (avoid localhost
-          // which can resolve differently in some environments).
-          target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8888',
+          target: 'http://127.0.0.1:8888',
           changeOrigin: true,
           secure: false,
-          ws: true,
-          cookieDomainRewrite: { '*': '' },
-          configure: (proxy) => {
-            if (!isDev) return;
-            proxy.on('proxyReq', (proxyReq, req) => {
-              if (req.headers?.cookie) {
-                proxyReq.setHeader('cookie', req.headers.cookie);
-              }
-              if (!proxyReq.getHeader('origin')) {
-                proxyReq.setHeader('origin', activeViteOrigin);
-              }
-              console.log('[vite-proxy][api] request', {
-                method: req.method,
-                url: req.url,
-              });
-            });
-            proxy.on('proxyRes', (proxyRes, req) => {
-              // Cast to the union that node's http module actually produces for headers;
-              // http-proxy types the header map as Record<string, string | string[]>
-              // which narrows to `never` after the Array.isArray guard in some TS versions.
-              const rawHeader = proxyRes.headers?.['set-cookie'] as string | string[] | undefined;
-              const setCookieHeader = rawHeader;
-              let cookieNames: string[] = [];
-              if (Array.isArray(setCookieHeader)) {
-                cookieNames = setCookieHeader.map((entry) => String(entry).split('=')[0]);
-              } else if (typeof setCookieHeader === 'string') {
-                cookieNames = [(setCookieHeader as string).split('=')[0]];
-              }
-              console.log('[vite-proxy][api] response', {
-                method: req.method,
-                url: req.url,
-                statusCode: proxyRes.statusCode,
-                hasSetCookie: Array.isArray(setCookieHeader)
-                  ? setCookieHeader.length > 0
-                  : Boolean(setCookieHeader),
-                cookieNames,
-                setCookieHeader,
-              });
-            });
-          },
         },
         '/ws': {
           target: process.env.VITE_API_PROXY_TARGET

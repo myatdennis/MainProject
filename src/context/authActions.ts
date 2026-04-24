@@ -47,6 +47,7 @@ export const createAuthActions = ({
       const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
         method: 'POST',
         allowAnonymous: true,
+        credentials: 'include',
         headers: buildSessionAuditHeaders(),
         body: {
           email: normalizedEmail,
@@ -94,6 +95,7 @@ export const createAuthActions = ({
             const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
               method: 'GET',
               requireAuth: true,
+              credentials: 'include',
             });
             payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
           } catch (sessionError) {
@@ -105,6 +107,7 @@ export const createAuthActions = ({
             const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
               method: 'GET',
               requireAuth: true,
+              credentials: 'include',
             });
             payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
           } catch {
