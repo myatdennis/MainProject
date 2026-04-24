@@ -203,11 +203,7 @@ class SyncService {
   private async initializeRealtimeSync() {
     // Only set up real-time sync if Supabase is configured
     if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      if (import.meta.env.DEV) {
-        logSyncDebug('[SyncService] Supabase not configured - using polling sync only');
-      }
-      this.cleanupRealtimeChannels();
-      return;
+      throw new Error('Supabase configuration is missing. Ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.');
     }
 
     try {
@@ -301,6 +297,10 @@ class SyncService {
       // Listen for course changes
       subscribeWithGuards('course_changes', (channel) =>
         channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
           'postgres_changes',
           {
             event: '*',

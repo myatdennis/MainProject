@@ -34,6 +34,9 @@ import {
 import { getSupabaseConfig } from '../config/supabaseConfig.js';
 import { sendError, sendOk } from '../lib/apiEnvelope.js';
 
+const asyncHandler = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
@@ -623,9 +626,6 @@ router.post('/login', loginRateLimiter, asyncHandler(async (req, res, next) => {
 // Dev-only debug endpoint: allow exercising the demo-login branch without
 // setting global DEMO flags. This endpoint is only enabled in non-production
 // when ALLOW_DEBUG_LOGIN=true. This minimizes accidental exposure.
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
-
 if (!isProduction && String(process.env.ALLOW_DEBUG_LOGIN || '').toLowerCase() === 'true') {
   router.post('/_debug/demo-login', authLimiter, asyncHandler(async (req, res) => {
     const { email, password } = req.body || {};

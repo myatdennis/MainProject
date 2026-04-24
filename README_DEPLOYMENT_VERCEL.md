@@ -1,53 +1,54 @@
-# Deployment Guide: Vercel + External Node API
+# Deployment Guide: Netlify + External Node API
 
 This project has two major parts:
 1. React + Vite frontend (build output in `dist/`)
 2. Express + WebSocket API (`server/index.js`)
 
-Vercel can host both via `vercel.json`, but note that long-lived WebSocket connections and large in-memory state may not be ideal in Vercel serverless functions. For production you may prefer:
-- Frontend on Vercel
+Netlify can host the frontend, but note that long-lived WebSocket connections and large in-memory state may not be ideal in serverless functions. For production you may prefer:
+- Frontend on Netlify
 - API + WS on Railway / Render / Fly.io / DigitalOcean / AWS EC2
 
-## Option A (Simple Demo): Everything on Vercel
-Pros: One-click deploy
+## Option A (Simple Demo): Frontend on Netlify
+Pros: Easy deploy
 Cons: Serverless function cold starts, WS instability under load, memory limits
 
 ### Steps
-1. Install Vercel CLI
+1. Install Netlify CLI
    ```bash
-   npm i -g vercel
+   npm i -g netlify-cli
    ```
 2. Link project
    ```bash
-   vercel link
+   netlify link
    ```
 3. Set environment variables (see below)
    ```bash
-   vercel env add VITE_SUPABASE_URL
-   vercel env add VITE_SUPABASE_ANON_KEY
-   vercel env add SUPABASE_SERVICE_ROLE_KEY
-   vercel env add JWT_ACCESS_SECRET
-   vercel env add DEMO_MODE
-   vercel env add VITE_API_URL
+   netlify env:set VITE_SUPABASE_URL https://abc123xyz.supabase.co
+   netlify env:set VITE_SUPABASE_ANON_KEY
+   netlify env:set SUPABASE_SERVICE_ROLE_KEY
+   netlify env:set JWT_ACCESS_SECRET your-jwt-access-secret
+   netlify env:set JWT_REFRESH_SECRET your-jwt-refresh-secret
+   netlify env:set DEMO_MODE
+   netlify env:set VITE_API_URL
    ```
 4. Deploy preview
    ```bash
-   vercel
+   netlify deploy
    ```
 5. Promote to production
    ```bash
-   vercel --prod
+   netlify deploy --prod
    ```
 
 ## Option B (Recommended): Split Hosting
 | Layer      | Hosting      | Notes |
 |-----------|--------------|-------|
-| Frontend  | Vercel       | Fast global CDN, static build (`vite build`) |
+| Frontend  | Netlify      | Fast global CDN, static build (`vite build`) |
 | API + WS  | Railway/Render| Persistent process, easier for WebSockets |
 
 ### Split Setup
 1. Deploy API container/process elsewhere (e.g. Railway). Ensure it's reachable (e.g. `https://api.yourdomain.com`).
-2. On Vercel set `VITE_API_URL=/api` and add a proxy (either keep relative and use same domain if you put API behind reverse proxy), or set `VITE_API_BASE_URL=https://api.yourdomain.com` if code reads that.
+2. On Netlify set `VITE_API_URL=/api` and add a proxy (either keep relative and use same domain if you put API behind reverse proxy), or set `VITE_API_BASE_URL=https://api.yourdomain.com` if code reads that.
 3. Replace any hardcoded localhost references.
 4. Rebuild and deploy frontend.
 
@@ -60,7 +61,7 @@ From `.env.example`:
 - `DEMO_MODE` – `false` for production
 - `E2E_TEST_MODE` – Keep `false` in production
 - `VITE_API_URL` – Base path for API calls in browser (usually `/api` when proxying)
-- `PORT` – Not needed on Vercel; for external API host set to 8888 or 8787
+- `PORT` – Not needed on Netlify; for external API host set to 8888 or 8787
 
 ### Generating Secrets
 ```bash
@@ -68,22 +69,22 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" # JWT_A
 ```
 
 ## DNS + Custom Domain
-1. Add domain in Vercel dashboard (e.g. `app.example.com`).
-2. Vercel gives A / CNAME records or nameservers.
-3. In your DNS provider: set `CNAME app -> cname.vercel-dns.com` (value Vercel provides).
-4. Wait for propagation, Vercel auto-provisions SSL.
+1. Add domain in Netlify dashboard (e.g. `app.example.com`).
+2. Netlify gives A / CNAME records or nameservers.
+3. In your DNS provider: set `CNAME app -> cname.netlify.com` (value Netlify provides).
+4. Wait for propagation, Netlify auto-provisions SSL.
 5. Update production variables:
    - `VITE_API_URL=https://app.example.com/api` (if API on same domain)
    - Or if split: `VITE_API_BASE_URL=https://api.example.com`
 
 ## WebSocket Considerations
-If using WebSockets heavily, Vercel's serverless functions may be terminated early.
+If using WebSockets heavily, Netlify's serverless functions may be terminated early.
 Solutions:
 - Move WS server to a persistent host (Railway/Render/Fly.io)
 - Or migrate to Server-Sent Events (SSE) which fit serverless better
 
 ## Deployment Verification Checklist
-1. `vercel logs <deployment>` shows successful build
+1. `netlify logs <deployment>` shows successful build
 2. Visit `/api/health` returns `{ status: "ok" }`
 3. Frontend loads at root URL and can fetch courses
 4. Admin login succeeds (demo mode disabled in prod)
@@ -91,20 +92,19 @@ Solutions:
 
 ## Rollback
 ```bash
-vercel list
-vercel rollback <deployment-id>
+netlify rollback
 ```
 
 ## Troubleshooting
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| 404 on SPA route | Missing rewrite | Ensure final route to `/dist/index.html` in `vercel.json` |
+| 404 on SPA route | Missing rewrite | Ensure final route to `/dist/index.html` in `netlify.toml` |
 | API cold starts slow | Serverless spin-up | Move API to persistent host |
 | WS disconnects | Lambda reaped | Use persistent host or SSE fallback |
 | Supabase auth fails | Missing env var | Set `VITE_SUPABASE_URL` / keys in production |
 | Demo credentials still work | `DEMO_MODE=true` | Set `DEMO_MODE=false` on production |
 
-## Example Production Variable Set (Frontend on Vercel)
+## Example Production Variable Set (Frontend on Netlify)
 ```
 VITE_SUPABASE_URL=https://xxxx.supabase.co
 VITE_SUPABASE_ANON_KEY=sbp_public_key_here
@@ -114,7 +114,7 @@ E2E_TEST_MODE=false
 ```
 
 ## Example Production Variable Set (Split API)
-Frontend (Vercel):
+Frontend (Netlify):
 ```
 VITE_SUPABASE_URL=...
 VITE_SUPABASE_ANON_KEY=...

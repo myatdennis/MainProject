@@ -31,9 +31,10 @@ try {
 
 // Validate critical environment variable values at runtime
 console.log('[ENV CHECK]', {
-  SUPABASE_URL: process.env.SUPABASE_URL,
-  DATABASE_POOLER_URL: !!process.env.DATABASE_POOLER_URL,
-  JWT_ACCESS_SECRET: !!process.env.JWT_ACCESS_SECRET,
+  SUPABASE_URL: process.env.SUPABASE_URL || 'https://abc123xyz.supabase.co',
+  DATABASE_POOLER_URL: process.env.DATABASE_POOLER_URL || 'postgresql://postgres.eprsgmfzqjptfywoecuy:ETWyHLaaJ9arfCm6@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
+  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'your-jwt-access-secret',
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'your-jwt-refresh-secret',
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN,
   CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS,
 });
