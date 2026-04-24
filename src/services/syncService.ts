@@ -301,10 +301,6 @@ class SyncService {
           {
             event: '*',
             schema: 'public',
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
             table: 'courses',
           },
           (payload: any) => {

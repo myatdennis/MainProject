@@ -11,8 +11,8 @@ if (!fs.existsSync(swPath)) {
   process.exit(1);
 }
 
-const buildId = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
-const versionTag = `v${buildId}`;
+const buildId = process.env.CACHE_VERSION || 'v1';
+const versionTag = buildId;
 
 const manifestPayload = {
   version: versionTag,

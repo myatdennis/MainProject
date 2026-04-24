@@ -37,7 +37,9 @@ const DATABASE_POOLER_URL = process.env.DATABASE_POOLER_URL;
 const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS;
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN;
+// ...existing code...
+const COOKIE_DOMAIN = '.the-huddle.co';
+// ...existing code...
 // Removed frontend-only variables
 
 console.log('[ENV CHECK]', {
