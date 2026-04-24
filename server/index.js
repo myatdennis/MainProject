@@ -1200,6 +1200,7 @@ app.options('*', cors());
 // Also record presence/shape of the E2E bypass signal (header / cookie / query)
 // so we can confirm whether Playwright-injected bypass tokens reach the server.
 app.use((req, res, next) => {
+  console.log(`[REQ] ${req.method} ${req.url}`);
   try {
     const headerBypass = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
     const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
