@@ -1,5 +1,6 @@
 import { request } from './http';
 import apiRequest from '../utils/apiClient';
+import { getAuthState } from '../store/authStore';
 
 export type Visibility = 'global' | 'org' | 'user';
 
@@ -10,7 +11,13 @@ export type Visibility = 'global' | 'org' | 'user';
  */
 const resolveDocumentsEndpoint = (forceAdmin = false): string => {
   if (forceAdmin) return '/api/admin/documents';
-  // Detect admin surface by URL prefix
+  // Prefer canonical admin flag from auth store; fall back to URL heuristic
+  try {
+    const auth = getAuthState();
+    if (auth?.isAdmin) return '/api/admin/documents';
+  } catch (e) {
+    /* ignore errors reading global auth snapshot */
+  }
   if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
     return '/api/admin/documents';
   }

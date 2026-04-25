@@ -6,6 +6,7 @@ import cn from '../utils/cn';
 import { logAuthRedirect, logAuthDiagnostic } from '../utils/logAuthRedirect';
 import RealtimeNotifications from './RealtimeNotifications';
 import { useSecureAuth } from '../context/SecureAuthContext';
+import { getAuthState } from '../store/authStore';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -44,7 +45,8 @@ const Header = () => {
     return `${first ?? ''}${last ?? ''}`.trim().toUpperCase() || fallback.toUpperCase();
   }, [user]);
 
-  const isAdminRole = (user?.role ?? '').toLowerCase() === 'admin' || Boolean(user?.isPlatformAdmin);
+  const authSnap = getAuthState();
+  const isAdminRole = Boolean(authSnap?.isAdmin);
   const roleLabel = isAdminRole ? 'Admin' : 'Learner';
   const canAccessAdmin = Boolean(isAuthenticated?.admin);
   const canAccessLms = Boolean(isAuthenticated?.lms);

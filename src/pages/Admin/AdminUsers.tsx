@@ -37,6 +37,7 @@ import Button from '../../components/ui/Button';
 import ActionsMenu from '../../components/ui/ActionsMenu';
 import { listOrgs, onOrgListInvalidated } from '../../dal/orgs';
 import { useSecureAuth } from '../../context/SecureAuthContext';
+import { getAuthState } from '../../store/authStore';
 import Loading from '../../components/ui/Loading';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
@@ -61,8 +62,9 @@ export const getUserTransferToastMessage = (
 
 const AdminUsers = () => {
   useNavTrace('AdminUsers');
-  const { activeOrgId, user } = useSecureAuth();
-  const isPlatformAdmin = Boolean(user?.isPlatformAdmin || user?.platformRole === 'platform_admin' || user?.role === 'admin');
+  const { activeOrgId } = useSecureAuth();
+  const authSnap = getAuthState();
+  const isPlatformAdmin = Boolean(authSnap?.isAdmin);
   const { routeKey } = useRouteChangeReset();
 
   // Reset transient UI state (filters, selections) whenever the user navigates

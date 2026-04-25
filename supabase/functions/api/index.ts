@@ -564,13 +564,46 @@ const listCourses = async (ctx: RequestContext) => {
 
   const access = ensureOrgAccess(ctx);
   if (access instanceof Response) return access;
+  // Determine if caller is a platform admin by inspecting JWT app_metadata.platform_role.
+  // getContext doesn't currently persist full JWT claims on ctx, so decode here from the
+  // authorization header to make a robust check.
+  const claims = ctx.authorization && ctx.authorization.startsWith("Bearer ")
+    ? decodeJwt(ctx.authorization.slice(7))
+    : null;
+  try {
+    console.log("JWT CLAIMS:", claims);
+  } catch (_err) {
+    // ignore
+  }
+  const platformRole = (claims?.app_metadata as Record<string, unknown> | undefined)?.platform_role
+    ?? (claims?.app_metadata as Record<string, unknown> | undefined)?.platformRole
+    ?? null;
+  const isPlatformAdmin = String(platformRole ?? "").toLowerCase() === "platform_admin";
 
-  const { data, error } = await supabase
+  // Build query; apply organization filter only when NOT a platform admin.
+  let query = supabase
     .from("courses")
     .select("id, name, title, slug, organization_id, created_by, created_at, updated_at, status")
-    .eq("organization_id", access.orgId)
     .order("created_at", { ascending: false });
+
+  if (!isPlatformAdmin) {
+    query = (query as any).eq("organization_id", access.orgId);
+  }
+
+  const { data, error } = await query;
   if (error) return handleDbError(error);
+
+  // Debug logging to aid troubleshooting when platform-admins see empty results.
+  try {
+    console.log("ADMIN QUERY:", {
+      userId: ctx.userId,
+      isPlatformAdmin,
+      orgId: access.orgId,
+      resultCount: (data ?? []).length,
+    });
+  } catch (_err) {
+    // ignore logging errors
+  }
 
   const normalized = (data ?? []).map(mapCourse);
   return json({ data: normalized });
@@ -1742,6 +1775,34 @@ Deno.serve(async (req) => {
 
     if (pathname === "/api/admin/organizations") {
       return errorJson(410, "GONE", "Organizations endpoint has moved to the Node API");
+    }
+
+    if (pathname === "/api/debug/rls-check" && method === "GET") {
+      // Runtime diagnostic endpoint: returns how the DB sees JWT claims and table counts.
+      // It relies on a small SQL function (get_platform_role_claims) that reads auth.jwt()
+      // and request.jwt.claims within the DB request context.
+      try {
+  const claimQueryResult = await supabase.rpc('get_platform_role_claims').maybeSingle();
+  const claimQuery = claimQueryResult && !claimQueryResult.error ? claimQueryResult.data : null;
+
+        const coursesRes = await supabase.from('courses').select('id', { count: 'exact', head: true });
+        const orgsRes = await supabase.from('organizations').select('id', { count: 'exact', head: true });
+        const usersRes = await supabase.from('user_profiles').select('id', { count: 'exact', head: true });
+
+        const coursesCount = (coursesRes && (coursesRes.count ?? 0)) || 0;
+        const orgsCount = (orgsRes && (orgsRes.count ?? 0)) || 0;
+        const usersCount = (usersRes && (usersRes.count ?? 0)) || 0;
+
+        const claimObj: any = claimQuery as any;
+        return json({
+          auth_jwt_platform_role: claimObj?.auth_jwt_platform_role ?? null,
+          request_jwt_platform_role: claimObj?.request_jwt_platform_role ?? null,
+          counts: { courses: coursesCount, organizations: orgsCount, user_profiles: usersCount },
+        });
+      } catch (err) {
+        console.error('rls-check error', err);
+        return errorJson(500, 'INTERNAL_ERROR', 'Failed to run rls-check');
+      }
     }
 
     const orgMembersMatch = pathname.match(/^\/api\/admin\/organizations\/([^/]+)\/members$/);

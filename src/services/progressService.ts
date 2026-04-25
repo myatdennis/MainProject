@@ -3,6 +3,7 @@ import { NetworkErrorHandler } from '../utils/NetworkErrorHandler';
 import { toast } from 'react-hot-toast';
 import { getUserSession } from '../lib/secureStorage';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { getAuthState } from '../store/authStore';
 import {
   enqueueProgressSnapshot,
   hasPendingItems,
@@ -306,8 +307,8 @@ export const progressService = {
       return [];
     }
 
-    const isAdminSession =
-      Boolean(sessionContext?.isPlatformAdmin) || (sessionContext?.role === 'admin' || sessionContext?.role === 'platform_admin');
+  const authSnap = getAuthState();
+  const isAdminSession = Boolean(authSnap?.isAdmin);
     const normalizedRequestedId = userId ? userId.toLowerCase() : sessionUserId;
 
     if (!normalizedRequestedId || normalizedRequestedId !== sessionUserId) {

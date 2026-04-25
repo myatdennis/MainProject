@@ -149,9 +149,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Ensure admin store initialization waits for final resolved auth/org state
   useEffect(() => {
     // Only initialize admin store if session/org/role is fully resolved and admin is allowed
-    const isAdmin =
-      (user?.role === 'admin' || user?.role === 'platform_admin') &&
-      (authBootstrapState === 'ready' || authBootstrapState === 'degraded');
+  const platformRole = (user?.appMetadata && (user.appMetadata.platform_role ?? user.appMetadata.platformRole)) || null;
+  const userRole = (user?.userMetadata && (user.userMetadata.role ?? user.userMetadata?.role)) || user?.role || null;
+    const isAdminFromSession = String(platformRole || '').toLowerCase() === 'platform_admin' || String(userRole || '').toLowerCase() === 'admin';
+    const isAdmin = isAdminFromSession && (authBootstrapState === 'ready' || authBootstrapState === 'degraded');
     if (isAdmin && !lastAdminAllowedRef.current) {
       if (import.meta.env?.DEV) {
         console.debug('[AUTH][ADMIN_GATE] Admin store initializing', {
@@ -489,8 +490,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         client: authState.client ? 'ready' : 'idle',
       });
       setUserSession(session);
-      // Mirror the authenticated user into the global auth store for non-React consumers
-      setAuthState({ user: session });
+  // Determine admin status from session metadata (source-of-truth)
+  const platformRole = (session?.appMetadata && (session.appMetadata.platform_role ?? session.appMetadata.platformRole)) || null;
+  const role = (session?.userMetadata && (session.userMetadata.role ?? session.userMetadata?.role)) || session?.role || null;
+  const isAdmin = String(platformRole || '').toLowerCase() === 'platform_admin' || String(role || '').toLowerCase() === 'admin';
+
+  // Mirror the authenticated user into the global auth store for non-React consumers
+  // include deterministic isAdmin so other modules can rely on session metadata
+  setAuthState({ user: session, isAdmin });
+
+  // Debug visibility: make role resolution explicit in console during login/session restoration
+  // eslint-disable-next-line no-console
+  console.log('ROLE CHECK:', { platformRole, role, isAdmin });
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = resolvedState.activeOrgSource;
       clearMembershipRetryBackoff();

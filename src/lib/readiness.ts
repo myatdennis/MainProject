@@ -1,4 +1,5 @@
 import { waitForAuthReady as canonicalWaitForAuthReady, getCanonicalSession } from './canonicalAuth';
+import { getAuthState } from '../store/authStore';
 import { resolveOrgContextFromBridge, BRIDGE_SNAPSHOT_EVENT } from '../store/courseStoreOrgBridge';
 
 export async function waitForAuthReady(timeoutMs = 5000) {
@@ -108,8 +109,8 @@ export async function ensureSessionAndOrg(options?: { requireAdmin?: boolean; ti
   }
 
   if (options?.requireAdmin) {
-    const role = orgInfo?.role ?? null;
-    const isAdmin = role === 'admin' || role === 'platform_admin' || role === 'owner' || Boolean((session as any).isPlatformAdmin);
+    const auth = getAuthState();
+    const isAdmin = Boolean(auth?.isAdmin);
     if (!isAdmin) {
       throw new Error('admin_required');
     }

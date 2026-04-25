@@ -33,6 +33,7 @@ import {
   // clearAllCatalogCache and clearCatalogCacheForOrg are intentionally
   // not referenced here; tests import them from catalogPersistence directly.
 } from '../utils/catalogPersistence';
+import { getAuthState } from './authStore';
 
 // NOTE: inline fetchWithCredentials helper removed; callers should use apiRequest
 // which normalizes credentials/content-type headers. Keeping the codebase
@@ -2631,7 +2632,30 @@ export const courseStore = {
         }
 
       } else if (!adminMode) {
-        console.warn('[courseStore.init] Skipping admin course load for non-admin role.');
+        // Determine admin flag from canonical auth store (SecureAuthContext writes deterministic isAdmin)
+        const auth = getAuthState();
+        const isAdminFlag = Boolean(auth?.isAdmin);
+        if (!isAdminFlag) {
+          console.warn('Not admin — skipping admin load');
+        } else {
+          // Admin user detected despite non-admin surface — attempt admin course load
+          const adminSnapshotBefore = { ...courses };
+          try {
+            // Attempt DB fetch similar to admin-mode path. Keep degraded handling minimal here.
+            dbCourses = await instrumentStep<Course[]>('getAllCoursesFromDatabase', { adminOverride: true, orgId: orgContext.orgId ?? null }, () => getAllCoursesFromDatabase());
+            adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
+          } catch (adminFetchErr) {
+            adminLoadStatus = 'error';
+            adminLoadError = adminFetchErr instanceof Error ? adminFetchErr.message : String(adminFetchErr);
+            console.warn('[courseStore.init] admin_courses_fetch_failed_override', { error: adminLoadError });
+            // Restore previous catalog if available to avoid wiping UI
+            if (Object.keys(adminSnapshotBefore).length > 0) {
+              courses = { ...adminSnapshotBefore };
+              adminLoadStatus = 'success';
+              console.warn('[courseStore.init] admin_override_catalog_preserved', { restoredCount: Object.keys(adminSnapshotBefore).length, error: adminLoadError });
+            }
+          }
+        }
       }
 
       const shouldLoadPublishedCatalog =
