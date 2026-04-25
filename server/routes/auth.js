@@ -480,14 +480,20 @@ const loginHandler = async (req, res) => {
     console.log("LOGIN HIT");
     console.log("EMAIL:", email);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+    if (!supabaseAuthClient) {
+      const configError = buildAuthConfigError();
+      return res.status(configError.status).json(configError);
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    const { data, error } = await supabaseAuthClient.auth.signInWithPassword({
+      email: normalizedEmail,
       password,
     });
 
-    if (error) {
-      console.error("LOGIN ERROR:", error.message);
-      return res.status(401).json({ error: error.message });
+    if (error || !data?.session || !data?.user) {
+      console.error("LOGIN ERROR:", error?.message || 'Missing session');
+      return res.status(401).json({ error: error?.message || 'Invalid credentials' });
     }
 
     const session = data.session;
@@ -496,23 +502,15 @@ const loginHandler = async (req, res) => {
       userId: data.user?.id,
     });
 
-    res.cookie("accessToken", session.access_token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
+    const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-login]' });
+    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
+    const tokens = buildTokenResponseFromSession(session);
+    attachAuthCookies(req, res, {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     });
 
-    res.cookie("refreshToken", session.refresh_token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-    });
-
-    return res.json({
-      access_token: session.access_token,
-      refresh_token: session.refresh_token,
-      user: data.user,
-    });
+    return res.json(buildSessionResponse(userPayload, tokens));
   } catch (err) {
     console.error("LOGIN ERROR:", err);
     return res.status(500).json({ error: err.message });
@@ -834,7 +832,7 @@ router.post('/logout', authLimiter, async (req, res) => {
   }
 });
 
-router.get('/session', async (req, res) => {
+const sessionHandler = asyncHandler(async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
   const origin = req.headers?.origin || null;
   const schemaHealth = req.app?.locals?.schemaHealth || null;
@@ -910,6 +908,8 @@ router.get('/session', async (req, res) => {
     });
   }
 });
+
+router.get('/session', sessionHandler);
 
 /**
  * Manual verification (local):
@@ -1064,6 +1064,12 @@ router.get('/me', async (req, res) => {
       });
     }
     
+    const { data: memberships } = await supabase
+      .from('organization_memberships')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('status', 'active');
+
     res.json({
       user: {
         id: user.id,
@@ -1074,9 +1080,12 @@ router.get('/me', async (req, res) => {
         organizationId: req.activeOrgId || user.organization_id,
         isActive: user.is_active,
       },
+      memberships: memberships || []
     });
   } catch {
     // Add missing '{' to fix syntax error
     console.error("Error occurred");
   }
 });
+
+router.post('/session', sessionHandler);

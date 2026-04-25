@@ -376,14 +376,16 @@ export function AppContent() {
       const detail = (event as CustomEvent<Record<string, unknown>>).detail || {};
       const eventType = typeof detail.event === 'string' ? detail.event : 'unknown';
       let message = 'We are reconnecting to your course catalog.';
-      if (eventType === 'assignment_scope_failed') {
-        message = 'We hit a snag loading your assignments. Showing cached data while we retry.';
+      if (eventType === 'org_catalog_failed') {
+        message = 'We hit a snag loading your course catalog. Showing cached data while we retry.';
+      } else if (eventType === 'assignment_scope_failed') {
+        message = 'Assignment details are unavailable. Your course catalog is still available.';
       } else if (eventType === 'assignment_scope_empty') {
-        message = 'No assignments were returned for this workspace. Cached courses are still available.';
+        message = 'No direct assignments were returned for this workspace. Available courses are still shown.';
       } else if (eventType === 'default_catalog_loaded') {
         message = 'Catalog data is reconnecting. Showing available content while we retry.';
       } else if (eventType === 'org_selection_required') {
-        message = 'Organization context required — please select a workspace to load your assigned programs.';
+        message = 'Organization context required — please select a workspace to load your courses.';
         // Show as an error and keep visible a bit longer so users notice it.
         showCatalogToast(message, 'error', 15000);
         return;

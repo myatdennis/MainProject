@@ -4,7 +4,7 @@ import {
   getAllCoursesFromDatabase,
   syncCourseToDatabase,
 } from '../dal/adminCourses';
-import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
+import { fetchPublishedCourses } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
 import { getAccessToken as getStoredAccessToken, getActiveOrgPreference, getUserSession } from '../lib/secureStorage';
@@ -33,7 +33,15 @@ import {
   clearAllCatalogCache,
   clearCatalogCacheForOrg,
 } from '../utils/catalogPersistence';
-// ...existing code... (removed unused imports currentSurface and isAuthBootstrapping)
+
+// Ensure fetch requests include credentials
+const fetchWithCredentials = async (url, options = {}) => {
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'include',
+  });
+  return response;
+};
 
 // Run stale key eviction immediately at module load — before any cache reads.
 evictStaleCatalogKeys();
@@ -1762,7 +1770,7 @@ void _hasLocalProgressForCourse;
 // is now delegated to catalogPersistence.ts, imported at the top of this file.
 // The inline implementations below have been removed.
 
-const ensureAssignmentScopedCatalog = async (
+const ensureOrgScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
   orgId: string | null,
@@ -1780,505 +1788,130 @@ const ensureAssignmentScopedCatalog = async (
 
   const cacheKey = buildCatalogCacheKey(userId, orgId);
 
-  const hasAnyCourses = (catalog: { [key: string]: Course } | null | undefined) =>
-    Boolean(catalog && Object.keys(catalog).length > 0);
-
   try {
-    console.info('[HYDRATION TRACE]', { step: 'assignments_fetch_start', userId, orgId });
-    let outcome;
-    try {
-      outcome = await retryAsync(() => getAssignmentsForUserWithOutcome(userId, orgId), 3, 150);
-    } catch (err) {
-      console.error('[courseStore] assignment_fetch_error (retries_exhausted)', { userId, orgId, error: err instanceof Error ? err.message : String(err) });
-      if (!skipDiagnostics) {
-        emitCatalogDiagnostic('assignment_scope_failed', { userId, orgId, phase: 'post_fetch', error: 'assignment_fetch_retries_exhausted' });
-      }
-      setLearnerCatalogState({
-        status: 'error',
-        lastUpdatedAt: Date.now(),
-        lastError: 'assignment_fetch_retries_exhausted',
-        detail: 'assignment_fetch_retries_exhausted',
-      });
-      return currentCourses;
-    }
-    console.info('[HYDRATION TRACE]', { step: 'assignments_fetch_response', userId, orgId, outcome: outcome.outcome, assignmentCount: Array.isArray(outcome.assignments) ? outcome.assignments.length : 0 });
-    // outcome.outcome: 'success' | 'empty' | 'error' | 'unauthenticated'
-    if (outcome.outcome === 'error') {
-      console.error('[courseStore] assignment_fetch_error', { userId, orgId, error: outcome.error ?? 'remote_failed', surface: 'learner' });
-      // Do not treat remote failure as empty — preserve current catalog and mark error state.
-      if (!skipDiagnostics) {
-        emitCatalogDiagnostic('assignment_scope_failed', { userId, orgId, phase: 'post_fetch', error: outcome.error ?? 'remote_failed' });
-      }
-      setLearnerCatalogState({
-        status: 'error',
-        lastUpdatedAt: Date.now(),
-        lastError: outcome.error ?? 'assignment_fetch_error',
-        detail: 'assignment_fetch_error',
-      });
-      // Do not clear cache or merge defaults — keep currentCourses intact.
-      return currentCourses;
-    }
-
-    if (outcome.outcome === 'unauthenticated') {
-      // Once the learner catalog flow is running, an unauthenticated outcome is a
-      // real failure. Returning idle here caused the page to sit in loading UI
-      // indefinitely even though the request path could never succeed.
-      if (!skipDiagnostics) {
-        emitCatalogDiagnostic('assignment_scope_failed', { userId, orgId, phase: 'post_fetch', error: 'unauthenticated' });
-      }
-      setLearnerCatalogState({
-        status: 'error',
-        lastUpdatedAt: Date.now(),
-        lastError: 'auth_session_unavailable',
-        detail: 'auth_session_unavailable',
-      });
-      return {};
-    }
-
-    const assignments = outcome.assignments;
-    if (outcome.outcome === 'success') {
-      console.info('[courseStore] assignment_fetch_success', { userId, orgId, count: assignments.length, surface: 'learner' });
-    }
-    if (!assignments || assignments.length === 0) {
-      console.info('[courseStore] assignment_fetch_empty', { userId, orgId, surface: 'learner' });
-      if (!skipDiagnostics) {
-        emitCatalogDiagnostic('assignment_scope_empty', { userId, orgId, phase: 'post_fetch' });
-      }
-      clearCatalogCacheEntry(cacheKey);
-
-      let fallback = (() => {
-        if (DEFAULT_CATALOG_ALLOWED) {
-          const defaults = getDefaultCourses();
-          if (hasAnyCourses(defaults)) {
-            return { source: 'default' as const, catalog: defaults };
-          }
+    console.info('[HYDRATION TRACE]', { step: 'org_catalog_fetch_start', userId, orgId });
+    const published = await retryAsync(
+      async () => fetchPublishedCourses({ orgId: orgId ?? undefined }),
+      3,
+      150,
+    );
+    const courseMap: { [key: string]: Course } = {};
+    if (Array.isArray(published)) {
+      published.forEach((course: Course) => {
+        if (course?.id) {
+          courseMap[course.id] = course;
         }
-
-        return { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
-      })();
-      if (orgId && fallback.source === 'default' && !DEMO_ASSIGNMENT_FALLBACK_ALLOWED) {
-        fallback = { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
-      }
-
-      if (fallback.source !== 'empty' && cacheKey) {
-        saveCachedCatalog(cacheKey, fallback.catalog);
-      }
-
-      console.info(`[courseStore] No assignments (200 empty) — resulting catalog: ${fallback.source}`);
-
-      const detail = (() => {
-        if (fallback.source === 'empty') return orgId ? 'no_assignments' : 'no_assignments_global';
-        if (fallback.source === 'default') return 'fallback_default' as const;
-        return 'fallback_default' as const;
-      })();
-
-      setLearnerCatalogState({
-        status: fallback.source === 'empty' ? 'empty' : 'ok',
-        lastUpdatedAt: Date.now(),
-        lastError: null,
-        detail,
       });
-
-      return fallback.catalog;
     }
 
-    const courseMap: { [key: string]: Course } = { ...currentCourses };
-    const assignmentByCourseId = new Map<string, CourseAssignment>();
-    const missingCourseIds: string[] = [];
-
-    // Log assignment ids for E2E visibility
-    try {
-      const assignmentIds = (assignments || []).map((a: CourseAssignment) => a.courseId).filter(Boolean);
-      console.info('[HYDRATION TRACE]', { step: 'assignments_ids', userId, orgId, assignmentIds });
-    } catch (e) {
-      /* ignore */
-    }
-
-    assignments.forEach((assignment) => {
-      const cId = assignment.courseId;
-      if (!cId) return;
-      assignmentByCourseId.set(cId, assignment);
-      if (!courseMap[cId]) {
-        missingCourseIds.push(cId);
-      }
+    console.info('[HYDRATION TRACE]', {
+      step: 'org_catalog_fetch_response',
+      userId,
+      orgId,
+      courseCount: Object.keys(courseMap).length,
     });
 
-    // Prefer a bulk learner-facing catalog endpoint to seed hydration
-    // before attempting per-course fetches. This reduces per-id not_found
-    // failures caused by indexing delays in E2E flows.
+    let assignments: CourseAssignment[] = [];
     try {
-      console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_start', userId, orgId });
-      const published = await retryAsync(
-        async () => fetchPublishedCourses({ assignedOnly: true, orgId: orgId ?? undefined }),
-        2,
-        200,
-      );
-      if (Array.isArray(published)) {
-        published.forEach((c: Course) => {
-          if (c && c.id) courseMap[c.id] = c;
+      const outcome = await retryAsync(() => getAssignmentsForUserWithOutcome(userId, orgId), 2, 150);
+      if (outcome.outcome === 'success' || outcome.outcome === 'empty') {
+        assignments = outcome.assignments || [];
+      } else if (outcome.outcome !== 'unauthenticated') {
+        console.info('[courseStore] assignment_enrichment_unavailable', {
+          userId,
+          orgId,
+          outcome: outcome.outcome,
+          error: outcome.error ?? null,
         });
       }
-      console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_result', seededCourseCount: Object.keys(courseMap).length });
-    } catch (e) {
-      console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_failed', error: e instanceof Error ? e.message : String(e) });
-    }
-
-    if (missingCourseIds.length > 0) {
-      console.info('[HYDRATION TRACE]', { step: 'missing_course_ids_before_hydration', userId, orgId, missingCourseIds });
-      console.info('[courseStore] missing_course_ids_before_hydration', { userId, orgId, missingCourseIds });
-      const learnerSessionReady = await waitForLearnerApiSession(userId, 'assignment_course_hydration');
-      if (!learnerSessionReady) {
-        setLearnerCatalogState({
-          status: 'error',
-          lastUpdatedAt: Date.now(),
-          lastError: 'auth_session_unavailable',
-          detail: 'auth_session_unavailable',
-        });
-        return {};
-      }
-
-      const hydrationResults = await Promise.allSettled(
-        missingCourseIds.map(async (courseId) => {
-          console.info('[HYDRATION TRACE]', { step: 'fetchCourse_start', courseId });
-          try {
-            // Treat a `null`/`undefined` fetch as a transient not-found so we
-            // can retry — some test harnesses observe eventual consistency
-            // after a publish/assign cycle. Wrap fetchCourse so retryAsync
-            // will retry on missing results instead of only retrying on
-            // thrown errors.
-            // Increase attempts/delay to tolerate short eventual-consistency
-            // windows after publish/assign in E2E scenarios.
-            const fetched = await retryAsync(async () => {
-              const r = await fetchCourse(courseId, { includeDrafts: false });
-              if (!r) throw new Error('not_found');
-              return r;
-            }, 10, 200);
-            console.info('[HYDRATION TRACE]', { step: 'fetchCourse_result', courseId, success: true, title: fetched?.title ?? null });
-            return { courseId, fetched };
-          } catch (err) {
-            console.info('[HYDRATION TRACE]', { step: 'fetchCourse_result', courseId, success: false, error: err instanceof Error ? err.message : String(err) });
-            throw err;
-          }
-        }),
-      );
-
-      hydrationResults.forEach((result) => {
-        if (result.status === 'fulfilled') {
-          const fetched = result.value.fetched;
-          if (fetched) {
-            courseMap[fetched.id] = fetched as Course;
-          }
-          return;
-        }
-        console.warn('[courseStore] Failed to hydrate assigned learner course', result.reason);
+    } catch (assignmentError) {
+      console.info('[courseStore] assignment_enrichment_failed', {
+        userId,
+        orgId,
+        error: assignmentError instanceof Error ? assignmentError.message : String(assignmentError),
       });
-      try {
-        const hydratedIds = Object.keys(courseMap);
-        console.info('[HYDRATION TRACE]', {
-          step: 'hydration_results',
-          resolved: hydrationResults.filter((r) => r.status === 'fulfilled').length,
-          rejected: hydrationResults.filter((r) => r.status === 'rejected').length,
-          missingCourseIds,
-          hydratedIds,
-        });
-      } catch (e) {
-        /* ignore */
-      }
     }
 
-    // Build filtered result by matching assignments to hydrated courses.
-    // Matching logic: prefer direct id match, fall back to slug match.
-  const filtered: { [key: string]: Course } = {};
     const tryNormalize = (candidate: string | null | undefined) => (candidate ? slugify(String(candidate)) : '');
-  const matchedPairs: Array<{ assignmentId: string; matchedCourseId: string | null; method: 'id' | 'slug' | 'normalized' | 'none' }> = [];
+    const catalog: { [key: string]: Course } = { ...courseMap };
+    const matchedPairs: Array<{ assignmentId: string; matchedCourseId: string | null; method: 'id' | 'slug' | 'normalized' | 'none' }> = [];
 
     assignments.forEach((assignment) => {
-      const aid = assignment.courseId;
-      if (!aid) return;
-      // Direct id match
-      let found: Course | undefined = courseMap[aid];
+      const assignmentCourseId = assignment.courseId;
+      if (!assignmentCourseId) return;
+      let found: Course | undefined = catalog[assignmentCourseId];
+      let method: 'id' | 'slug' | 'normalized' | 'none' = found ? 'id' : 'none';
+
       if (!found) {
-        // Try heuristic: assignment may contain a human-friendly identifier
-        // (slug or original title). Attempt normalized UUID mapping used by
-        // stableUuidFromIdentifier, then slug matches.
         try {
-          const normalizedId = stableUuidFromIdentifier(aid);
-          if (normalizedId && courseMap[normalizedId]) {
-            found = courseMap[normalizedId];
+          const normalizedId = stableUuidFromIdentifier(assignmentCourseId);
+          if (normalizedId && catalog[normalizedId]) {
+            found = catalog[normalizedId];
+            method = 'normalized';
           }
-        } catch (e) {
-          // ignore failed normalization
+        } catch {
+          // non-fatal enrichment fallback
         }
       }
+
       if (!found) {
-        const aidSlug = tryNormalize(aid);
-        found = Object.values(courseMap).find((c) => {
-          if (!c) return false;
-          if (c.id && c.id === aid) return true;
-          if (c.slug && tryNormalize(c.slug) === aidSlug) return true;
-          if (c.id && tryNormalize(c.id) === aidSlug) return true;
+        const assignmentSlug = tryNormalize(assignmentCourseId);
+        found = Object.values(catalog).find((course) => {
+          if (!course) return false;
+          if (course.slug && tryNormalize(course.slug) === assignmentSlug) return true;
+          if (course.id && tryNormalize(course.id) === assignmentSlug) return true;
           return false;
         });
+        if (found) method = 'slug';
       }
-      if (found) {
-        const method: 'id' | 'slug' | 'normalized' = found.id === aid ? 'id' : 'slug';
-        matchedPairs.push({ assignmentId: aid, matchedCourseId: found.id, method });
-        filtered[found.id] = {
+
+      if (found?.id) {
+        catalog[found.id] = {
           ...found,
           assignmentStatus: assignment.status,
           assignmentDueDate: assignment.dueDate ?? null,
           assignmentProgress: assignment.progress ?? 0,
         };
+        matchedPairs.push({ assignmentId: assignmentCourseId, matchedCourseId: found.id, method });
       } else {
-        matchedPairs.push({ assignmentId: aid, matchedCourseId: null, method: 'none' });
+        matchedPairs.push({ assignmentId: assignmentCourseId, matchedCourseId: null, method: 'none' });
       }
     });
 
-    const filteredEntries = Object.entries(filtered);
-    try {
-      console.info('[HYDRATION TRACE]', { step: 'assignment_matching', userId, orgId, matchedPairs });
-    } catch (e) { /* ignore */ }
-  if (filteredEntries.length === 0) {
-      // Transient hydration mismatch detected: server returned assignments
-      // but none of the assigned course IDs are present in the local map.
-      // Before giving up, attempt a short, bounded retry loop to allow
-      // the missing course detail fetches or assignment indexing to catch up.
-  // Expand the retry window for assignment/catalog mismatch to tolerate
-  // longer eventual-consistency propagation in E2E environments.
-  const retryDelays = [100, 250, 500, 1000, 2000];
-      for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
-        try {
-          await sleep(retryDelays[attempt]);
-          console.info('[HYDRATION TRACE]', { step: 'assignments_mismatch_retry', attempt: attempt + 1, delayMs: retryDelays[attempt] });
-          // Re-fetch assignments (fast path) and attempt to hydrate missing courses again.
-          let retryOutcome;
-          try {
-            retryOutcome = await retryAsync(() => getAssignmentsForUserWithOutcome(userId, orgId), 2, 120);
-          } catch (e) {
-            console.warn('[courseStore] retry_assignments_fetch_failed', { attempt: attempt + 1, error: e instanceof Error ? e.message : String(e) });
-            continue;
-          }
-          const retryAssignments = retryOutcome?.assignments ?? [];
-          if (!retryAssignments || retryAssignments.length === 0) {
-            continue;
-          }
-            // Also attempt to re-seed from the learner-facing published catalog
-            // during retries — this helps when the publish pipeline is still
-            // propagating the new course into the client catalog index.
-            try {
-              console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_retry_start', attempt: attempt + 1 });
-              const publishedRetry = await retryAsync(
-                async () => fetchPublishedCourses({ assignedOnly: true, orgId: orgId ?? undefined }),
-                2,
-                250,
-              );
-              if (Array.isArray(publishedRetry)) {
-                publishedRetry.forEach((c: Course) => {
-                  if (c && c.id) courseMap[c.id] = c;
-                });
-              }
-              console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_retry_result', seededCourseCount: Object.keys(courseMap).length });
-            } catch (e) {
-              console.info('[HYDRATION TRACE]', { step: 'fetchPublishedCourses_retry_failed', error: e instanceof Error ? e.message : String(e) });
-            }
-          const retryAssignmentByCourseId = new Map<string, CourseAssignment>();
-          const retryMissingCourseIds: string[] = [];
-          retryAssignments.forEach((assignment) => {
-            const cId = assignment.courseId;
-            if (!cId) return;
-            retryAssignmentByCourseId.set(cId, assignment);
-            if (!courseMap[cId]) retryMissingCourseIds.push(cId);
-          });
-          if (retryMissingCourseIds.length === 0) {
-            // Somehow the local map now contains the ids — rebuild filteredEntries and proceed.
-            const retryFilteredEntries = Object.entries(courseMap).filter(([id]) => retryAssignmentByCourseId.has(id));
-            if (retryFilteredEntries.length > 0) {
-              // Replace filteredEntries and proceed normally by breaking out.
-              // Map filteredEntries into filtered below by assigning filteredEntries = retryFilteredEntries;
-              filteredEntries.splice(0, filteredEntries.length, ...retryFilteredEntries);
-              break;
-            }
-            continue;
-          }
-          // Attempt to hydrate missing course details again.
-          await Promise.allSettled(
-            retryMissingCourseIds.map(async (courseId) => {
-              try {
-                try {
-                  const fetched = await retryAsync(async () => {
-                    const r = await fetchCourse(courseId, { includeDrafts: false });
-                    if (!r) throw new Error('not_found');
-                    return r;
-                  }, 6, 200);
-                  if (fetched) courseMap[fetched.id] = fetched as Course;
-                  return { courseId, fetched };
-                } catch (err) {
-                  console.warn('[courseStore] retry_fetchCourse_failed', { courseId, error: err instanceof Error ? err.message : String(err) });
-                  return { courseId, fetched: null };
-                }
-              } catch (err) {
-                console.warn('[courseStore] retry_fetchCourse_failed', { courseId, error: err instanceof Error ? err.message : String(err) });
-                return { courseId, fetched: null };
-              }
-            }),
-          );
-          // Recompute filteredEntries after hydration attempt
-          const postRetryFiltered = Object.entries(courseMap).filter(([id]) => retryAssignmentByCourseId.has(id));
-          if (postRetryFiltered.length > 0) {
-            filteredEntries.splice(0, filteredEntries.length, ...postRetryFiltered);
-            break;
-          }
-        } catch (e) {
-          // ignore retry errors and continue
-        }
-      }
-      // If after retries we still have no filtered entries, attempt a
-      // short bounded poll of the learner-facing published catalog. This
-      // is deliberately conservative (3s total, 250ms interval) and only
-      // retries the learner catalog endpoint to allow brief eventual-
-      // consistency windows to clear after publish/assign operations.
-      const POLL_TIMEOUT_MS = 3000;
-      const POLL_INTERVAL_MS = 250;
-      const pollStart = Date.now();
-      while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
-        await sleep(POLL_INTERVAL_MS);
-        try {
-          const published = await fetchPublishedCourses({ assignedOnly: true, orgId: orgId ?? undefined });
-          if (Array.isArray(published)) {
-            published.forEach((c: Course) => {
-              if (c && c.id) courseMap[c.id] = c;
-            });
-          }
-        } catch (e) {
-          // ignore transient fetch failures during polling
-        }
-
-        // Quick recompute: try to match assignments against the updated map.
-        const pollMatched: { [key: string]: Course } = {};
-        assignments.forEach((assignment) => {
-          const aid = assignment.courseId;
-          if (!aid) return;
-          let found: Course | undefined = courseMap[aid];
-          if (!found) {
-            try {
-              const normalizedId = stableUuidFromIdentifier(aid);
-              if (normalizedId && courseMap[normalizedId]) found = courseMap[normalizedId];
-            } catch (e) {
-              /* ignore */
-            }
-          }
-          if (!found) {
-            const aidSlug = tryNormalize(aid);
-            found = Object.values(courseMap).find((c) => {
-              if (!c) return false;
-              if (c.id && c.id === aid) return true;
-              if (c.slug && tryNormalize(c.slug) === aidSlug) return true;
-              if (c.id && tryNormalize(c.id) === aidSlug) return true;
-              return false;
-            });
-          }
-          if (found) {
-            pollMatched[found.id] = {
-              ...found,
-              assignmentStatus: assignment.status,
-              assignmentDueDate: assignment.dueDate ?? null,
-              assignmentProgress: assignment.progress ?? 0,
-            };
-          }
-        });
-        if (Object.keys(pollMatched).length > 0) {
-          Object.entries(pollMatched).forEach(([id, c]) => {
-            filtered[id] = c;
-          });
-          // matched during poll (flag intentionally unused beyond breaking out)
-          break;
-        }
-      }
-      // If after retries we still have no filtered entries, treat as critical.
-      // Server returned assignments but none of their course IDs are in the local
-      // course map.  Do NOT promote the stale localStorage cache as the result —
-      // that was the root cause of inconsistent catalogs.  Instead, return empty
-      // so the UI shows "no content" and the user can trigger a manual refresh.
-      if (import.meta.env.DEV) {
-        const cached = loadCachedCatalog(cacheKey);
-        if (cached) {
-          console.info(
-            '[courseStore] cache available but NOT used as primary source (server data takes priority)',
-            { cacheEntries: Object.keys(cached).length },
-          );
-        }
-        console.info('[courseStore] filtered_empty_debug', {
-          userId,
-          orgId,
-          assignments: assignments.map((a) => a.courseId),
-          courseMapKeys: Object.keys(courseMap),
-        });
-      }
-      setLearnerCatalogState({
-        status: 'empty',
-        lastUpdatedAt: Date.now(),
-        lastError: null,
-        detail: 'filtered_empty',
-      });
-      // E2E-visible critical log: assignments exist but no matching courses were
-      // hydrated into the local map. This is a serious hydration mismatch and
-      // should be visible in test logs for debugging.
-      try {
-        console.error('[HYDRATION CRITICAL]', {
-          message: 'assignments_present_but_no_courses_hydrated',
-          userId,
-          orgId,
-          assignmentIds: assignments.map((a: any) => a.courseId),
-          courseMapKeys: Object.keys(courseMap),
-        });
-      } catch (e) {
-        /* ignore */
-      }
-      // Assignments exist but none of the assigned course IDs are in the local course map.
-      // This indicates a critical hydration mismatch. Throw so callers (init)
-      // can treat this as a failure that keeps the store in an initializing
-      // state rather than silently promoting an empty UI.
-      throw new Error('assignments_present_but_no_courses_hydrated');
+    if (cacheKey && Object.keys(catalog).length > 0) {
+      saveCachedCatalog(cacheKey, catalog);
+    } else if (cacheKey) {
+      clearCatalogCacheEntry(cacheKey);
     }
 
-    // `filtered` was already built above by matching assignments to hydrated
-    // courses (with id->slug fallback). `filteredEntries` contains the
-    // matched pairs; we keep `filtered` as the canonical result.
-
-    saveCachedCatalog(cacheKey, filtered);
     setLearnerCatalogState({
-      status: 'ok',
+      status: Object.keys(catalog).length > 0 ? 'ok' : 'empty',
       lastUpdatedAt: Date.now(),
       lastError: null,
-      detail: null,
+      detail: Object.keys(catalog).length > 0 ? null : 'no_org_courses',
     });
-    // HYDRATION COMPLETE trace for E2E visibility. Include counts and ids so
-    // tests can assert that hydration actually produced courses before UI
-    // rendering decisions are made.
+
     try {
-      const filteredKeys = Object.keys(filtered);
+      const catalogKeys = Object.keys(catalog);
       console.info('[HYDRATION TRACE]', {
         step: 'hydration_complete',
         userId,
         orgId,
         assignmentCount: Array.isArray(assignments) ? assignments.length : 0,
-        catalogCount: filteredKeys.length,
-        courseIds: filteredKeys,
+        catalogCount: catalogKeys.length,
+        courseIds: catalogKeys,
+        assignmentMatches: matchedPairs,
       });
-      // Emit a browser-visible event for E2E harnesses so tests can wait
-      // deterministically for hydration to finish without relying on DOM
-      // timing. We also append to a lightweight in-page event array for
-      // richer debugging snapshots captured by Playwright logs when enabled.
       try {
         if (typeof window !== 'undefined') {
           try {
             (window as any).__HUDDLE_E2E_EVENTS = (window as any).__HUDDLE_E2E_EVENTS || [];
-            (window as any).__HUDDLE_E2E_EVENTS.push({ tag: 'hydration_complete', payload: { userId, orgId, assignmentCount: Array.isArray(assignments) ? assignments.length : 0, catalogCount: filteredKeys.length, courseIds: filteredKeys, ts: Date.now() } });
+            (window as any).__HUDDLE_E2E_EVENTS.push({ tag: 'hydration_complete', payload: { userId, orgId, assignmentCount: Array.isArray(assignments) ? assignments.length : 0, catalogCount: catalogKeys.length, courseIds: catalogKeys, ts: Date.now() } });
           } catch (e) {
             /* ignore */
           }
           try {
-            window.dispatchEvent(new CustomEvent('huddle:hydration_complete', { detail: { userId, orgId, assignmentCount: Array.isArray(assignments) ? assignments.length : 0, catalogCount: filteredKeys.length, courseIds: filteredKeys } }));
+            window.dispatchEvent(new CustomEvent('huddle:hydration_complete', { detail: { userId, orgId, assignmentCount: Array.isArray(assignments) ? assignments.length : 0, catalogCount: catalogKeys.length, courseIds: catalogKeys } }));
           } catch (e) {
             /* ignore */
           }
@@ -2286,33 +1919,18 @@ const ensureAssignmentScopedCatalog = async (
       } catch (e) {
         /* ignore event failures */
       }
-      if (Array.isArray(assignments) && assignments.length > 0 && filteredKeys.length === 0) {
-        console.error('[HYDRATION CRITICAL]', {
-          message: 'assignments_present_but_filtered_catalog_empty_after_hydration',
-          userId,
-          orgId,
-          assignmentIds: assignments.map((a: any) => a.courseId),
-          courseMapKeys: Object.keys(courseMap),
-        });
-      }
     } catch (e) {
       /* ignore logging failures */
     }
-    return filtered;
+    return catalog;
   } catch (error) {
-    console.warn('[courseStore] Unable to scope catalog by assignments:', error);
-    emitCatalogDiagnostic('assignment_scope_failed', {
+    console.warn('[courseStore] Unable to load organization catalog:', error);
+    emitCatalogDiagnostic('org_catalog_failed', {
       userId,
       error: error instanceof Error ? error.message : String(error),
     });
-    // Cache is only a fallback when the server request itself failed (network error,
-    // timeout, etc.).  Mark UI as degraded so the user knows they may be seeing
-    // stale data.
     const cached = !import.meta.env.PROD ? loadCachedCatalog(cacheKey) : null;
     if (cached) {
-      // CACHE USED: this log ONLY fires in degraded mode (server threw).
-      // If you see this log and the server is healthy, the catch above fired
-      // unexpectedly — check the error above for root cause.
       if (import.meta.env.DEV) {
         console.warn('[CACHE USED] degraded mode — serving cached catalog', {
           cacheKey,
@@ -2345,11 +1963,6 @@ const DEFAULT_CATALOG_ALLOWED =
     : typeof import.meta.env?.VITE_ALLOW_DEFAULT_COURSES !== 'undefined'
     ? import.meta.env?.VITE_ALLOW_DEFAULT_COURSES === 'true'
     : import.meta.env?.MODE !== 'production';
-const DEMO_ASSIGNMENT_FALLBACK_ALLOWED = Boolean(
-  (import.meta as any)?.env?.DEV_FALLBACK === 'true' ||
-  (import.meta as any)?.env?.E2E_TEST_MODE === 'true' ||
-  (!import.meta.env?.VITE_SUPABASE_URL && !import.meta.env?.VITE_SUPABASE_ANON_KEY),
-);
 
 // Production safety-net: if someone accidentally sets VITE_ALLOW_DEFAULT_COURSES=true
 // in a production build, emit a loud console error so it's visible in logs / Sentry.
@@ -2364,8 +1977,8 @@ if (import.meta.env.PROD && import.meta.env.VITE_ALLOW_DEFAULT_COURSES === 'true
 
 type CatalogDiagnosticEvent =
   | 'default_catalog_loaded'
-  | 'assignment_scope_empty'
   | 'assignment_scope_failed'
+  | 'org_catalog_failed'
   | 'org_selection_required';
 
 const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<string, unknown> = {}) => {
@@ -2646,24 +2259,19 @@ export const courseStore = {
       }
 
       // If the caller explicitly provided a userId (auth-ready forced init),
-      // attempt an early assignment-scoped hydration immediately so the UI can
-      // render learner-scoped courses without waiting for org resolution.
-      let earlyAssignmentHydrationAttempted = false;
+      // attempt an early org-scoped hydration immediately so the UI can render
+      // learner courses without waiting for the rest of init.
+      let earlyCatalogHydrationAttempted = false;
       if ((options as any)?.userId) {
         try {
-          // Attempt an early assignment-scoped hydration when the caller
-          // explicitly supplied a userId. Only consider the early attempt
-          // successful when it actually returned courses. If it returned an
-          // empty catalog, treat it as not attempted so the normal init flow
-          // can run the full assignment-scoped hydration (with retries).
-          const earlyCatalog = await ensureAssignmentScopedCatalog(
+          const earlyCatalog = await ensureOrgScopedCatalog(
             courses,
-            (options as any).userId ?? orgContext.userId ?? null,
+            (options as any).userId ?? orgContext.userId ?? (snapshot ? snapshot.userId ?? null : null),
             orgContext.orgId ?? null,
             { skipDiagnostics: true },
           );
           const earlyHasCourses = earlyCatalog && Object.keys(earlyCatalog).length > 0;
-          earlyAssignmentHydrationAttempted = earlyHasCourses;
+          earlyCatalogHydrationAttempted = earlyHasCourses;
           if (earlyHasCourses) {
             // Shallow-clone to ensure a new reference is produced for subscribers
             // (prevents useSyncExternalStore consumers from missing updates when
@@ -2672,16 +2280,15 @@ export const courseStore = {
             // Immediately notify subscribers so components re-render with the
             // hydrated learner catalog while the remainder of init continues.
             try {
-              console.info('[HYDRATION TRACE]', { step: 'early_store_write', source: 'init/early_assignment_catalog', courseCount: Object.keys(earlyCatalog).length });
+              console.info('[HYDRATION TRACE]', { step: 'early_store_write', source: 'init/early_org_catalog', courseCount: Object.keys(earlyCatalog).length });
               notifySubscribers();
             } catch (e) {
               /* non-fatal */
             }
           }
         } catch (e) {
-          // Non-fatal: fall through to the normal init flow which will retry
-          // or run the full assignment hydration later.
-          earlyAssignmentHydrationAttempted = false;
+          // Non-fatal: fall through to the normal init flow.
+          earlyCatalogHydrationAttempted = false;
         }
       }
   if (orgContext.status === 'error') {
@@ -2698,7 +2305,7 @@ export const courseStore = {
       // Record the org being resolved so forceInit can detect org switches.
       resolvedOrgIdForInit = effectiveOrgId ?? null;
       // Block initialization if orgId is not resolved. The app must have an
-      // explicit organization selected before performing assignment/course
+      // explicit organization selected before performing catalog/course
       // fetches. This prevents requests from being sent without X-Org-Id.
       if (!effectiveOrgId) {
         emitCatalogDiagnostic('org_selection_required', { reason: initReason });
@@ -2749,6 +2356,8 @@ export const courseStore = {
           typeof options?.surface === 'string'
             ? options.surface === 'admin'
             : isAdminSurface();
+      const adminMode = adminSurfaceDetected;
+      restrictToOrg = !adminMode;
       if (adminSurfaceDetected && !orgContext.role) {
         orgContext = await instrumentStep('waitForRoleResolution', { reason: initReason }, () => waitForRoleResolution(orgContext, initReason));
         if (!orgContext.role) {
@@ -2761,9 +2370,6 @@ export const courseStore = {
       // surface is explicitly admin. A user with an admin-capable role may still
       // browse the LMS surface, and that must not trigger /api/admin/* course
       // fetches or auth fallout during bootstrap.
-      const treatAsAdmin = adminSurfaceDetected;
-      restrictToOrg = !treatAsAdmin;
-      const adminMode = treatAsAdmin;
       if (restrictToOrg) {
         setLearnerCatalogState({
           status: 'loading',
@@ -3032,11 +2638,11 @@ export const courseStore = {
       }
 
       const shouldLoadPublishedCatalog =
-        restrictToOrg || (!restrictToOrg && (
+        !restrictToOrg && (
           adminLoadStatus === 'error' ||
           adminLoadStatus === 'api_unreachable' ||
           (adminLoadStatus === 'empty' && !adminSurfaceDetected)
-        ));
+        );
       const publishedFallbackAllowed = !adminSurfaceDetected;
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
@@ -3096,7 +2702,7 @@ export const courseStore = {
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
-              dbCourses = await fetchPublishedCourses({ assignedOnly: true, orgId: orgContext.orgId });
+              dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId });
             } else {
               console.warn(
                 '[courseStore.init] Missing organizationId; published fallback blocked for learner context.',
@@ -3253,10 +2859,10 @@ export const courseStore = {
           ids: Object.keys(merged),
         });
   // Write merged catalog as a fresh object reference so any shallow
-  // reference checks in consumers detect the update reliably.
-  courses = { ...merged };
-  console.info('[HYDRATION TRACE]', { step: 'store_write', source: 'init/merge', courseCount: Object.keys(merged).length, courseIds: Object.keys(merged) });
-  // Belt-and-suspenders: notify directly after writing courses so
+        // reference checks in consumers detect the update reliably.
+        courses = { ...merged };
+        console.info('[HYDRATION TRACE]', { step: 'store_write', source: 'init/merge', courseCount: Object.keys(merged).length, courseIds: Object.keys(merged) });
+        // Belt-and-suspenders: notify directly after writing courses so
         // subscribers always receive the update even if the finally-block
         // setAdminCatalogState is suppressed by shallowEqualState.
         notifySubscribers();
@@ -3325,61 +2931,24 @@ export const courseStore = {
       }
 
       if (restrictToOrg) {
-        // Assignment-scoped catalog hydration may throw a specific error when
-        // assignments exist but no courses were hydrated into the local map.
-        // That transient mismatch can happen when assignments arrive slightly
-        // after the course detail fetches. Implement a short exponential
-        // backoff retry here for that specific error to give the system a
-        // moment to stabilize before failing the init run.
-        let assignmentCatalog: { [key: string]: Course } | null = null;
-        if (!earlyAssignmentHydrationAttempted) {
-          try {
-            assignmentCatalog = await ensureAssignmentScopedCatalog(
-              courses,
-              (options as any)?.userId ?? orgContext.userId ?? (snapshot ? snapshot.userId ?? null : null),
-              orgContext.orgId ?? effectiveOrgId,
-              { skipDiagnostics: orgContext.status !== 'ready' },
-            );
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (msg === 'assignments_present_but_no_courses_hydrated') {
-              // Retry with exponential backoff: 100ms, 250ms, 500ms (3 attempts)
-              const retryDelays = [100, 250, 500];
-              let succeeded = false;
-              let lastErr: any = err;
-              for (let i = 0; i < retryDelays.length; i += 1) {
-                try {
-                  await sleep(retryDelays[i]);
-                  assignmentCatalog = await ensureAssignmentScopedCatalog(
-                    courses,
-                    (options as any)?.userId ?? orgContext.userId ?? (snapshot ? snapshot.userId ?? null : null),
-                    orgContext.orgId ?? effectiveOrgId,
-                    { skipDiagnostics: orgContext.status !== 'ready' },
-                  );
-                  succeeded = true;
-                  console.info('[HYDRATION TRACE]', { step: 'assignment_retry_success', attempt: i + 1, delayMs: retryDelays[i], catalogCount: Object.keys(assignmentCatalog || {}).length });
-                  break;
-                } catch (e2) {
-                  lastErr = e2;
-                  console.warn('[courseStore.init] assignment_retry_failed', { attempt: i + 1, error: e2 instanceof Error ? e2.message : String(e2) });
-                }
-              }
-              if (!succeeded) {
-                // Exhausted retries — rethrow so the outer catch handles degraded mode.
-                throw lastErr;
-              }
-            } else {
-              throw err;
-            }
-          }
+        // Load the organization-scoped catalog first. Assignments are fetched
+        // only as enrichment metadata and never gate course visibility.
+        let learnerCatalog: { [key: string]: Course } | null = null;
+        if (!earlyCatalogHydrationAttempted) {
+          learnerCatalog = await ensureOrgScopedCatalog(
+            courses,
+            (options as any)?.userId ?? orgContext.userId ?? (snapshot ? snapshot.userId ?? null : null),
+            orgContext.orgId ?? effectiveOrgId,
+            { skipDiagnostics: orgContext.status !== 'ready' },
+          );
         } else {
-          assignmentCatalog = courses;
+          learnerCatalog = courses;
         }
         // Ensure a fresh object reference is written so subscribers see the update.
-        courses = assignmentCatalog ? { ...assignmentCatalog } : {};
-        console.info('[HYDRATION TRACE]', { step: 'store_write', source: 'init/assignment_catalog', courseCount: Object.keys(assignmentCatalog || {}).length, courseIds: Object.keys(assignmentCatalog || {}) });
+        courses = learnerCatalog ? { ...learnerCatalog } : {};
+        console.info('[HYDRATION TRACE]', { step: 'store_write', source: 'init/org_catalog', courseCount: Object.keys(learnerCatalog || {}).length, courseIds: Object.keys(learnerCatalog || {}) });
         // Notify subscribers immediately so UI components see the updated learner
-        // catalog (assignments-based) without waiting for a later merge or
+        // catalog without waiting for a later merge or
         // background init completion.
         try {
           notifySubscribers();
@@ -3387,17 +2956,17 @@ export const courseStore = {
           // non-fatal
         }
 
-        // If assignments just loaded and produced courses, schedule a follow-up
+        // If learner catalog just loaded and produced courses, schedule a follow-up
         // init to ensure downstream consumers and visibility logic run.
         try {
-          const assignmentCount = Object.keys(assignmentCatalog || {}).length;
-          console.log('[courseStore.init][debug] assignments_fetched', { assignmentCount, reason: initReason });
-          if (assignmentCount > 0 && !options?.force) {
+          const catalogCount = Object.keys(learnerCatalog || {}).length;
+          console.log('[courseStore.init][debug] learner_catalog_fetched', { catalogCount, reason: initReason });
+          if (catalogCount > 0 && !options?.force) {
             if (!initRetryScheduled) {
               initRetryScheduled = true;
               setTimeout(() => {
                 initRetryScheduled = false;
-                void courseStore.init({ reason: 'assignments_loaded', force: true, retryCount: (options?.retryCount ?? 0) + 1 });
+                void courseStore.init({ reason: 'learner_catalog_loaded', force: true, retryCount: (options?.retryCount ?? 0) + 1 });
               }, 50);
             }
           }
@@ -3571,18 +3140,10 @@ export const courseStore = {
   forceInit: (options?: { newOrgId?: string | null; flushCache?: boolean; reason?: string | null }): Promise<void> => {
     // If caller signals an org switch, flush the stale catalog cache for the old org
     // so the fresh init doesn't serve a 30-minute-old snapshot from a different workspace.
+    // If caller signals an org switch, flush the stale catalog cache for the old org
+    // so the fresh init doesn't serve a 30-minute-old snapshot from a different workspace.
     const incomingOrgId = options?.newOrgId ?? null;
     const shouldFlushAllCaches = options?.flushCache === true;
-
-    try {
-      if (shouldFlushAllCaches) {
-        clearAllCatalogCache();
-      } else if (incomingOrgId !== undefined && incomingOrgId !== lastInitOrgId) {
-        clearCatalogCacheForOrg(lastInitOrgId, incomingOrgId);
-      }
-    } catch (cacheErr) {
-      console.warn('[courseStore.forceInit] Failed to flush catalog cache', cacheErr);
-    }
 
     // Clear any in-flight promise so a fresh run can start.
     if (initTimeoutHandle) {

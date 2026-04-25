@@ -10504,127 +10504,13 @@ async function listPublishedOrganizationSurveyIds(orgId) {
 }
 
 async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId = null }) {
-  if (!supabase || !orgId || !userId) return { inserted: 0, updated: 0, skipped: 0 };
-
-  const courseIds = await listPublishedOrganizationCourseIds(orgId);
-  if (!courseIds.length) return { inserted: 0, updated: 0, skipped: 0 };
-
-  const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
-  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
-  const existingMap = new Map();
-  const seenAssignmentIds = new Set();
-  const resolvedAssignedBy = actorUserId && isUuid(actorUserId) ? actorUserId : null;
-
-  const fetchExistingByColumn = async (column) => {
-    const { data, error } = await supabase
-      .from('assignments')
-      .select('id,course_id,user_id,user_id_uuid,metadata,assigned_by,active')
-      .eq(assignmentsOrgColumn, orgId)
-      .eq('active', true)
-      .in('course_id', courseIds)
-      .eq(column, userId);
-    if (error) throw error;
-    return data || [];
-  };
-
-  const rowsByUserId = await fetchExistingByColumn('user_id');
-  rowsByUserId.forEach((row) => {
-    if (!row?.course_id) return;
-    seenAssignmentIds.add(row.id);
-    existingMap.set(String(row.course_id), row);
+  logger.info('organization_course_auto_assignment_skipped', {
+    orgId: orgId ?? null,
+    userId: userId ?? null,
+    actorUserId: actorUserId ?? null,
+    reason: 'catalog_access_uses_organization_courses',
   });
-
-  if (assignmentsSupportUserIdUuid) {
-    const rowsByUuid = await fetchExistingByColumn('user_id_uuid');
-    rowsByUuid.forEach((row) => {
-      if (!row?.course_id || seenAssignmentIds.has(row.id)) return;
-      seenAssignmentIds.add(row.id);
-      existingMap.set(String(row.course_id), row);
-    });
-  }
-
-  const metadata = {
-    assigned_via: 'organization_membership_auto_assign',
-    assignment_source: 'organization_membership',
-  };
-
-  const updates = [];
-  const inserts = [];
-  const nowIso = new Date().toISOString();
-
-  courseIds.forEach((courseId) => {
-    const existing = existingMap.get(String(courseId));
-    if (existing) {
-      updates.push({
-        id: existing.id,
-        metadata: {
-          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
-          ...metadata,
-        },
-        assigned_by: existing.assigned_by ?? resolvedAssignedBy ?? null,
-        active: true,
-        updated_at: nowIso,
-      });
-      return;
-    }
-
-    const record = {
-      course_id: courseId,
-      user_id: userId,
-      user_id_uuid: userId,
-      assignment_type: 'course',
-      assigned_by: resolvedAssignedBy ?? null,
-      status: 'assigned',
-      progress: 0,
-      metadata,
-      active: true,
-      due_at: null,
-      note: null,
-    };
-    record[assignmentsOrgColumn] = orgId;
-    inserts.push(sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }));
-  });
-
-  for (const update of updates) {
-    const { id, ...changes } = update;
-    const { error } = await supabase
-      .from('assignments')
-      .update(changes)
-      .eq('id', id);
-    if (error) throw error;
-  }
-
-  if (inserts.length > 0) {
-  // Use safeInsert wrapper to prefer admin client and log invariants.
-  const { safeInsert } = await import('./lib/safeWrites.js');
-  await safeInsert('assignments', inserts, { logger, requestId: null });
-
-    // Broadcast created assignment events for inserted course assignments (best-effort)
-    try {
-      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
-        for (const row of inserts) {
-          try {
-            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
-            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
-            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
-            broadcastToTopic(topicOrg, payload);
-            const userIdForRow = row.user_id ?? row.userId ?? null;
-            if (userIdForRow) broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
-          } catch (inner) {
-            logger?.warn?.('backfill_course_assignment_broadcast_row_failed', { message: inner?.message ?? String(inner) });
-          }
-        }
-      }
-    } catch (broadcastErr) {
-      logger?.warn?.('backfill_course_assignment_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
-    }
-  }
-
-  return {
-    inserted: inserts.length,
-    updated: updates.length,
-    skipped: Math.max(courseIds.length - inserts.length - updates.length, 0),
-  };
+  return { inserted: 0, updated: 0, skipped: 0 };
 }
 
 async function backfillPublishedCourseAssignmentsWithTx(
@@ -10637,260 +10523,47 @@ async function backfillPublishedCourseAssignmentsWithTx(
     assignmentsSupportUserIdUuid = false,
   },
 ) {
-  if (!orgId || !courseId) {
-    return { inserted: 0, updated: 0, skipped: 0 };
-  }
-
-  const memberRows = await tx`
-    select distinct user_id
-    from public.organization_memberships
-    where organization_id = ${orgId}::uuid
-      and user_id is not null
-      and lower(coalesce(status, 'active')) = 'active'
-  `;
-  const userIds = Array.from(new Set(memberRows.map((row) => row.user_id).filter(Boolean)));
-  if (userIds.length === 0) {
-    return { inserted: 0, updated: 0, skipped: 0 };
-  }
-
-  const existingRows = await tx.unsafe(
-    assignmentsSupportUserIdUuid
-      ? `
-        select id, user_id, user_id_uuid, metadata, assigned_by
-        from public.assignments
-        where ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'} = $1::uuid
-          and course_id = $2::uuid
-          and assignment_type = 'course'
-          and active = true
-      `
-      : `
-        select id, user_id, metadata, assigned_by
-        from public.assignments
-        where ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'} = $1::uuid
-          and course_id = $2::uuid
-          and assignment_type = 'course'
-          and active = true
-      `,
-    [orgId, courseId],
-  );
-
-  const existingByUserId = new Map();
-  existingRows.forEach((row) => {
-    if (row?.user_id) existingByUserId.set(String(row.user_id), row);
-    if (assignmentsSupportUserIdUuid && row?.user_id_uuid) {
-      existingByUserId.set(String(row.user_id_uuid), row);
-    }
+  void tx;
+  void assignmentsOrgColumn;
+  void assignmentsSupportUserIdUuid;
+  logger.info('published_course_assignment_backfill_skipped', {
+    orgId: orgId ?? null,
+    courseId: courseId ?? null,
+    actorUserId: actorUserId ?? null,
+    reason: 'catalog_access_uses_organization_courses',
   });
-
-  const metadata = JSON.stringify({
-    assigned_via: 'organization_membership_auto_assign',
-    assignment_source: 'organization_membership',
-  });
-  const resolvedAssignedBy = actorUserId && isUuid(actorUserId) ? actorUserId : null;
-  let inserted = 0;
-  let updated = 0;
-
-  for (const userId of userIds) {
-    const existing = existingByUserId.get(String(userId));
-    if (existing?.id) {
-      await tx.unsafe(
-        `
-          update public.assignments
-          set metadata = coalesce(metadata, '{}'::jsonb) || $1::jsonb,
-              assigned_by = coalesce(assigned_by, $2::uuid),
-              active = true,
-              updated_at = now()
-          where id = $3::uuid
-        `,
-        [metadata, resolvedAssignedBy, existing.id],
-      );
-      updated += 1;
-      continue;
-    }
-
-    if (assignmentsSupportUserIdUuid) {
-      await tx.unsafe(
-        `
-          insert into public.assignments
-            (course_id, ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'}, user_id, user_id_uuid, assignment_type, assigned_by, status, progress, metadata, active, due_at, note, created_at, updated_at)
-          values
-            ($1::uuid, $2::uuid, $3, $4::uuid, 'course', $5::uuid, 'assigned', 0, $6::jsonb, true, null, null, now(), now())
-        `,
-        [courseId, orgId, String(userId), userId, resolvedAssignedBy, metadata],
-      );
-    } else {
-      await tx.unsafe(
-        `
-          insert into public.assignments
-            (course_id, ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'}, user_id, assignment_type, assigned_by, status, progress, metadata, active, due_at, note, created_at, updated_at)
-          values
-            ($1::uuid, $2::uuid, $3, 'course', $4::uuid, 'assigned', 0, $5::jsonb, true, null, null, now(), now())
-        `,
-        [courseId, orgId, String(userId), resolvedAssignedBy, metadata],
-      );
-    }
-    inserted += 1;
-  }
-
-  return {
-    inserted,
-    updated,
-    skipped: Math.max(userIds.length - inserted - updated, 0),
-  };
+  return { inserted: 0, updated: 0, skipped: 0 };
 }
 
 async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId = null }) {
-  if (!supabase || !orgId || !userId) return { inserted: 0, updated: 0, skipped: 0 };
-
-  const surveyIds = await listPublishedOrganizationSurveyIds(orgId);
-  if (!surveyIds.length) return { inserted: 0, updated: 0, skipped: 0 };
-  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
-  const resolvedAssignedBy = actorUserId && isUuid(actorUserId) ? actorUserId : null;
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from('assignments')
-    .select('id,survey_id,metadata,assigned_by,active')
-    .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-    .eq(assignmentsOrgColumn, orgId)
-    .eq('user_id', userId)
-    .eq('active', true)
-    .in('survey_id', surveyIds);
-  if (existingError) throw existingError;
-
-  const existingMap = new Map((existingRows || []).filter((row) => row?.survey_id).map((row) => [String(row.survey_id), row]));
-  const metadata = {
-    assigned_via: 'organization_membership_auto_assign',
-    assignment_source: 'organization_membership',
-  };
-
-  const updates = [];
-  const inserts = [];
-
-  surveyIds.forEach((surveyId) => {
-    const existing = existingMap.get(String(surveyId));
-    if (existing) {
-      updates.push({
-        id: existing.id,
-        metadata: {
-          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
-          ...metadata,
-        },
-        assigned_by: existing.assigned_by ?? resolvedAssignedBy ?? null,
-        active: true,
-      });
-      return;
-    }
-
-    inserts.push({
-      survey_id: surveyId,
-      course_id: null,
-      user_id: userId,
-      assignment_type: SURVEY_ASSIGNMENT_TYPE,
-      status: 'assigned',
-      due_at: null,
-      note: null,
-      assigned_by: resolvedAssignedBy ?? null,
-      metadata,
-      active: true,
-    });
-    inserts[inserts.length - 1][assignmentsOrgColumn] = orgId;
+  logger.info('organization_survey_auto_assignment_skipped', {
+    orgId: orgId ?? null,
+    userId: userId ?? null,
+    actorUserId: actorUserId ?? null,
+    reason: 'assignments_are_explicit_only',
   });
-
-  for (const update of updates) {
-    const { id, ...changes } = update;
-    const { error } = await supabase
-      .from('assignments')
-      .update(changes)
-      .eq('id', id);
-    if (error) throw error;
-  }
-
-  if (inserts.length > 0) {
-    const { safeInsert } = await import('./lib/safeWrites.js');
-    await safeInsert('assignments', inserts, { logger, requestId: null });
-    await Promise.all(
-      Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean))).map((surveyId) =>
-        refreshSurveyAssignmentAggregates(surveyId),
-      ),
-    );
-
-    // Broadcast created survey assignment events for inserted rows (best-effort)
-    try {
-      if (typeof broadcastToTopic === 'function' && Array.isArray(inserts) && inserts.length > 0) {
-        for (const row of inserts) {
-          try {
-            const orgId = row.organization_id ?? row.organizationId ?? row.org_id ?? row.orgId ?? null;
-            const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
-            const payload = { type: 'assignment_created', data: row, timestamp: Date.now() };
-            broadcastToTopic(topicOrg, payload);
-            const userIdForRow = row.user_id ?? row.userId ?? null;
-            if (userIdForRow) broadcastToTopic(`assignment:user:${String(userIdForRow).toLowerCase()}`, payload);
-          } catch (inner) {
-            logger?.warn?.('assign_published_org_surveys_broadcast_row_failed', { message: inner?.message ?? String(inner) });
-          }
-        }
-      }
-    } catch (broadcastErr) {
-      logger?.warn?.('assign_published_org_surveys_broadcast_failed', { message: broadcastErr?.message ?? String(broadcastErr) });
-    }
-  }
-
-  return {
-    inserted: inserts.length,
-    updated: updates.length,
-    skipped: Math.max(surveyIds.length - inserts.length - updates.length, 0),
-  };
+  return { inserted: 0, updated: 0, skipped: 0 };
 }
 async function assignPublishedOrganizationContentToUser({ orgId, userId, actorUserId = null }) {
-  if (!supabase || !orgId || !userId) {
-    return {
-      courses: { inserted: 0, updated: 0, skipped: 0 },
-      surveys: { inserted: 0, updated: 0, skipped: 0 },
-    };
-  }
-
-  const [courses, surveys] = await Promise.all([
-    assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId }),
-    assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId }),
-  ]);
-
-  logger.info('organization_membership_auto_assignment_completed', {
+  logger.info('organization_membership_auto_assignment_skipped', {
     orgId,
     userId,
     actorUserId: actorUserId ?? null,
-    courseInserted: courses.inserted,
-    courseUpdated: courses.updated,
-    surveyInserted: surveys.inserted,
-    surveyUpdated: surveys.updated,
+    reason: 'catalog_access_uses_organization_courses',
   });
-
+  const courses = { inserted: 0, updated: 0, skipped: 0 };
+  const surveys = { inserted: 0, updated: 0, skipped: 0 };
   return { courses, surveys };
 }
 
 async function assignPublishedOrganizationCoursesToActiveMembers({ orgId, actorUserId = null }) {
-  if (!supabase || !orgId) return { assignedUsers: 0 };
-
-  const members = await fetchOrgMembersWithProfiles(orgId);
-  const userIds = Array.from(
-    new Set(
-      (members || [])
-        .filter((member) => String(member?.status || '').toLowerCase() === 'active')
-        .map((member) => member?.user_id ?? member?.user?.id ?? null)
-        .filter(Boolean),
-    ),
-  );
-
-  for (const userId of userIds) {
-    await assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId });
-  }
-
-  logger.info('organization_course_backfill_completed', {
+  logger.info('organization_course_backfill_skipped', {
     orgId,
     actorUserId: actorUserId ?? null,
-    assignedUsers: userIds.length,
+    reason: 'catalog_access_uses_organization_courses',
   });
 
-  return { assignedUsers: userIds.length };
+  return { assignedUsers: 0 };
 }
 
 async function upsertProvisionedUserRecord({

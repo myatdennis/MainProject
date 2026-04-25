@@ -381,7 +381,7 @@ describe('courseStore admin catalog phase transitions', () => {
 });
 
 describe('courseStore learner catalog fallbacks', () => {
-  it('uses default catalog when assignments return 200 with empty payload', async () => {
+  it('keeps catalog empty only when org catalog is empty, independent of assignments', async () => {
     window.history.pushState({}, '', '/lms/courses');
     secureStorageMock.getUserSession.mockReturnValue(learnerSession);
     secureStorageMock.getAccessToken.mockReturnValue('learner-token-123');
@@ -407,7 +407,7 @@ describe('courseStore learner catalog fallbacks', () => {
 
     const learnerState = courseStore.getLearnerCatalogState();
     expect(learnerState.status).toBe('empty');
-    expect(learnerState.detail).toBe('no_assignments');
+    expect(learnerState.detail).toBe('no_org_courses');
     expect(courseStore.getAllCourses().length).toBe(0);
   });
 });

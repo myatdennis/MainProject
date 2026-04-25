@@ -480,13 +480,8 @@ const ClientDashboard = () => {
   }, [navigate]);
 
   const courses = useMemo(
-    () =>
-      assignments
-        .filter((record) => record.courseId != null)
-        .map((record) => courseStoreAdapter.getCourse(record.courseId as string))
-        .filter(Boolean)
-        .map((course) => normalizeCourse(course!)),
-    [assignments, courseStoreRevision]
+    () => courseStoreAdapter.getAllCourses().map((course) => normalizeCourse(course)),
+    [courseStoreRevision]
   );
 
   useEffect(() => {
@@ -632,9 +627,9 @@ const ClientDashboard = () => {
     return surveyAssignments.slice(0, 3);
   }, [pendingSurveyAssignments, surveyAssignments]);
 
-  const hasAssignedCourses = courseDetails.length > 0;
-  const showingFallbackCatalog = !hasAssignedCourses && fallbackCourseDetails.length > 0;
-  const displayedCourseDetails = hasAssignedCourses ? courseDetails : fallbackCourseDetails;
+  const hasAvailableCourses = courseDetails.length > 0;
+  const showingFallbackCatalog = !hasAvailableCourses && fallbackCourseDetails.length > 0;
+  const displayedCourseDetails = hasAvailableCourses ? courseDetails : fallbackCourseDetails;
   const continueLearningEntry = useMemo(() => {
     const byPriority = [...displayedCourseDetails].sort((left, right) => {
       const leftActive = left.isInProgress ? 1 : 0;
@@ -651,7 +646,7 @@ const ClientDashboard = () => {
       .find((lesson) => lesson.id === continueLearningEntry.preferredLessonId)?.title;
     return lessonTitle || 'Next available lesson';
   }, [continueLearningEntry]);
-  const assignedCourseCount = hasAssignedCourses ? assignments.length : fallbackCourseDetails.length;
+  const assignedCourseCount = assignments.length;
   const completedCount = displayedCourseDetails.filter((entry) => entry.isCompleted).length;
   const inProgressCount = displayedCourseDetails.filter((entry) => entry.isInProgress).length;
   const lessonSnapshot = useMemo(() => {
@@ -676,7 +671,7 @@ const ClientDashboard = () => {
   const progressSnapshotLabel =
     lessonSnapshot.totalLessons > 0
       ? `You’ve completed ${Math.min(lessonSnapshot.completedLessonsCount, lessonSnapshot.totalLessons)} of ${lessonSnapshot.totalLessons} lessons this week`
-      : 'Your assignments will appear here as soon as your facilitator publishes them';
+      : 'Your available courses will appear here as soon as your facilitator publishes them';
 
   const essentialReady =
     bootSteps.session.status === 'success' && bootSteps.membership.status === 'success';
@@ -686,7 +681,7 @@ const ClientDashboard = () => {
   const loadingLabelMap: Record<BootStepName, string> = {
     session: 'Validating session…',
     membership: 'Resolving organization access…',
-    courses: 'Loading assignments…',
+    courses: 'Loading courses…',
     analytics: 'Preparing analytics…',
   };
   const spinnerLabel = runningStepName ? loadingLabelMap[runningStepName] : 'Preparing your portal…';

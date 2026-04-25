@@ -38,13 +38,12 @@ export async function fetchPublishedCourses(
   const { orgId, assignedOnly = false } = options;
   const params = new URLSearchParams();
 
-  if (assignedOnly) {
-    if (!orgId) {
-      console.warn('[clientCourses.fetchPublishedCourses] orgId is required when assignedOnly=true');
-      return [];
-    }
-    params.set('assigned', 'true');
+  if (orgId) {
     params.set('orgId', orgId);
+  }
+
+  if (assignedOnly) {
+    params.set('assigned', 'true');
   }
 
   if (!hasClientSession()) {

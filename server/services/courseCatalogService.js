@@ -754,54 +754,6 @@ export const createCourseCatalogService = ({
     }
 
     if (!context.isPlatformAdmin && effectiveScopedOrgIds.length === 0) {
-      const userIdForFallback = typeof context.userId === 'string' ? context.userId.trim() : '';
-      const supabaseClient = getSupabaseClient();
-      if (userIdForFallback && supabaseClient) {
-        try {
-          const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
-          const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
-          const userFilter = assignmentsSupportUserIdUuid
-            ? `user_id.eq.${userIdForFallback},user_id_uuid.eq.${userIdForFallback}`
-            : `user_id.eq.${userIdForFallback}`;
-          const { data: assignmentOrgRows } = await runSupabaseReadQueryWithRetry('client.courses.org_scope_fallback', () =>
-            requireSupabaseClient()
-              .from('assignments')
-              .select(`${assignmentsOrgColumn},organization_id,org_id`)
-              .eq('assignment_type', 'course')
-              .eq('active', true)
-              .or(userFilter)
-              .limit(200),
-          );
-          const derivedOrgIds = Array.from(
-            new Set(
-              (assignmentOrgRows || [])
-                .map((row) =>
-                  normalizeOrgIdValue(
-                    pickOrgId(
-                      row?.organization_id,
-                      row?.org_id,
-                      assignmentsOrgColumn === 'organization_id' ? row?.organization_id : row?.org_id,
-                    ),
-                  ),
-                )
-                .filter(Boolean),
-            ),
-          );
-          if (derivedOrgIds.length > 0) {
-            effectiveScopedOrgIds = derivedOrgIds;
-            effectiveOrgId = effectiveOrgId || derivedOrgIds[0] || null;
-            effectiveAssignedOnly = true;
-            membershipFallbackApplied = true;
-          }
-        } catch (fallbackError) {
-          logger.warn('[client/courses] org_scope_fallback_failed', {
-            requestId,
-            userId: userIdForFallback,
-            message: fallbackError?.message ?? String(fallbackError),
-          });
-        }
-      }
-
       if (effectiveScopedOrgIds.length === 0) {
         return {
           status: 200,

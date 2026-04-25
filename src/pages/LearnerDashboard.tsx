@@ -108,7 +108,7 @@ const LearnerDashboard = () => {
         setEnrolledCourses([]);
         setProgressData(new Map());
         setAssignments([]);
-        setCatalogError('Sign in to load your assigned courses.');
+        setCatalogError('Sign in to load your courses.');
         return;
       }
 
@@ -123,7 +123,7 @@ const LearnerDashboard = () => {
         }
         markStepSuccess(initStepId);
 
-        assignmentsStepId = startStep('assignments.load');
+        assignmentsStepId = startStep('assignments.enrich');
         const storedCourses = courseStore.getAllCourses();
         const normalizedCourses = storedCourses
           .map((course) => normalizeCourse(course))

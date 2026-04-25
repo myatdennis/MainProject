@@ -76,6 +76,7 @@ vi.mock('../../../utils/assignmentStorage', () => ({
 }));
 
 vi.mock('../../../store/courseStore', () => ({
+  getInitState: () => 'hydrated',
   courseStore: {
     subscribe: () => () => {},
     getAllCourses: () => getAllCoursesMock(),
@@ -197,7 +198,7 @@ describe('ClientCourses', () => {
     renderCourses();
 
     expect(await screen.findByText('Course 1')).toBeInTheDocument();
-    expect(screen.queryByText('No programs assigned yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('No courses available yet')).not.toBeInTheDocument();
   });
 
   it('shows completed status with a continue CTA for completed learners', async () => {
@@ -363,7 +364,7 @@ describe('ClientCourses', () => {
     renderCourses();
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'We found your assignments, but your authenticated course session was not ready in time. Retry to load your courses.',
+      'Your authenticated course session was not ready in time. Retry to load your courses.',
     );
   });
 });

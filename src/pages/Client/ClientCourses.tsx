@@ -477,13 +477,13 @@ const ClientCourses = () => {
     (learnerAuthReady && (storeInitState !== 'hydrated' || (learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0)));
   const catalogErrorMessage = (() => {
     if (learnerAuthFailed) {
-      return 'Your learner session is not ready. Sign in again to load assigned courses.';
+      return 'Your learner session is not ready. Sign in again to load courses.';
     }
     if (coursesError) {
       return coursesError;
     }
     if (learnerCatalogState.lastError === 'auth_session_unavailable' || learnerCatalogState.detail === 'auth_session_unavailable') {
-      return 'We found your assignments, but your authenticated course session was not ready in time. Retry to load your courses.';
+      return 'Your authenticated course session was not ready in time. Retry to load your courses.';
     }
     return learnerCatalogState.lastError;
   })();
@@ -500,7 +500,7 @@ const ClientCourses = () => {
         state={asyncState}
         loadingLabel={learnerAuthLoading ? 'Preparing your learner session...' : 'Loading courses...'}
         title={orgSelectionRequired ? 'Select an organization to continue' : 'We couldn’t load your courses'}
-        message={orgSelectionRequired ? 'Please select an organization from the workspace selector to load your assigned programs.' : (catalogErrorMessage || undefined)}
+        message={orgSelectionRequired ? 'Please select an organization from the workspace selector to load your courses.' : (catalogErrorMessage || undefined)}
         onRetry={() => {
           // If the org is required, our retry attempts should specifically
           // re-run init and let the user pick an org if needed.
@@ -512,7 +512,7 @@ const ClientCourses = () => {
         <>
           <div className="mb-8">
             <h1 className="font-heading text-3xl font-bold text-charcoal">My courses</h1>
-            <p className="mt-2 text-sm text-slate/80">Assigned programs appear here along with your progress.</p>
+            <p className="mt-2 text-sm text-slate/80">Available programs appear here with assignment details and your progress.</p>
           </div>
           <Card tone="muted" className="mb-8 space-y-4">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -556,9 +556,9 @@ const ClientCourses = () => {
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-cloud text-skyblue">
                 <Inbox className="h-6 w-6" />
               </div>
-              <h3 className="mt-4 font-heading text-lg font-semibold text-charcoal">No programs assigned yet</h3>
+              <h3 className="mt-4 font-heading text-lg font-semibold text-charcoal">No courses available yet</h3>
               <p className="mt-2 text-sm text-slate/80">
-                When your facilitator assigns a course, it will appear here automatically. You can still open the full LMS to browse optional content.
+                When your facilitator publishes courses for this organization, they will appear here automatically.
               </p>
               <div className="mt-4 flex flex-wrap justify-center gap-3">
                 <Button size="sm" onClick={() => navigate('/lms/dashboard')}>Open LMS</Button>

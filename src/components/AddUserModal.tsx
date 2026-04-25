@@ -463,7 +463,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
                     {isEditMode ? 'Edit User' : 'Add New User'}
                   </h2>
                   <p className="text-sm text-slate/70 font-body">
-                    {isEditMode ? 'Update user information and settings' : 'Create a new user account, add them to this organization, and assign all published courses and surveys'}
+                    {isEditMode ? 'Update user information and settings' : 'Create a new user account and add them to this organization'}
                   </p>
                 </div>
               </div>

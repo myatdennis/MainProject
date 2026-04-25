@@ -291,7 +291,7 @@ describe('courseStore bridge snapshot synchronization', () => {
     const initPromise = courseStore.forceInit({ flushCache: true, reason: 'test_slow_runtime_probe' });
 
     await vi.waitFor(() => {
-      expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ assignedOnly: true, orgId: 'org-1' });
+      expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ orgId: 'org-1' });
     });
 
     if (deferredResolve) {
@@ -304,10 +304,11 @@ describe('courseStore bridge snapshot synchronization', () => {
     }
     await initPromise;
 
-    expect(courseStore.getLearnerCatalogState().status).toBe('empty');
+    expect(courseStore.getLearnerCatalogState().status).toBe('ok');
+    expect(courseStore.getAllCourses()).toHaveLength(1);
   });
 
-  it('hydrates missing learner-assigned courses without includeDrafts', async () => {
+  it('does not hydrate assignment-only courses outside the org catalog', async () => {
     fetchPublishedCoursesMock.mockResolvedValueOnce([]);
     getAssignmentsForUserWithOutcomeMock.mockResolvedValueOnce({
       outcome: 'success',
@@ -322,14 +323,6 @@ describe('courseStore bridge snapshot synchronization', () => {
       ] as any,
       error: null,
     });
-    fetchCourseMock.mockResolvedValueOnce({
-      id: 'course-42',
-      title: 'Assigned Course',
-      slug: 'assigned-course',
-      modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1' }] }],
-      lessonCount: 1,
-      structureLoaded: true,
-    } as any);
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',
@@ -341,9 +334,11 @@ describe('courseStore bridge snapshot synchronization', () => {
 
     await courseStore.init({ reason: 'test_assignment_hydration_without_drafts' });
 
-    expect(fetchCourseMock).toHaveBeenCalledWith('course-42', { includeDrafts: false });
-    expect(courseStore.getLearnerCatalogState().status).toBe('ok');
-    expect(courseStore.getAllCourses()).toHaveLength(1);
+    expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ orgId: 'org-1' });
+    expect(fetchCourseMock).not.toHaveBeenCalled();
+    expect(courseStore.getLearnerCatalogState().status).toBe('empty');
+    expect(courseStore.getLearnerCatalogState().detail).toBe('no_org_courses');
+    expect(courseStore.getAllCourses()).toHaveLength(0);
   });
 
   it('loads all courses for admin-capable users', async () => {

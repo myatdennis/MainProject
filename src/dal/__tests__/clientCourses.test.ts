@@ -35,11 +35,14 @@ describe('clientCourses DAL', () => {
     errorSpy.mockClear();
   });
 
-  it('requires orgId when requesting assigned catalog', async () => {
+  it('allows assigned catalog requests without an orgId', async () => {
+    apiClientMock.mockResolvedValueOnce({ data: [] });
+
     const courses = await fetchPublishedCourses({ assignedOnly: true });
+
     expect(courses).toEqual([]);
-    expect(apiClientMock).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith('[clientCourses.fetchPublishedCourses] orgId is required when assignedOnly=true');
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses?assigned=true', { noTransform: true });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it('sends orgId filter for assigned catalog queries', async () => {
@@ -47,7 +50,7 @@ describe('clientCourses DAL', () => {
 
     const courses = await fetchPublishedCourses({ assignedOnly: true, orgId: 'org-9' });
 
-    expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses?assigned=true&orgId=org-9', { noTransform: true });
+    expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses?orgId=org-9&assigned=true', { noTransform: true });
     expect(courses).toEqual([{ id: 'course-1', title: 'Inclusive Leadership' }]);
     expect(mapCourseRecordMock).toHaveBeenCalledWith({ id: 'course-1', title: 'Inclusive Leadership' });
   });

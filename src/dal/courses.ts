@@ -19,7 +19,7 @@ export function listPublishedCourses(orgId: string): Promise<NormalizedCourse[]>
   if (!orgId) {
     throw new Error('orgId is required to list published courses');
   }
-  return fetchPublishedCourses({ orgId, assignedOnly: true });
+  return fetchPublishedCourses({ orgId });
 }
 
 export const getCourse = fetchCourse;

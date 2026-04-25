@@ -365,7 +365,7 @@ const LMSCourses = () => {
           <div className="mt-8">
             <EmptyState
               title="We're reconnecting to your catalog"
-              description="We couldn't load your assignments from the server. We're showing any cached courses we have. Try again in a moment."
+              description="We couldn't load your course catalog from the server. We're showing any cached courses we have. Try again in a moment."
               action={
                 <Button
                   onClick={handleRetryCatalog}
@@ -380,8 +380,8 @@ const LMSCourses = () => {
         ) : showNoAssignmentsState ? (
           <div className="mt-8">
             <EmptyState
-              title="No courses have been assigned yet"
-              description="Your learning team hasn’t assigned courses to this workspace. Check back later or contact your administrator if you believe this is an error."
+              title="No courses available yet"
+              description="Your learning team hasn’t published courses for this workspace. Check back later or contact your administrator if you believe this is an error."
               action={
                 <Button
                   onClick={handleRetryCatalog}
