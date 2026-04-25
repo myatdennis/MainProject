@@ -15,6 +15,7 @@ export const createAdminUserManagementRouter = (deps) => {
     requireOrgAccess,
     runSupabaseTransientRetry,
     fetchOrgMembersWithProfiles,
+    fetchAllOrgMembersWithProfiles,
     logUsersStageError,
     createOrProvisionOrganizationUser,
     buildActorFromRequest,
@@ -100,18 +101,19 @@ export const createAdminUserManagementRouter = (deps) => {
   router.get('/', async (req, res) => {
     const context = requireUserContext(req, res);
     if (!context) return;
+    const isPlatformAdmin = Boolean(context.isPlatformAdmin);
     const orgId = pickOrgId(
       req.query.orgId,
       req.query.organizationId,
-      context.requestedOrgId,
-      context.activeOrganizationId,
+      isPlatformAdmin ? null : context.requestedOrgId,
+      isPlatformAdmin ? null : context.activeOrganizationId,
     );
 
     if (shouldUseAdminUsersFallback(req)) {
       const normalizedOrgId = normalizeOrgIdValue(orgId);
       const allMembers = Array.isArray(e2eStore.users) && e2eStore.users.length > 0 ? e2eStore.users : buildDemoFallbackUsers();
 
-      if (!normalizedOrgId && req.user?.isPlatformAdmin) {
+      if (!normalizedOrgId && isPlatformAdmin) {
         return sendOk(res, allMembers);
       }
 
@@ -123,8 +125,7 @@ export const createAdminUserManagementRouter = (deps) => {
     }
 
     if (!ensureSupabase(res)) return;
-    const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
-    if (!orgId) {
+    if (!isPlatformAdmin && !orgId) {
       return sendError(res, 400, 'org_id_required', 'orgId query parameter or X-Org-Id header is required.');
     }
 
@@ -144,9 +145,12 @@ export const createAdminUserManagementRouter = (deps) => {
     try {
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
       const limit = Math.min(parseInt(req.query.limit, 10) || 500, 1000);
-      const members = await runSupabaseTransientRetry('admin.users.list', async () =>
-        fetchOrgMembersWithProfiles(orgId),
-      );
+      const members = await runSupabaseTransientRetry('admin.users.list', async () => {
+        if (isPlatformAdmin && !orgId && typeof fetchAllOrgMembersWithProfiles === 'function') {
+          return fetchAllOrgMembersWithProfiles({ offset, limit });
+        }
+        return fetchOrgMembersWithProfiles(orgId);
+      });
       if (!Array.isArray(members)) {
         throw new Error('Invalid admin users response shape');
       }
@@ -375,7 +379,7 @@ export const createAdminUserManagementRouter = (deps) => {
 
     const context = requireUserContext(req, res);
     if (!context) return;
-    const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
+    const isPlatformAdmin = Boolean(context.isPlatformAdmin);
 
     if (mode === 'archive') {
       if (!orgId) {

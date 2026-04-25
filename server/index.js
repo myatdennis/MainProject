@@ -7240,13 +7240,19 @@ const getRequestContext = (req) => {
   }
 
   const normalizedActiveOrg = normalizeOrgIdValue(req.activeOrgId ?? req.user?.activeOrgId ?? null);
+  const appMetadata = req.user?.app_metadata && typeof req.user.app_metadata === 'object'
+    ? req.user.app_metadata
+    : req.user?.appMetadata && typeof req.user.appMetadata === 'object'
+      ? req.user.appMetadata
+      : {};
+  const platformRoleFromMetadata = String(appMetadata.platform_role || '').trim().toLowerCase();
   return {
     userId: req.user.userId || req.user.id || null,
     userRole: (req.user.role || req.user.platformRole || '').toLowerCase(),
-    platformRole: req.user.platformRole || null,
+    platformRole: platformRoleFromMetadata || req.user.platformRole || null,
     memberships: req.user.memberships || [],
     organizationIds: Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [],
-    isPlatformAdmin: Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin'),
+    isPlatformAdmin: platformRoleFromMetadata === 'platform_admin',
     requestedOrgId: normalizedActiveOrg,
     activeOrganizationId: normalizedActiveOrg,
   };
@@ -8184,11 +8190,17 @@ const buildActorFromRequest = (req) => {
   const firstName = req.user?.userMetadata?.first_name || req.user?.appMetadata?.first_name;
   const lastName = req.user?.userMetadata?.last_name || req.user?.appMetadata?.last_name;
   const name = firstName ? `${firstName}${lastName ? ` ${lastName}` : ''}` : req.user?.email;
+  const appMetadata = req.user?.app_metadata && typeof req.user.app_metadata === 'object'
+    ? req.user.app_metadata
+    : req.user?.appMetadata && typeof req.user.appMetadata === 'object'
+      ? req.user.appMetadata
+      : {};
   return {
     userId: req.user?.userId || req.user?.id || null,
     email: req.user?.email || null,
     name,
-    isPlatformAdmin: Boolean(req.user?.isPlatformAdmin || req.user?.platformRole === 'platform_admin' || req.user?.role === 'admin'),
+    platformRole: appMetadata.platform_role || null,
+    isPlatformAdmin: String(appMetadata.platform_role || '').trim().toLowerCase() === 'platform_admin',
   };
 };
 
@@ -13757,8 +13769,9 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     req.params?.orgId,
   );
 
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin);
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
-  if (!requestedOrgId) {
+  if (!isPlatformAdmin && !requestedOrgId) {
     logger.warn('admin_organizations_access_denied', {
       requestId,
       reason: 'missing_requested_orgid',
@@ -13771,8 +13784,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' });
     return;
   }
-  // Blocker 3: even platform admins must request a valid, resolvable org scope
-  if (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim())) {
+  if (requestedOrgId && (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim()))) {
     logger.warn('admin_organizations_access_denied', {
       requestId,
       reason: 'invalid_requested_orgid',
@@ -13786,7 +13798,6 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     return;
   }
 
-  const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
   if (!isPlatformAdmin && adminOrgIds.length === 0) {
     // Helpful diagnostic: log the denial reason so we can correlate browser/network
     // traces with server-side decisions when organizations do not appear in the UI.

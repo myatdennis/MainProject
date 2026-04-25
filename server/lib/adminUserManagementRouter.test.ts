@@ -10,7 +10,7 @@ const createApp = (): { app: express.Application; e2eStore: any } => {
     req.user = {
       userId: '00000000-0000-0000-0000-000000000001',
       id: '00000000-0000-0000-0000-000000000001',
-      isPlatformAdmin: true,
+      appMetadata: { platform_role: 'platform_admin' },
     };
     next();
   });
@@ -23,6 +23,13 @@ const createApp = (): { app: express.Application; e2eStore: any } => {
         organization_id: 'org-1',
         email: 'existing@example.com',
         profile: { email: 'existing@example.com' },
+      },
+      {
+        id: 'member-2',
+        user_id: 'member-2',
+        organization_id: 'org-2',
+        email: 'second@example.com',
+        profile: { email: 'second@example.com' },
       },
     ],
   };
@@ -42,6 +49,8 @@ const createApp = (): { app: express.Application; e2eStore: any } => {
         userRole: 'admin',
         isPlatformAdmin: true,
         organizationIds: ['org-1'],
+        activeOrganizationId: 'org-1',
+        requestedOrgId: 'org-1',
       })),
       requireOrgAccess: vi.fn(async () => true),
       runSupabaseTransientRetry: vi.fn(),
@@ -129,6 +138,18 @@ describe('admin user management router', () => {
     expect(payload.ok).toBe(true);
     expect(payload.data).toHaveLength(1);
     expect(payload.meta.orgId).toBe('org-1');
+  });
+
+  it('does not scope platform admin fallback users to the active organization', async () => {
+    const response = await fetch(`${baseUrl}/api/admin/users`, {
+      headers: { 'x-user-role': 'admin', host: 'localhost' },
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.ok).toBe(true);
+    expect(payload.data).toHaveLength(2);
+    expect(payload.data.map((row: any) => row.organization_id).sort()).toEqual(['org-1', 'org-2']);
   });
 
   it('creates fallback users with the shared envelope', async () => {

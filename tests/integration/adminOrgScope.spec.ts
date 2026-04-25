@@ -26,10 +26,10 @@ describe('Admin organization scoping', () => {
     return { res, body };
   };
 
-  it('requires explicit org scope when listing organizations', async () => {
+  it('allows platform admin to list organizations without org scope', async () => {
     const { res, body } = await fetchJson('/api/admin/organizations');
-    expect(res.status).toBe(400);
-    expect(body).toHaveProperty('error', 'org_id_required');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(body.data)).toBe(true);
   });
 
   it('allows listing all admin users without orgId for platform admin', async () => {
