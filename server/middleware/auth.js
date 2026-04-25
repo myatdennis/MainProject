@@ -1000,18 +1000,14 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     if (supabaseJwtClaims?.sub) {
       const normalizedClaims = normalizeSupabaseClaimsToJwtClaims(supabaseJwtClaims);
       const jwtContext = buildJwtAuthContextPayload(normalizedClaims);
-      return {
-        user: jwtContext.user,
-        membershipsMap: jwtContext.membershipMap,
-        activeOrgId: jwtContext.activeOrgId,
-        membershipDiagnostics: null,
-        membershipStatus: 'ready',
-        membershipCount: jwtContext.memberships.length,
-        membershipDegraded: false,
+      supabaseUser = {
+        ...jwtContext.user,
+        id: jwtContext.user?.id ?? jwtContext.user?.userId ?? normalizedClaims.userId,
+        email: jwtContext.user?.email ?? normalizedClaims.email ?? '',
       };
     }
 
-    if (!supabase) {
+    if (!supabaseUser && !supabase) {
       if (shouldAllowDemoBypass(req)) {
         authLog('warn', 'supabase_unavailable_demo_auto_auth_bypass', {
           path: req.originalUrl || req.url,

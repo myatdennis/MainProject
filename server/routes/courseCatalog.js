@@ -86,8 +86,8 @@ export const createCourseCatalogRouter = ({
 
   router.get('/admin/courses', requireAdminAccess || authenticate, controller.adminList);
   router.get('/admin/courses/:identifier', requireAdminAccess || authenticate, controller.adminDetail);
-  router.get('/client/courses', controller.clientList);
-  router.get('/client/courses/:courseIdentifier', controller.clientDetail);
+  router.get('/client/courses', authenticate, controller.clientList);
+  router.get('/client/courses/:courseIdentifier', authenticate, controller.clientDetail);
 
   return router;
 };

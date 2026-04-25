@@ -1,3 +1,13 @@
+import dotenv from 'dotenv';
+dotenv.config();
+console.log("DOTENV LOADED");
+
+console.log("ENV CHECK START");
+console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
+console.log("SERVICE ROLE LENGTH:", process.env.SUPABASE_SERVICE_ROLE_KEY?.length);
+console.log("SERVICE ROLE PREVIEW:", process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(0, 20));
+console.log("ENV CHECK END");
+
 import './env/loadEnv.js';
 import express from 'express';
 import cors from 'cors';
@@ -41,6 +51,23 @@ const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS;
 const COOKIE_DOMAIN = '.the-huddle.co';
 // ...existing code...
 // Removed frontend-only variables
+
+// --- Startup Supabase connection test ---
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+
+(async () => {
+  try {
+    const supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const { error } = await supabase.auth.getUser();
+    if (error) {
+      throw new Error(`Supabase connection failed: ${error.message}`);
+    }
+    console.log('[startup] Supabase connection successful');
+  } catch (err) {
+    console.error('[startup] Supabase connection error:', err.message);
+    process.exit(1); // Exit process on failure
+  }
+})();
 
 console.log('[ENV CHECK]', {
   SUPABASE_URL: SUPABASE_URL || 'https://abc123xyz.supabase.co',
@@ -1048,7 +1075,7 @@ if (!SUPABASE_JWT_SECRET_CONFIGURED) {
 
 logger.info('startup_env_diagnostics', {
   nodeEnv: process.env.NODE_ENV || 'development',
-  port: Number(process.env.PORT) || 8888,
+  port: Number(process.env.PORT) || 3000,
   supabaseConfigured: supabaseEnv.configured,
   supabaseUrlHost,
   supabaseProjectRef,
@@ -2166,9 +2193,9 @@ if (isProduction) {
 let PORT = Number(process.env.PORT) || 3000;
 // Log the raw env value so operators can see intent vs. reality.
 logger.info('startup_port_env', { envPort: process.env.PORT ?? null });
-// If PORT is unset or explicitly 0 (ephemeral), default to 8888 for local/dev runs.
+// If PORT is unset or explicitly 0 (ephemeral), default to 3000 for local/dev runs.
 if (!PORT || PORT === 0) {
-  PORT = 8888;
+  PORT = 3000;
   logger.warn('server_port_defaulted', { reason: 'env_port_missing_or_zero', defaultPort: PORT });
 }
 // Validate final port value to avoid silent failures.
@@ -3017,6 +3044,7 @@ console.log('[supabase] startup', {
   host: supabaseUrlHost || '(not set)',
   serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
 });
+console.log("SUPABASE URL:", process.env.SUPABASE_URL);
 
 // Startup banner for production readiness
 console.info('========================================');
@@ -3266,12 +3294,13 @@ const detectAssignmentsOrganizationIdColumnAvailability = async () => {
       return false;
     }
     if (isSupabaseTransientError(error)) {
-      assignmentsOrganizationIdColumnAvailable = false;
+      assignmentsOrganizationIdColumnAvailable = true;
       logger.warn('assignments_organization_id_column_probe_timeout', {
         code: error?.code ?? null,
         message: error?.message ?? String(error),
+        fallbackColumn: 'organization_id',
       });
-      return false;
+      return true;
     }
     throw error;
   }
@@ -12917,6 +12946,26 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         courseId: savedCourse?.id ?? null,
         durationMs,
       });
+      if (organizationId && savedCourse?.id) {
+        try {
+          await safeUpsert(
+            'organization_courses',
+            [{ organization_id: organizationId, course_id: savedCourse.id }],
+            {
+              onConflict: 'organization_id,course_id',
+              requestId: req.requestId ?? null,
+            },
+          );
+        } catch (linkError) {
+          logger.warn('organization_course_link_upsert_failed', {
+            requestId: req.requestId ?? null,
+            orgId: organizationId,
+            courseId: savedCourse.id,
+            code: linkError?.code ?? null,
+            message: linkError?.message ?? String(linkError),
+          });
+        }
+      }
       if (idempotencyKey && savedCourse?.id) {
         try {
           await supabase.from('idempotency_keys').update({ resource_id: savedCourse.id }).eq('id', idempotencyKey);
@@ -13030,6 +13079,26 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           }
 
           const responseCourse = savedCourse || { id: coursePayload.id ?? null, title: coursePayload.title };
+          if (organizationId && responseCourse?.id) {
+            try {
+              await safeUpsert(
+                'organization_courses',
+                [{ organization_id: organizationId, course_id: responseCourse.id }],
+                {
+                  onConflict: 'organization_id,course_id',
+                  requestId: req.requestId ?? null,
+                },
+              );
+            } catch (linkError) {
+              logger.warn('organization_course_link_upsert_failed', {
+                requestId: req.requestId ?? null,
+                orgId: organizationId,
+                courseId: responseCourse.id,
+                code: linkError?.code ?? null,
+                message: linkError?.message ?? String(linkError),
+              });
+            }
+          }
           return { success: true, data: responseCourse };
         } catch (err) {
           console.error('[admin-courses] directDbUpsert.unexpected_error', { message: err?.message || String(err), stack: err?.stack ?? null });
@@ -13324,6 +13393,7 @@ app.use(
   authenticate,
   createCourseAssignmentsRouter({
     supabase,
+    getSupabase: () => supabase,
     logger,
     e2eStore,
     isDemoOrTestMode,

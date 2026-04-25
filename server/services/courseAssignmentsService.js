@@ -2,6 +2,7 @@ import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
 
 export const createCourseAssignmentsService = ({
   supabase,
+  getSupabase,
   logger,
   e2eStore,
   isDemoOrTestMode,
@@ -34,6 +35,13 @@ export const createCourseAssignmentsService = ({
   summarizeRequestBody,
   isInfrastructureUnavailableError,
 }) => {
+  const getSupabaseClient = () => {
+    if (typeof getSupabase === 'function') {
+      return getSupabase();
+    }
+    return supabase;
+  };
+
   const parseBoolean = (value, defaultValue = true) => {
     if (value === undefined || value === null) return defaultValue;
     const normalized = String(value).trim().toLowerCase();
@@ -285,7 +293,7 @@ export const createCourseAssignmentsService = ({
     // --- Instrumentation: capture runtime auth / caller / client info for debugging RLS ---
     try {
       const supabaseClientInfo = {
-        hasSupabase: !!supabase,
+        hasSupabase: !!getSupabaseClient(),
         envServiceRolePresent: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
         envAnonKeyPresent: !!process.env.SUPABASE_ANON_KEY,
       };
@@ -420,6 +428,33 @@ export const createCourseAssignmentsService = ({
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
 
+    const ensureOrganizationCourseLink = async () => {
+      if (assignmentFallbackEnabled || !getSupabaseClient() || !courseId || !finalOrganizationId) return;
+      const { error } = await safeUpsert(
+        'organization_courses',
+        [{ organization_id: finalOrganizationId, course_id: courseId }],
+        {
+          onConflict: 'organization_id,course_id',
+          select: 'id,organization_id,course_id',
+          requestId: req.requestId ?? null,
+        },
+      );
+      if (error) {
+        const missingRelation =
+          error?.code === '42P01' ||
+          (typeof error?.message === 'string' && /relation .*organization_courses.* does not exist/i.test(error.message));
+        if (missingRelation) {
+          logger.warn('organization_course_link_skipped_missing_table', {
+            requestId: req.requestId ?? null,
+            organizationId: finalOrganizationId,
+            courseId,
+          });
+          return;
+        }
+        throw error;
+      }
+    };
+
     let assignmentIdempotencyKey = null;
     const buildAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
     const resolveRowKey = (row) => {
@@ -464,7 +499,7 @@ export const createCourseAssignmentsService = ({
 
       const collectRowsByColumn = async (column) => {
         if (userScopedTargetIds.length === 0) return;
-        const { data, error } = await supabase
+        const { data, error } = await getSupabaseClient()
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
@@ -484,7 +519,7 @@ export const createCourseAssignmentsService = ({
       }
 
       if (includesOrgLevelTarget) {
-        const { data: orgRows, error: orgError } = await supabase
+        const { data: orgRows, error: orgError } = await getSupabaseClient()
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
@@ -536,7 +571,7 @@ export const createCourseAssignmentsService = ({
         } else {
           const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
           const statusColumn = await getOrganizationMembershipsStatusColumnName();
-          let membershipQuery = supabase
+          let membershipQuery = getSupabaseClient()
             .from('organization_memberships')
             .select('user_id,status,is_active')
             .eq(membershipOrgColumn, finalOrganizationId);
@@ -680,7 +715,7 @@ export const createCourseAssignmentsService = ({
         };
       }
 
-      if (!supabase) {
+      if (!getSupabaseClient()) {
         const unavailableError = new Error('database_unavailable');
         unavailableError.code = 'database_unavailable';
         unavailableError.statusCode = 503;
@@ -688,8 +723,10 @@ export const createCourseAssignmentsService = ({
         throw unavailableError;
       }
 
+      await ensureOrganizationCourseLink();
+
       if (assignmentIdempotencyKey) {
-        const { data: existingByKey, error } = await supabase
+        const { data: existingByKey, error } = await getSupabaseClient()
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
@@ -708,7 +745,7 @@ export const createCourseAssignmentsService = ({
           };
         }
       } else if (clientRequestId) {
-        const { data: existingByClient, error } = await supabase
+        const { data: existingByClient, error } = await getSupabaseClient()
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
@@ -733,9 +770,9 @@ export const createCourseAssignmentsService = ({
       // so we can prove whether the runtime will take the UPDATE vs INSERT path.
       try {
         const payloadId = body.id ?? body.assignment_id ?? body.assignmentId ?? null;
-        if (payloadId && supabase) {
+        if (payloadId && getSupabaseClient()) {
           try {
-            const { data: existingById, error: existingByIdErr } = await supabase
+            const { data: existingById, error: existingByIdErr } = await getSupabaseClient()
               .from('assignments')
               .select('*')
               .eq('id', payloadId)
@@ -776,7 +813,7 @@ export const createCourseAssignmentsService = ({
 
         const fetchExistingByColumn = async (column) => {
           if (userScopedTargetIds.length === 0) return [];
-          const { data, error } = await supabase
+          const { data, error } = await getSupabaseClient()
             .from('assignments')
             .select('*')
             .eq('course_id', courseId)
@@ -804,7 +841,7 @@ export const createCourseAssignmentsService = ({
         }
 
         if (includesOrgLevelTarget) {
-          const { data: existingOrg, error } = await supabase
+          const { data: existingOrg, error } = await getSupabaseClient()
             .from('assignments')
             .select('*')
             .eq('course_id', courseId)
@@ -901,7 +938,7 @@ export const createCourseAssignmentsService = ({
 
             // Verify existence via Supabase
             if (courseIds.size > 0) {
-              const { data: foundCourses, error: courseErr } = await supabase.from('courses').select('id').in('id', Array.from(courseIds));
+              const { data: foundCourses, error: courseErr } = await getSupabaseClient().from('courses').select('id').in('id', Array.from(courseIds));
               if (courseErr) throw courseErr;
               const foundSet = new Set((foundCourses || []).map((r) => r.id));
               const missing = Array.from(courseIds).filter((c) => !foundSet.has(c));
@@ -913,7 +950,7 @@ export const createCourseAssignmentsService = ({
               }
             }
             if (surveyIds.size > 0) {
-              const { data: foundSurveys, error: surveyErr } = await supabase.from('surveys').select('id').in('id', Array.from(surveyIds));
+              const { data: foundSurveys, error: surveyErr } = await getSupabaseClient().from('surveys').select('id').in('id', Array.from(surveyIds));
               if (surveyErr) throw surveyErr;
               const foundSet = new Set((foundSurveys || []).map((r) => r.id));
               const missing = Array.from(surveyIds).filter((s) => !foundSet.has(s));
@@ -937,7 +974,7 @@ export const createCourseAssignmentsService = ({
             insertError?.code === '23505' &&
             (errorText.includes('idempotency_key') || errorText.includes('assignments_idempotency_key_idx'));
           if (isIdempotencyConflict && assignmentIdempotencyKey) {
-            const { data: existingByKey, error: existingByKeyError } = await supabase
+            const { data: existingByKey, error: existingByKeyError } = await getSupabaseClient()
               .from('assignments')
               .select('*')
               .eq('course_id', courseId)
@@ -1198,7 +1235,7 @@ export const createCourseAssignmentsService = ({
       };
     }
 
-    if (!supabase) {
+    if (!getSupabaseClient()) {
       return { status: 200, data: [], meta: { count: 0, orgId: resolvedOrgId } };
     }
 
@@ -1222,7 +1259,7 @@ export const createCourseAssignmentsService = ({
           resolvedOrgId,
         });
       } catch (e) {}
-      let query = supabase.from(table).select('*').not('course_id', 'is', null);
+      let query = getSupabaseClient().from(table).select('*').not('course_id', 'is', null);
 
       if (table === 'assignments') {
         query = query.or('assignment_type.eq.course,assignment_type.is.null');
@@ -1277,7 +1314,7 @@ export const createCourseAssignmentsService = ({
         const missing = isMissingRelationError(error) || isMissingColumnError(error);
         if (missing) {
           if (resolvedOrgId && table === 'course_assignments') {
-            const fallbackQuery = supabase
+            const fallbackQuery = getSupabaseClient()
               .from(table)
               .select('*')
               .not('course_id', 'is', null)
@@ -1407,12 +1444,12 @@ export const createCourseAssignmentsService = ({
       return { status: 200, data: rows, meta: { count: rows.length, demo: true } };
     }
 
-    if (!supabase) {
+    if (!getSupabaseClient()) {
       return { status: 503, error: { code: 'database_unavailable', message: 'Assignments unavailable.' } };
     }
 
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
-    let query = supabase
+    let query = getSupabaseClient()
       .from('assignments')
       .select('*')
       .eq('course_id', courseId)
@@ -1425,7 +1462,7 @@ export const createCourseAssignmentsService = ({
   };
 
   const deleteAdminAssignment = async ({ req, requireOrgAccess, requireUserContext }) => {
-    if (!supabase) {
+    if (!getSupabaseClient()) {
       return { status: 503, error: { code: 'database_unavailable', message: 'Assignments unavailable.' } };
     }
     const { assignmentId } = req.params;
@@ -1433,7 +1470,7 @@ export const createCourseAssignmentsService = ({
     if (!context) {
       return { status: 401, error: { code: 'not_authenticated', message: 'Authentication required.' } };
     }
-    const { data: existing, error: lookupError } = await supabase.from('assignments').select('*').eq('id', assignmentId).maybeSingle();
+    const { data: existing, error: lookupError } = await getSupabaseClient().from('assignments').select('*').eq('id', assignmentId).maybeSingle();
     if (lookupError) throw lookupError;
     if (!existing) {
       return { status: 404, error: { code: 'assignment_not_found', message: 'Assignment not found.' } };
@@ -1455,7 +1492,7 @@ export const createCourseAssignmentsService = ({
   };
 
   const updateClientAssignmentProgress = async ({ req, res, requireUserContext }) => {
-    if (!supabase) {
+    if (!getSupabaseClient()) {
       return { status: 503, error: { code: 'database_unavailable', message: 'Assignments unavailable.' } };
     }
     const { course_id, courseId, user_id, userId, progress } = req.body || {};
@@ -1484,7 +1521,7 @@ export const createCourseAssignmentsService = ({
 
     try {
       // Find existing assignment row first (read-only). Then upsert by id so writes go through admin client.
-      const { data: existing, error: lookupError } = await supabase
+      const { data: existing, error: lookupError } = await getSupabaseClient()
         .from('assignments')
         .select('*')
         .eq('course_id', courseIdValue)

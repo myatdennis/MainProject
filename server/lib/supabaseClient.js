@@ -83,3 +83,17 @@ export function isSupabaseConfigured() {
 export function isSupabaseAuthConfigured() {
   return getSupabaseAuthClient() !== null;
 }
+
+(async () => {
+  try {
+    const client = getSupabaseAuthClient();
+    if (!client) throw new Error("Supabase client is not configured.");
+
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+
+    console.log("✅ Supabase connected");
+  } catch (err) {
+    console.error("❌ Supabase connection failed:", err.message);
+  }
+})();

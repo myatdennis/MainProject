@@ -499,6 +499,8 @@ const AdminLogin: React.FC = () => {
 
     clearAdminAccessSnapshot();
 
+    console.log("[SUBMIT HIT]", { email, password });
+
     let result;
     try {
       result = await login(sanitizedEmail, sanitizedPassword, 'admin');

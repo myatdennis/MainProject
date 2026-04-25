@@ -39,7 +39,7 @@ export default async () => {
       // Confirms which bundle is running after a deploy. Check: console.log(__APP_BUILD_TIME__)
       __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
       ...(process.env.NODE_ENV === 'development'
-        ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://127.0.0.1:8888/ws') }
+        ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://127.0.0.1:3000/ws') }
         : {}),
     },
     plugins: [
@@ -110,7 +110,7 @@ export default async () => {
       },
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:8888',
+          target: 'http://127.0.0.1:3000',
           changeOrigin: true,
           secure: false,
         },

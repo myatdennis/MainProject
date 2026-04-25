@@ -44,19 +44,32 @@ export const createAuthActions = ({
       }
 
       const normalizedEmail = email.toLowerCase().trim();
-      const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
+      console.log('[LOGIN REQUEST]', {
+        email,
+        url: `/api/auth/login`,
+      });
+
+      const response = await fetch(`/api/auth/login`, {
         method: 'POST',
-        allowAnonymous: true,
+        headers: {
+          'Content-Type': 'application/json',
+        },
         credentials: 'include',
-        headers: buildSessionAuditHeaders(),
-        body: {
+        body: JSON.stringify({
           email: normalizedEmail,
           password,
           mfaCode,
-        },
+        }),
       });
 
-      if ((rawPayload as { mfaRequired?: boolean } | null)?.mfaRequired) {
+      const data = await response.json();
+
+      console.log('[LOGIN RESPONSE]', {
+        status: response.status,
+        data,
+      });
+
+      if (data.mfaRequired) {
         return {
           success: false,
           mfaRequired: true,
@@ -65,7 +78,7 @@ export const createAuthActions = ({
         };
       }
 
-      const normalizedPayload = normalizeSessionResponsePayload(rawPayload);
+      const normalizedPayload = normalizeSessionResponsePayload(data);
       let payloadFromFallback: SessionResponsePayload | null = normalizedPayload;
 
       if (!payloadFromFallback) {

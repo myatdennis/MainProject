@@ -4,6 +4,7 @@ import { createCourseAssignmentsController } from '../controllers/courseAssignme
 
 export const createCourseAssignmentsRouter = ({
   supabase,
+  getSupabase,
   logger,
   e2eStore,
   isDemoOrTestMode,
@@ -43,6 +44,7 @@ export const createCourseAssignmentsRouter = ({
   const router = express.Router({ mergeParams: true });
   const service = createCourseAssignmentsService({
     supabase,
+    getSupabase,
     logger,
     e2eStore,
     isDemoOrTestMode,

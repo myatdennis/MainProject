@@ -156,7 +156,7 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
   }
 }
 
-export async function safeUpsert(table, payload, { logger = console, requestId = null, select = false, verify = false, verifyTimeoutMs = 5000, verifyPredicate = null } = {}) {
+export async function safeUpsert(table, payload, { logger = console, requestId = null, select = false, verify = false, verifyTimeoutMs = 5000, verifyPredicate = null, onConflict = null } = {}) {
   const client = getSupabaseAdminClient();
   if (!client) {
     const err = new Error('safeUpsert: SUPABASE_SERVICE_ROLE_KEY (admin client) is required for server-side writes');
@@ -166,11 +166,12 @@ export async function safeUpsert(table, payload, { logger = console, requestId =
   }
   try {
     let res;
+    const options = onConflict ? { onConflict } : undefined;
     if (select) {
       const sel = typeof select === 'string' ? select : '*';
-      res = await client.from(table).upsert(payload).select(sel);
+      res = await client.from(table).upsert(payload, options).select(sel);
     } else {
-      res = await client.from(table).upsert(payload);
+      res = await client.from(table).upsert(payload, options);
     }
 
     // Optional verification similar to safeInsert

@@ -56,6 +56,96 @@ export const createCourseCatalogService = ({
     return client;
   };
 
+  const chunkValues = (values = [], size = 80) => {
+    const chunks = [];
+    for (let i = 0; i < values.length; i += size) {
+      chunks.push(values.slice(i, i + size));
+    }
+    return chunks;
+  };
+
+  const sortCoursesByCreatedAtDesc = (rows = []) =>
+    [...rows].sort((left, right) => {
+      const leftTime = Date.parse(left?.created_at ?? left?.updated_at ?? '') || 0;
+      const rightTime = Date.parse(right?.created_at ?? right?.updated_at ?? '') || 0;
+      return rightTime - leftTime;
+    });
+
+  const resolveOrganizationCourseIds = async (orgIds = [], { requestId = null } = {}) => {
+    const normalizedOrgIds = Array.from(
+      new Set(
+        (Array.isArray(orgIds) ? orgIds : [orgIds])
+          .map((value) => normalizeOrgIdValue(value))
+          .filter(Boolean),
+      ),
+    );
+    if (normalizedOrgIds.length === 0) return null;
+
+    const { data, error } = await requireSupabaseClient()
+      .from('organization_courses')
+      .select('course_id,organization_id')
+      .in('organization_id', normalizedOrgIds);
+
+    if (error) {
+      const missingRelation =
+        error?.code === '42P01' ||
+        (typeof error?.message === 'string' && /relation .*organization_courses.* does not exist/i.test(error.message));
+      if (missingRelation) {
+        logger.warn('organization_courses_missing_for_scope', {
+          requestId,
+          orgCount: normalizedOrgIds.length,
+          message: error?.message ?? null,
+        });
+      }
+      throw error;
+    }
+
+    const ids = Array.from(new Set((data || []).map((row) => row?.course_id).filter(Boolean).map(String)));
+    logger.info('organization_courses_scope_resolved', {
+      requestId,
+      orgCount: normalizedOrgIds.length,
+      courseCount: ids.length,
+    });
+    return ids;
+  };
+
+  const isCourseLinkedToOrgScope = async (courseId, orgIds = [], { requestId = null } = {}) => {
+    const normalizedCourseId = typeof courseId === 'string' ? courseId.trim() : courseId ? String(courseId).trim() : '';
+    const normalizedOrgIds = Array.from(
+      new Set(
+        (Array.isArray(orgIds) ? orgIds : [orgIds])
+          .map((value) => normalizeOrgIdValue(value))
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedCourseId || normalizedOrgIds.length === 0) return false;
+
+    const { data, error } = await requireSupabaseClient()
+      .from('organization_courses')
+      .select('course_id,organization_id')
+      .eq('course_id', normalizedCourseId)
+      .in('organization_id', normalizedOrgIds)
+      .limit(1);
+
+    if (error) {
+      const missingRelation =
+        error?.code === '42P01' ||
+        (typeof error?.message === 'string' && /relation .*organization_courses.* does not exist/i.test(error.message));
+      if (missingRelation) {
+        logger.warn('organization_courses_missing_for_detail_scope', {
+          requestId,
+          courseId: normalizedCourseId,
+          orgCount: normalizedOrgIds.length,
+          message: error?.message ?? null,
+        });
+      }
+      throw error;
+    }
+
+    return Array.isArray(data) && data.length > 0;
+  };
+
+
   const buildAdminOrgAccess = async ({ req, res, context, requestedOrgId }) => {
     // In demo/test/E2E modes we accept non-UUID org identifiers (slugs) from the
     // request (tests pass 'demo-sandbox-org'). Avoid a hard 403 when coercion to
@@ -294,6 +384,85 @@ export const createCourseCatalogService = ({
       : '';
 
     try {
+      const orgScopeIds = orgFilter ? [orgFilter] : !isPlatformAdmin ? adminOrgIds : [];
+      const scopedCourseIds =
+        orgScopeIds.length > 0
+          ? await resolveOrganizationCourseIds(orgScopeIds, { requestId: req.requestId ?? null })
+          : null;
+
+      if (orgScopeIds.length > 0 && Array.isArray(scopedCourseIds) && scopedCourseIds.length === 0) {
+        const emptyBody = {
+          data: [],
+          pagination: {
+            page,
+            pageSize,
+            total: 0,
+            hasMore: false,
+          },
+        };
+        return { status: 200, body: emptyBody };
+      }
+
+      if (orgScopeIds.length > 0 && Array.isArray(scopedCourseIds) && scopedCourseIds.length > 80) {
+        const scopedRows = [];
+        for (const chunk of chunkValues(scopedCourseIds)) {
+          const chunkQuery = () => {
+            let query = requireSupabaseClient()
+              .from('courses')
+              .select(`${baseFields.join(',')}${moduleFields}`)
+              .in('id', chunk);
+            if (search) {
+              const term = sanitizeIlike(search);
+              query = query.or(`title.ilike.%${term}%,description.ilike.%${term}%`);
+            }
+            if (statusFilter.length) {
+              query = query.in('status', statusFilter);
+            }
+            return query;
+          };
+          const { data: chunkData } = await runSupabaseReadQueryWithRetry('admin.courses.list.chunked', chunkQuery);
+          if (chunkData != null && !Array.isArray(chunkData)) {
+            const shapeError = new Error('Invalid admin courses chunk response shape');
+            shapeError.code = 'INVALID_RESPONSE_SHAPE';
+            throw shapeError;
+          }
+          scopedRows.push(...(chunkData || []));
+        }
+
+        const sortedRows = sortCoursesByCreatedAtDesc(scopedRows);
+        const pageRows = sortedRows.slice(from, from + pageSize);
+        const hydratedData = includeStructure
+          ? await Promise.all(pageRows.map((courseRecord) => ensureCourseStructureLoaded(courseRecord, { includeLessons })))
+          : pageRows;
+        const body = {
+          data: hydratedData,
+          pagination: {
+            page,
+            pageSize,
+            total: sortedRows.length,
+            hasMore: to + 1 < sortedRows.length,
+          },
+        };
+        if (!isProduction) {
+          body.debug = {
+            filterOrgId: orgFilter || (restrictToAllowed ? '[allowed_orgs]' : null),
+            totalCountForOrg: sortedRows.length,
+            totalCountAllOrgs: sortedRows.length,
+          };
+        }
+        logger.info('admin_courses_response_ready', {
+          requestId: req.requestId ?? null,
+          route: '/api/admin/courses',
+          requestedOrgId,
+          resolvedRequestedOrgId: resolvedRequestedOrgId ?? null,
+          rowCount: hydratedData.length,
+          total: sortedRows.length,
+          chunked: true,
+          envelopeKeys: Object.keys(body),
+        });
+        return { status: 200, body };
+      }
+
       const buildQuery = () => {
         let query = requireSupabaseClient()
           .from('courses')
@@ -307,10 +476,8 @@ export const createCourseCatalogService = ({
         if (statusFilter.length) {
           query = query.in('status', statusFilter);
         }
-        if (orgFilter) {
-          query = query.eq('organization_id', orgFilter);
-        } else if (!isPlatformAdmin) {
-          query = query.in('organization_id', adminOrgIds);
+        if (orgScopeIds.length > 0) {
+          query = query.in('id', scopedCourseIds);
         }
         return query;
       };
@@ -497,6 +664,61 @@ export const createCourseCatalogService = ({
       if (!context) return null;
     }
 
+    if (
+      !context.isPlatformAdmin &&
+      context.userId &&
+      (!Array.isArray(context.memberships) || context.memberships.length === 0) &&
+      (!Array.isArray(context.organizationIds) || context.organizationIds.length === 0)
+    ) {
+      const supabaseClient = getSupabaseClient();
+      if (supabaseClient) {
+        try {
+          const { data: membershipRows, error: membershipError } = await supabaseClient
+            .from('organization_memberships')
+            .select('organization_id, org_id, role, status')
+            .eq('user_id', context.userId)
+            .eq('status', 'active');
+          if (membershipError) throw membershipError;
+          const hydratedMemberships = (membershipRows || [])
+            .map((membership) => {
+              const orgId = normalizeOrgIdValue(
+                pickOrgId(membership?.organization_id, membership?.org_id),
+              );
+              return orgId
+                ? {
+                    orgId,
+                    organizationId: orgId,
+                    organization_id: orgId,
+                    role: membership?.role ?? 'member',
+                    status: membership?.status ?? 'active',
+                  }
+                : null;
+            })
+            .filter(Boolean);
+          if (hydratedMemberships.length > 0) {
+            context = {
+              ...context,
+              memberships: hydratedMemberships,
+              organizationIds: hydratedMemberships.map((membership) => membership.orgId),
+              activeOrganizationId: context.activeOrganizationId || hydratedMemberships[0].orgId,
+              requestedOrgId: context.requestedOrgId || hydratedMemberships[0].orgId,
+            };
+            logger.info('client_courses_membership_context_hydrated', {
+              requestId,
+              userId: context.userId,
+              membershipCount: hydratedMemberships.length,
+            });
+          }
+        } catch (membershipError) {
+          logger.warn('client_courses_membership_context_hydration_failed', {
+            requestId,
+            userId: context.userId,
+            message: membershipError?.message ?? String(membershipError),
+          });
+        }
+      }
+    }
+
     if (!isDemoMode && !isUuid(context.userId || '') && !context.isPlatformAdmin) {
       return { status: 200, body: { ok: true, courses: [], total: 0, requestId } };
     }
@@ -606,7 +828,7 @@ export const createCourseCatalogService = ({
       };
     }
 
-    const sessionUserId = (req.user && (req.user.userId || req.user.id || req.user.sub)) || null;
+    const sessionUserId = (req.user && (req.user.userId || req.user.id || req.user.sub)) || context.userId || null;
     const normalizedSessionUserId = sessionUserId ? String(sessionUserId).trim().toLowerCase() : null;
 
     const resolveAssignmentCourseIds = async () => {
@@ -799,6 +1021,39 @@ export const createCourseCatalogService = ({
         }
       }
 
+      const shouldScopeByOrganizationCourses = !context.isPlatformAdmin || effectiveScopedOrgIds.length > 0;
+      const organizationCourseIds =
+        shouldScopeByOrganizationCourses && effectiveScopedOrgIds.length > 0
+          ? await resolveOrganizationCourseIds(effectiveScopedOrgIds, { requestId })
+          : null;
+
+      if (
+        shouldScopeByOrganizationCourses &&
+        effectiveScopedOrgIds.length > 0 &&
+        Array.isArray(organizationCourseIds) &&
+        organizationCourseIds.length === 0
+      ) {
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            data: [],
+            requestId,
+            meta: {
+              orgId: assignmentOrgId ?? (effectiveScopedOrgIds.length === 1 ? effectiveScopedOrgIds[0] : null),
+              scopedOrgCount: effectiveScopedOrgIds.length,
+              assignedOnly: effectiveAssignedOnly,
+              assignmentFilterActive: effectiveAssignedOnly && Array.isArray(assignmentCourseIds),
+              assignmentCourseCount: Array.isArray(assignmentCourseIds) ? assignmentCourseIds.length : null,
+              organizationCourseFilterActive: true,
+              organizationCourseCount: 0,
+              membershipFallbackApplied,
+              count: 0,
+            },
+          },
+        };
+      }
+
       const buildQuery = () => {
         let courseQuery = requireSupabaseClient()
           .from('courses')
@@ -811,17 +1066,45 @@ export const createCourseCatalogService = ({
         if (effectiveAssignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)) {
           courseQuery = courseQuery.in('id', assignmentCourseIds);
         }
-        if (!context.isPlatformAdmin || effectiveScopedOrgIds.length > 0) {
-          if (effectiveScopedOrgIds.length === 1) {
-            courseQuery = courseQuery.eq('organization_id', effectiveScopedOrgIds[0]);
-          } else if (effectiveScopedOrgIds.length > 1) {
-            courseQuery = courseQuery.in('organization_id', effectiveScopedOrgIds);
-          }
+        if (Array.isArray(organizationCourseIds)) {
+          courseQuery = courseQuery.in('id', organizationCourseIds);
         }
         return courseQuery;
       };
 
-      const { data } = await runSupabaseReadQueryWithRetry('client.courses.published', buildQuery);
+      let data = null;
+      let chunkedCourseIds = null;
+      if (Array.isArray(organizationCourseIds) && organizationCourseIds.length > 80) {
+        const assignmentFilter = effectiveAssignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)
+          ? new Set(assignmentCourseIds.map((value) => String(value)))
+          : null;
+        chunkedCourseIds = assignmentFilter
+          ? organizationCourseIds.filter((courseId) => assignmentFilter.has(String(courseId)))
+          : organizationCourseIds;
+        const chunkRows = [];
+        for (const chunk of chunkValues(chunkedCourseIds)) {
+          const chunkQuery = () =>
+            requireSupabaseClient()
+              .from('courses')
+              .select(courseWithModulesLessonsSelect)
+              .eq('status', 'published')
+              .in('id', chunk)
+              .order('created_at', { ascending: false })
+              .order('order_index', { ascending: true, foreignTable: 'modules' })
+              .order('order_index', { ascending: true, foreignTable: moduleLessonsForeignTable });
+          const { data: chunkData } = await runSupabaseReadQueryWithRetry('client.courses.published.chunked', chunkQuery);
+          if (chunkData != null && !Array.isArray(chunkData)) {
+            const shapeError = new Error('Invalid client courses chunk response shape');
+            shapeError.code = 'INVALID_RESPONSE_SHAPE';
+            throw shapeError;
+          }
+          chunkRows.push(...(chunkData || []));
+        }
+        data = sortCoursesByCreatedAtDesc(chunkRows);
+      } else {
+        const result = await runSupabaseReadQueryWithRetry('client.courses.published', buildQuery);
+        data = result?.data ?? null;
+      }
       if (data != null && !Array.isArray(data)) {
         const shapeError = new Error('Invalid client courses response shape');
         shapeError.code = 'INVALID_RESPONSE_SHAPE';
@@ -834,6 +1117,9 @@ export const createCourseCatalogService = ({
         assignedOnly: effectiveAssignedOnly,
         assignmentFilterActive: effectiveAssignedOnly && Array.isArray(assignmentCourseIds),
         assignmentCourseCount: Array.isArray(assignmentCourseIds) ? assignmentCourseIds.length : null,
+        organizationCourseFilterActive: Array.isArray(organizationCourseIds),
+        organizationCourseCount: Array.isArray(organizationCourseIds) ? organizationCourseIds.length : null,
+        chunkedOrganizationCourseCount: Array.isArray(chunkedCourseIds) ? chunkedCourseIds.length : null,
         membershipFallbackApplied,
         count: list.length,
       };
@@ -900,12 +1186,14 @@ export const createCourseCatalogService = ({
       const normalized = normalizeOrgIdValue(orgId);
       return normalized ? membershipSet.has(normalized) : false;
     };
-    const applyOrgScopeFilter = (query) => {
-      if (allowAllOrgAccess) return query;
-      if (scopedOrgIds.length === 1) return query.eq('organization_id', scopedOrgIds[0]);
-      if (scopedOrgIds.length > 1) return query.in('organization_id', scopedOrgIds);
-      const fallbackOrg = normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId ?? null);
-      return fallbackOrg ? query.eq('organization_id', fallbackOrg) : query;
+    const detailScopeOrgIds = allowAllOrgAccess
+      ? []
+      : scopedOrgIds.length > 0
+        ? scopedOrgIds
+        : [normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId ?? null)].filter(Boolean);
+    const isCourseAllowedForDetail = async (course) => {
+      if (allowAllOrgAccess) return true;
+      return isCourseLinkedToOrgScope(course?.id, detailScopeOrgIds, { requestId });
     };
 
     if (isDemoOrTestMode) {
@@ -1003,7 +1291,6 @@ export const createCourseCatalogService = ({
         .order('order_index', { ascending: true, foreignTable: moduleLessonsForeignTable })
         .maybeSingle();
       if (!includeDrafts) query = query.eq('status', 'published');
-      query = applyOrgScopeFilter(query);
       return query;
     };
 
@@ -1030,8 +1317,7 @@ export const createCourseCatalogService = ({
         }
       }
       if (data) {
-        const courseOrgId = data.organization_id ?? data.org_id ?? data.organizationId ?? null;
-        if (!isOrgAllowed(courseOrgId)) {
+        if (!(await isCourseAllowedForDetail(data))) {
           return { status: 200, body: { ok: true, data: null, requestId } };
         }
         const hydrated = await ensureCourseStructureLoaded(data, { includeLessons: true });

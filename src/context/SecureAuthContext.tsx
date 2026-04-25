@@ -1462,19 +1462,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const startBootstrap = useCallback(
     ({ force = false }: { force?: boolean } = {}) => {
       if (!force && bootstrappedRef.current) {
-        return;
-      }
-      // E2E/dev bypass logic fully removed for launch readiness.
-      if (isLoginPath()) {
-        bootstrappedRef.current = true;
-        // Fail-safe: ensure UI never deadlocks
-        // no timers used in deterministic bootstrap
-        continueAsGuest('bootstrap_login_route');
-        setAuthInitializing(false);
-        setAuthStatus('unauthenticated', 'bootstrap_login_route_failopen');
-        setSessionStatus('unauthenticated', 'bootstrap_login_route_failopen');
-        setBootstrapError('Login route: fail-open fallback.');
-        console.warn('[SecureAuth] fail-open: login route, forced unauthenticated');
+        console.warn('[BOOTSTRAP] Already initialized. Skipping redundant bootstrap.');
         return;
       }
       bootstrappedRef.current = true;

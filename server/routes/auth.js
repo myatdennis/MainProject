@@ -450,6 +450,9 @@ const refreshSessionFromToken = async (refreshToken) => {
 
 const router = express.Router();
 
+// Export the router
+export default router;
+
 router.use((req, _res, next) => {
   // Avoid noisy/sensitive auth request logging in production.
   if (!isProduction && devLoginDiagnosticsEnabled) {
@@ -464,143 +467,55 @@ router.use((req, _res, next) => {
 // ============================================================================
 
 const loginHandler = async (req, res) => {
-  const requestId = req.requestId || req.headers['x-request-id'] || null;
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || null;
-
   try {
     const { email, password } = req.body || {};
+
     if (!email || !password) {
       return res.status(400).json({
-        ok: false,
         error: 'missing_credentials',
         message: 'Email and password are required.',
       });
     }
 
-    const normalizedEmail =
-      typeof normalizeEmail === 'function'
-        ? normalizeEmail(email)
-        : String(email ?? '').trim().toLowerCase();
+    console.log("LOGIN HIT");
+    console.log("EMAIL:", email);
 
-    const matchingDemoUser = findAnyDemoUserByEmail(normalizedEmail);
-    const shouldUseDemoLogin =
-      Boolean(matchingDemoUser) &&
-      (demoLoginEnabled || isDemoModeExplicit || isE2ETestMode || allowLegacyDemoUsers);
-
-    if (shouldUseDemoLogin) {
-      const demoUser = matchingDemoUser;
-      if (!demoUser) {
-        return res.status(401).json({
-          ok: false,
-          error: 'invalid_credentials',
-          message: 'The email or password you entered is incorrect.',
-        });
-      }
-
-      const passwordMatches = demoUser.passwordHash
-        ? await bcrypt.compare(password, demoUser.passwordHash)
-        : password === demoUser.password;
-
-      if (!passwordMatches) {
-        return res.status(401).json({
-          ok: false,
-          error: 'invalid_credentials',
-          message: 'The email or password you entered is incorrect.',
-        });
-      }
-
-      const tokens = generateTokens({
-        userId: demoUser.id,
-        email: normalizedEmail,
-        role: demoUser.role || 'user',
-        organizationId: demoUser.organizationId || null,
-        platformRole: demoUser.role === 'admin' ? 'platform_admin' : null,
-      });
-      const userPayload = buildDemoUserPayloadFromToken({
-        userId: demoUser.id,
-        email: normalizedEmail,
-        role: demoUser.role || 'user',
-      });
-
-      console.info('[LOGIN SUCCESS]', {
-        requestId,
-        source: 'demo',
-        userId: demoUser.id,
-        email: normalizedEmail,
-        membershipCount: 0,
-      });
-      attachAuthCookies(req, res, {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-      });
-      return res.status(200).json(buildSessionResponse(userPayload, tokens));
-    }
-
-    if (!supabaseAuthClient) {
-      const configError = buildAuthConfigError();
-      return res.status(configError.status).json({
-        ok: false,
-        error: configError.code || 'auth_not_configured',
-        message: configError.message,
-      });
-    }
-    const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
-      email: normalizedEmail,
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
       password,
     });
 
-    if (authError || !data?.user || !data.session) {
-      console.warn('[AUTH LOGIN] invalid credentials', {
-        requestId,
-        emailSuffix: typeof normalizedEmail === 'string' ? normalizedEmail.slice(-6) : null,
-        ip: clientIp,
-        error: authError?.message || authError || null,
-      });
-      return res.status(401).json({
-        ok: false,
-        error: 'invalid_credentials',
-        message: 'The email or password you entered is incorrect.',
-      });
+    if (error) {
+      console.error("LOGIN ERROR:", error.message);
+      return res.status(401).json({ error: error.message });
     }
 
-    let membershipRows = [];
-    try {
-      membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-login]' });
-    } catch (membershipError) {
-      console.warn('[AUTH LOGIN] membership lookup failed', {
-        requestId,
-        userId: data.user.id,
-        error: membershipError?.message || membershipError,
-      });
-    }
+    const session = data.session;
 
-    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows, {
-      membershipStatus: membershipRows.length ? 'ready' : 'unknown',
+    console.log("LOGIN SUCCESS", {
+      userId: data.user?.id,
     });
-    const tokens = buildTokenResponseFromSession(data.session);
-    console.info('[LOGIN SUCCESS]', {
-      requestId,
-      source: 'supabase',
-      userId: data.user.id,
-      email: normalizedEmail,
-      membershipCount: membershipRows.length,
+
+    res.cookie("accessToken", session.access_token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
     });
-    attachAuthCookies(req, res, {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
+
+    res.cookie("refreshToken", session.refresh_token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
     });
-    return res.status(200).json(buildSessionResponse(userPayload, tokens));
-  } catch (error) {
-    console.error('[AUTH LOGIN] unexpected error', {
-      requestId,
-      ip: clientIp,
-      error: error instanceof Error ? error.message : error,
+
+    return res.json({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      user: data.user,
     });
-    return res.status(500).json({
-      ok: false,
-      error: 'login_failed',
-      message: 'Unable to complete login. Please try again.',
-    });
+  } catch (err) {
+    console.error("LOGIN ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
@@ -612,14 +527,14 @@ const loginRateLimiter = authLimiter;
 // Add fail-open fallback for login route
 router.post('/login', loginRateLimiter, asyncHandler(async (req, res, next) => {
   try {
+    console.log("LOGIN HIT");
+    console.log("EMAIL:", req.body?.email);
+    console.log("SUPABASE URL:", process.env.SUPABASE_URL);
+
     await loginHandler(req, res, next);
   } catch (err) {
-    console.error('[LOGIN ROUTE] Fallback triggered due to error:', err);
-    return res.status(500).json({
-      ok: false,
-      error: 'login_fallback',
-      message: 'Login service is temporarily unavailable. Please try again later.'
-    });
+    console.error("LOGIN ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 }));
 
@@ -1160,17 +1075,8 @@ router.get('/me', async (req, res) => {
         isActive: user.is_active,
       },
     });
-  } catch (error) {
-    console.error('[AUTH ME] failed', {
-      userId: req.user?.userId ?? null,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    res.status(500).json({
-      code: 'INTERNAL_SERVER_ERROR',
-      error: 'internal_error',
-      message: 'Unable to fetch user information.',
-    });
+  } catch {
+    // Add missing '{' to fix syntax error
+    console.error("Error occurred");
   }
 });
-
-export default router;
