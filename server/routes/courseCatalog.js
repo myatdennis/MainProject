@@ -6,6 +6,7 @@ export const createCourseCatalogRouter = ({
   authenticate,
   logger,
   supabase,
+  getSupabase,
   e2eStore,
   nodeEnv,
   isDemoMode,
@@ -46,6 +47,7 @@ export const createCourseCatalogRouter = ({
   const service = createCourseCatalogService({
     logger,
     supabase,
+    getSupabase,
     e2eStore,
     nodeEnv,
     isDemoMode,

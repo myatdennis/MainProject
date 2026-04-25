@@ -306,7 +306,7 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
     (course as any).lessons_count ??
     (structureLoaded ? derivedLessonCount : null);
   const meta = course.meta_json || {};
-  const resolvedTitle = course.title || course.name || 'Untitled Course';
+  const resolvedTitle = course.title || 'Untitled Course';
   const resolvedOrganizationId =
     course.organization_id ??
     (course as any).organizationId ??

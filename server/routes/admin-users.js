@@ -1,9 +1,7 @@
 import express from 'express';
 import { assertAdminQueryColumns, logAdminQuery } from '../utils/adminSchemaGuard.js';
-import supabaseClient, { supabaseAdminClient } from '../lib/supabaseClient.js';
+import { getSupabaseAdminClient, getSupabaseAuthClient } from '../lib/supabaseClient.js';
 import { logger } from '../lib/logger.js';
-const supabase = supabaseClient || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
-const supabaseAdmin = supabaseAdminClient || supabase;
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
 import { broadcastToTopic } from '../lib/broadcaster.js';
@@ -17,12 +15,33 @@ const router = express.Router();
 let organizationMembershipsOrgColumn = null;
 let organizationMembershipsStatusColumn = null;
 
+const createRuntimeSupabaseProxy = (getClient, label) =>
+  new Proxy(
+    {},
+    {
+      get(_target, property) {
+        const client = getClient();
+        if (!client) {
+          throw createHttpError(503, 'supabase_not_configured', `${label} not configured`);
+        }
+        const value = client[property];
+        return typeof value === 'function' ? value.bind(client) : value;
+      },
+    },
+  );
+
+const getRuntimeSupabase = () => getSupabaseAdminClient() || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
+const getRuntimeSupabaseAdmin = () => getSupabaseAdminClient() || getRuntimeSupabase();
+const runtimeSupabase = createRuntimeSupabaseProxy(getRuntimeSupabase, 'Supabase');
+const runtimeSupabaseAdmin = createRuntimeSupabaseProxy(getRuntimeSupabaseAdmin, 'Supabase admin client');
+const runtimeSupabaseAuthClient = createRuntimeSupabaseProxy(getSupabaseAuthClient, 'Supabase auth client');
+
 const resolveOrganizationMembershipsOrgColumn = async () => {
-  if (!supabaseAdmin) return 'organization_id';
+  if (!getRuntimeSupabaseAdmin()) return 'organization_id';
   if (organizationMembershipsOrgColumn) return organizationMembershipsOrgColumn;
 
   for (const column of ['organization_id', 'org_id']) {
-    const { error } = await supabaseAdmin
+    const { error } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .select('user_id', { head: true, count: 'exact' })
       .is(column, null)
@@ -40,11 +59,11 @@ const resolveOrganizationMembershipsOrgColumn = async () => {
 };
 
 const resolveOrganizationMembershipsStatusColumn = async () => {
-  if (!supabaseAdmin) return 'status';
+  if (!getRuntimeSupabaseAdmin()) return 'status';
   if (organizationMembershipsStatusColumn) return organizationMembershipsStatusColumn;
 
   for (const column of ['status', 'is_active']) {
-    const { error } = await supabaseAdmin
+    const { error } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .select('user_id', { head: true, count: 'exact' })
       .is(column, null)
@@ -62,10 +81,10 @@ const resolveOrganizationMembershipsStatusColumn = async () => {
 };
 
 const resolveOrganizationMembershipsHasIsActiveColumn = async () => {
-  if (!supabaseAdmin) return false;
+  if (!getRuntimeSupabaseAdmin()) return false;
 
   for (const column of ['is_active']) {
-    const { error } = await supabaseAdmin
+    const { error } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .select('user_id', { head: true, count: 'exact' })
       .is(column, null)
@@ -88,7 +107,7 @@ const isActiveValue = (statusColumn, value) => {
 // PATCH /api/admin/users/:userId
 router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
   try {
-    if (!supabaseAdmin) {
+    if (!getRuntimeSupabaseAdmin()) {
       return res.status(503).json({
         ok: false,
         code: 'supabase_not_configured',
@@ -109,7 +128,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     let canonicalUserId = null;
     let canonicalSource = null;
 
-    const { data: membershipRow, error: membershipRowError } = await supabaseAdmin
+    const { data: membershipRow, error: membershipRowError } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .select('user_id')
       .eq('id', userId)
@@ -123,7 +142,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       canonicalUserId = membershipRow.user_id;
       canonicalSource = 'organization_memberships';
     } else {
-      const { data: profileRow, error: profileRowError } = await supabaseAdmin
+      const { data: profileRow, error: profileRowError } = await runtimeSupabaseAdmin
         .from('user_profiles')
         .select('id')
         .eq('id', userId)
@@ -174,7 +193,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         columns: 'organization_id',
         label: 'admin-users.transfer.loadProfile.orgAdmin',
       });
-      const { data: profileRow, error: profileRowError } = await supabaseAdmin
+      const { data: profileRow, error: profileRowError } = await runtimeSupabaseAdmin
         .from('user_profiles')
         .select('organization_id')
         .eq('id', targetUserId)
@@ -213,7 +232,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         columns: 'organization_id',
         label: 'admin-users.transfer.loadProfile.platformAdmin',
       });
-      const { data: profileRow, error: profileRowError } = await supabaseAdmin
+      const { data: profileRow, error: profileRowError } = await runtimeSupabaseAdmin
         .from('user_profiles')
         .select('organization_id')
         .eq('id', targetUserId)
@@ -244,7 +263,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       deactivatePayload.is_active = deactivateStatus.is_active;
     }
 
-    const { error: deactivateError } = await supabaseAdmin
+    const { error: deactivateError } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .update(deactivatePayload)
       .eq('user_id', targetUserId);
@@ -272,12 +291,12 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     }
 
     let insertError;
-    ({ error: insertError } = await supabaseAdmin
+    ({ error: insertError } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .upsert(insertPayload, { onConflict: `${orgColumn},user_id` }));
 
     if (insertError && isMembershipConflictTargetError(insertError) && orgColumn !== 'org_id') {
-      ({ error: insertError } = await supabaseAdmin
+      ({ error: insertError } = await runtimeSupabaseAdmin
         .from('organization_memberships')
         .upsert({ ...insertPayload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' }));
     }
@@ -287,7 +306,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     }
 
     const statusFilter = statusColumn === 'is_active' ? { is_active: true } : { status: 'active' };
-    const { data: activeMemberships, error: activeMembershipsError } = await supabaseAdmin
+    const { data: activeMemberships, error: activeMembershipsError } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .select('*')
       .eq('user_id', targetUserId)
@@ -316,7 +335,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       columns: ['organization_id'],
       action: 'update',
     });
-    const { error: profileError } = await supabaseAdmin
+    const { error: profileError } = await runtimeSupabaseAdmin
       .from('user_profiles')
       .update({ organization_id: orgId })
       .eq('id', targetUserId);
@@ -325,7 +344,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       throw new Error(`profile_update_failed: ${profileError.message}`);
     }
 
-    const { data: profile } = await supabaseAdmin
+    const { data: profile } = await runtimeSupabaseAdmin
       .from('user_profiles')
       .select('*')
       .eq('id', targetUserId)
@@ -340,7 +359,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     let orgData = null;
     const activeOrgId = activeMembership.organization_id ?? activeMembership.org_id ?? null;
     if (activeOrgId) {
-      const { data: org } = await supabaseAdmin
+      const { data: org } = await runtimeSupabaseAdmin
         .from('organizations')
         .select('id, name')
         .eq('id', activeOrgId)
@@ -501,12 +520,12 @@ const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId =
     payload.org_id = String(orgId);
   }
 
-  let { error: upsertError } = await supabaseAdmin
+  let { error: upsertError } = await runtimeSupabaseAdmin
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${orgColumn},user_id` });
 
   if (upsertError && isMembershipConflictTargetError(upsertError) && orgColumn !== 'org_id') {
-    ({ error: upsertError } = await supabaseAdmin
+    ({ error: upsertError } = await runtimeSupabaseAdmin
       .from('organization_memberships')
       .upsert({ ...payload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' }));
   }
@@ -522,11 +541,11 @@ const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId =
 
 const findAuthUserByEmail = async (email) => {
   const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail || !supabase) return null;
+  if (!normalizedEmail || !getRuntimeSupabase()) return null;
 
-  const directLookup = supabase.auth?.admin?.getUserByEmail;
+  const directLookup = runtimeSupabase.auth?.admin?.getUserByEmail;
   if (typeof directLookup === 'function') {
-    const { data, error } = await directLookup.call(supabase.auth.admin, normalizedEmail);
+    const { data, error } = await directLookup.call(runtimeSupabase.auth.admin, normalizedEmail);
     if (error) {
       const message = String(error?.message || '').toLowerCase();
       const isNotFound = message.includes('user not found');
@@ -542,7 +561,7 @@ const findAuthUserByEmail = async (email) => {
   const perPage = 200;
   let page = 1;
   while (page <= 50) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    const { data, error } = await runtimeSupabase.auth.admin.listUsers({ page, perPage });
     if (error) throw error;
     const users = Array.isArray(data?.users) ? data.users : [];
     const match = users.find((user) => normalizeEmail(user?.email) === normalizedEmail) ?? null;
@@ -560,10 +579,10 @@ const findAuthUserByEmail = async (email) => {
 };
 
 const listPublishedOrganizationCourseIds = async (orgId) => {
-  if (!supabase || !orgId) return [];
+  if (!getRuntimeSupabase() || !orgId) return [];
 
   for (const column of ['organization_id', 'org_id']) {
-    const { data, error } = await supabase
+    const { data, error } = await runtimeSupabase
       .from('courses')
       .select('id')
       .eq(column, orgId)
@@ -579,9 +598,9 @@ const listPublishedOrganizationCourseIds = async (orgId) => {
 };
 
 const listPublishedOrganizationSurveyIds = async (orgId) => {
-  if (!supabase || !orgId) return [];
+  if (!getRuntimeSupabase() || !orgId) return [];
 
-  const { data: surveyRows, error: surveyError } = await supabase
+  const { data: surveyRows, error: surveyError } = await runtimeSupabase
     .from('surveys')
     .select('id')
     .eq('status', 'published');
@@ -591,7 +610,7 @@ const listPublishedOrganizationSurveyIds = async (orgId) => {
   if (!publishedIds.size) return [];
 
   const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
-  const { data: assignmentRows, error: assignmentError } = await supabase
+  const { data: assignmentRows, error: assignmentError } = await runtimeSupabase
     .from('assignments')
     .select('survey_id')
     .eq('assignment_type', 'survey')
@@ -605,7 +624,7 @@ const listPublishedOrganizationSurveyIds = async (orgId) => {
     );
   }
 
-  const { data: legacyRows, error: legacyError } = await supabase
+  const { data: legacyRows, error: legacyError } = await runtimeSupabase
     .from('survey_assignments')
     .select('survey_id')
     .contains('organization_ids', [orgId]);
@@ -626,7 +645,7 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
     ...(assignmentOrgColumn !== 'organization_id' ? { organization_id: orgId } : {}),
     ...(assignmentOrgColumn !== 'org_id' ? { org_id: orgId } : {}),
   };
-  const { data: existingRows, error: existingError } = await supabase
+  const { data: existingRows, error: existingError } = await runtimeSupabase
     .from('assignments')
     .select('id,course_id,metadata,assigned_by')
     .eq(assignmentOrgColumn, orgId)
@@ -678,7 +697,7 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
 
     // Broadcast updated assignment row (best-effort)
     try {
-      const { data: updatedRow, error: selErr } = await supabase.from('assignments').select('*').eq('id', id).maybeSingle();
+      const { data: updatedRow, error: selErr } = await runtimeSupabase.from('assignments').select('*').eq('id', id).maybeSingle();
       if (!selErr && updatedRow && typeof broadcastToTopic === 'function') {
         const orgId = updatedRow.organization_id ?? updatedRow.organizationId ?? updatedRow.org_id ?? updatedRow.orgId ?? null;
         const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
@@ -730,7 +749,7 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
     ...(assignmentOrgColumn !== 'organization_id' ? { organization_id: orgId } : {}),
     ...(assignmentOrgColumn !== 'org_id' ? { org_id: orgId } : {}),
   };
-  const { data: existingRows, error: existingError } = await supabase
+  const { data: existingRows, error: existingError } = await runtimeSupabase
     .from('assignments')
     .select('id,survey_id,metadata,assigned_by')
     .eq(assignmentOrgColumn, orgId)
@@ -785,7 +804,7 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
 
     // Broadcast updated survey assignment row (best-effort)
     try {
-      const { data: updatedRow, error: selErr } = await supabase.from('assignments').select('*').eq('id', id).maybeSingle();
+      const { data: updatedRow, error: selErr } = await runtimeSupabase.from('assignments').select('*').eq('id', id).maybeSingle();
       if (!selErr && updatedRow && typeof broadcastToTopic === 'function') {
         const orgId = updatedRow.organization_id ?? updatedRow.organizationId ?? updatedRow.org_id ?? updatedRow.orgId ?? null;
         const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
@@ -831,7 +850,7 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
 // POST /api/admin/users
 router.post('/', async (req, res, next) => {
   try {
-    if (!supabase) {
+    if (!getRuntimeSupabase()) {
       return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
     }
 
@@ -878,8 +897,8 @@ router.post('/', async (req, res, next) => {
         requestId: req.requestId ?? null,
       },
       {
-        supabase,
-        supabaseAuthClient,
+        supabase: runtimeSupabase,
+        supabaseAuthClient: runtimeSupabaseAuthClient,
         logger,
         sendEmail,
         getOrganizationMembershipsOrgColumnName: resolveOrganizationMembershipsOrgColumn,
@@ -904,7 +923,7 @@ router.post('/', async (req, res, next) => {
       canonicalOrgId = result.profile.organization_id;
     }
     if (canonicalOrgId) {
-      const { data: org, error: orgError } = await supabase
+      const { data: org, error: orgError } = await runtimeSupabase
         .from('organizations')
         .select('id, name')
         .eq('id', canonicalOrgId)
@@ -945,7 +964,7 @@ const buildProvisioningEmail = ({ firstName, setupLink, orgName }) => {
 // POST /api/admin/users/:userId/resend-email
 router.post('/:userId/resend-email', async (req, res, next) => {
   try {
-    if (!supabase) {
+    if (!getRuntimeSupabase()) {
       return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
     }
 
@@ -954,7 +973,7 @@ router.post('/:userId/resend-email', async (req, res, next) => {
       return next(createHttpError(400, 'user_id_required', 'userId is required.'));
     }
 
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error: profileError } = await runtimeSupabase
       .from('user_profiles')
       .select('id, email, first_name, organization_id')
       .eq('id', userId)
@@ -963,7 +982,7 @@ router.post('/:userId/resend-email', async (req, res, next) => {
       return next(createHttpError(404, 'user_not_found', 'User profile not found.'));
     }
 
-    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+    const { data: linkData, error: linkError } = await runtimeSupabase.auth.admin.generateLink({
       type: 'recovery',
       email: profile.email,
     });
@@ -1037,12 +1056,12 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
       requestId: null,
     },
     {
-      supabase,
+      supabase: runtimeSupabase,
       logger,
       sendEmail,
-      getOrganizationMembershipsOrgColumnName,
-      getOrganizationMembershipsStatusColumnName,
-      getOrganizationMembershipsHasIsActiveColumn,
+      getOrganizationMembershipsOrgColumnName: resolveOrganizationMembershipsOrgColumn,
+      getOrganizationMembershipsStatusColumnName: resolveOrganizationMembershipsStatusColumn,
+      getOrganizationMembershipsHasIsActiveColumn: resolveOrganizationMembershipsHasIsActiveColumn,
       invalidateMembershipCache,
       assignContentToUser: async ({ orgId: targetOrgId, userId }) => {
         await assignPublishedOrganizationCoursesToUser({ orgId: targetOrgId, userId, actorUserId });
@@ -1065,11 +1084,15 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
 // GET /api/admin/users/export
 router.get('/export', async (req, res, next) => {
   try {
-    if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
-  // Export user profiles (this project keeps user data in `user_profiles`)
-  const { data, error } = await supabase.from('user_profiles').select('*');
+    if (!getRuntimeSupabase()) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+    // Export user profiles (this project keeps user data in `user_profiles`)
+    const { data, error } = await runtimeSupabase.from('user_profiles').select('*');
     if (error) return next(createHttpError(500, 'admin_users_export_failed', error.message));
-    res.json({ users: data });
+    if (!Array.isArray(data)) {
+      throw createHttpError(500, 'invalid_response_shape', 'Admin users export expected an array response');
+    }
+    logger.info('admin_users_export_result', { count: data.length });
+    res.json({ ok: true, data, meta: { count: data.length } });
   } catch (err) {
     return next(withHttpError(err, 500, 'admin_users_export_failed'));
   }
@@ -1162,11 +1185,11 @@ const createInviteFallback = async ({ orgId, email, role, invitedBy = null }) =>
     throw createHttpError(400, 'role_required', 'Role required');
   }
 
-  if (!supabase) {
+  if (!getRuntimeSupabase()) {
     throw createHttpError(503, 'supabase_not_configured', 'Supabase not configured');
   }
 
-  const existing = await supabase
+  const existing = await runtimeSupabase
     .from('org_invites')
     .select('id')
     .eq('organization_id', orgId)
@@ -1187,7 +1210,7 @@ const createInviteFallback = async ({ orgId, email, role, invitedBy = null }) =>
     updated_at: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase.from('org_invites').insert(inviteData).select('*').single();
+  const { data, error } = await runtimeSupabase.from('org_invites').insert(inviteData).select('*').single();
   if (error) {
     throw createHttpError(500, 'invite_create_failed', error.message || 'Unable to create invite');
   }
@@ -1195,7 +1218,7 @@ const createInviteFallback = async ({ orgId, email, role, invitedBy = null }) =>
 };
 
 const processUserImportRows = async ({ rows, defaultOrgId, actorUserId, requestId, deps = {} }) => {
-  const supabaseClient = deps.supabaseClient || supabase;
+  const supabaseClient = deps.supabaseClient || runtimeSupabase;
   const loggerInstance = deps.logger || logger;
   const provisionUser = deps.provisionUser || ((row) => provisionImportedUser(row, actorUserId, defaultOrgId));
   const assignCourses = deps.assignCourses || assignCourseIdsToUser;

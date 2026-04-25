@@ -20,6 +20,7 @@ export const createAdminUserManagementRouter = (deps) => {
     buildActorFromRequest,
     logger,
     supabase,
+    getSupabase,
     sendEmail,
     getOrganizationMembershipsOrgColumnName,
     invalidateMembershipCache,
@@ -27,6 +28,7 @@ export const createAdminUserManagementRouter = (deps) => {
     archiveOrganizationUserAccount,
     permanentlyDeleteUserAccount,
   } = deps;
+  const getRuntimeSupabase = () => (typeof getSupabase === 'function' ? getSupabase() : supabase);
 
   const shouldUseAdminUsersFallback = (req) => {
     if (isDemoOrTestMode) return true;
@@ -145,6 +147,9 @@ export const createAdminUserManagementRouter = (deps) => {
       const members = await runSupabaseTransientRetry('admin.users.list', async () =>
         fetchOrgMembersWithProfiles(orgId),
       );
+      if (!Array.isArray(members)) {
+        throw new Error('Invalid admin users response shape');
+      }
       logger.info('admin_users_response_ready', {
         requestId: req.requestId ?? null,
         route: '/api/admin/users',
@@ -303,7 +308,7 @@ export const createAdminUserManagementRouter = (deps) => {
           requestId: req.requestId ?? null,
         },
         {
-          supabase,
+          supabase: getRuntimeSupabase(),
           logger,
           sendEmail,
           getOrganizationMembershipsOrgColumnName,

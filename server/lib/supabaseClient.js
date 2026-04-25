@@ -6,16 +6,49 @@
 import '../env/loadEnv.js';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const configuredSupabaseUrl = process.env.SUPABASE_URL;
+const configuredSupabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+const configuredSupabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
-const supabaseAdminClient = supabaseUrl && supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
+let cachedAdminClient = null;
+let cachedAdminSignature = null;
+let cachedUserClient = null;
+let cachedUserSignature = null;
 
-const supabaseUserClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+const clientSignature = (url, key) => (url && key ? `${url}:${key.length}:${key.slice(0, 8)}` : null);
 
-const supabase = supabaseAdminClient;
-const supabaseAuthClient = supabaseUserClient;
+export function getSupabaseAdminClient() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const signature = clientSignature(url, key);
+  if (!signature) return null;
+  if (!cachedAdminClient || cachedAdminSignature !== signature) {
+    cachedAdminClient = createClient(url, key);
+    cachedAdminSignature = signature;
+  }
+  return cachedAdminClient;
+}
+
+export function getSupabaseUserClient() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  const signature = clientSignature(url, key);
+  if (!signature) return null;
+  if (!cachedUserClient || cachedUserSignature !== signature) {
+    cachedUserClient = createClient(url, key);
+    cachedUserSignature = signature;
+  }
+  return cachedUserClient;
+}
+
+export const getSupabaseAuthClient = getSupabaseUserClient;
+
+const legacySupabaseAdminClient = getSupabaseAdminClient();
+
+const legacySupabaseUserClient = getSupabaseUserClient();
+
+const legacySupabaseClient = legacySupabaseAdminClient;
+const legacySupabaseAuthClient = legacySupabaseUserClient;
 
 /**
  * Lightweight, non-secret diagnostics used by health routes.
@@ -23,26 +56,30 @@ const supabaseAuthClient = supabaseUserClient;
  */
 let urlHost = null;
 try {
-  urlHost = supabaseUrl ? new URL(supabaseUrl).host : null;
+  urlHost = configuredSupabaseUrl ? new URL(configuredSupabaseUrl).host : null;
 } catch {
   urlHost = null;
 }
 
 export const supabaseEnv = {
-  configured: Boolean(supabaseUrl && (supabaseServiceKey || supabaseAnonKey)),
-  urlConfigured: Boolean(supabaseUrl),
+  configured: Boolean(configuredSupabaseUrl && (configuredSupabaseServiceKey || configuredSupabaseAnonKey)),
+  urlConfigured: Boolean(configuredSupabaseUrl),
   urlHost,
-  hasServiceRoleKey: Boolean(supabaseServiceKey),
-  hasAnonKey: Boolean(supabaseAnonKey),
+  hasServiceRoleKey: Boolean(configuredSupabaseServiceKey),
+  hasAnonKey: Boolean(configuredSupabaseAnonKey),
 };
 
-export default supabase;
-export { supabaseAuthClient, supabaseAdminClient, supabaseUserClient };
+export default legacySupabaseClient;
+export {
+  legacySupabaseAuthClient as supabaseAuthClient,
+  legacySupabaseAdminClient as supabaseAdminClient,
+  legacySupabaseUserClient as supabaseUserClient,
+};
 
 export function isSupabaseConfigured() {
-  return supabase !== null;
+  return getSupabaseAdminClient() !== null;
 }
 
 export function isSupabaseAuthConfigured() {
-  return supabaseAuthClient !== null;
+  return getSupabaseAuthClient() !== null;
 }

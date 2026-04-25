@@ -1,5 +1,6 @@
 export const createClientSurveyAssignmentsService = ({
   supabase,
+  getSupabase,
   logger,
   e2eStore,
   persistE2EStore,
@@ -15,6 +16,13 @@ export const createClientSurveyAssignmentsService = ({
   isSupabaseTransientError,
   loadSurveyRecordsByAssignmentIds,
 }) => {
+  const getSupabaseClient = () => {
+    if (typeof getSupabase === 'function') {
+      return getSupabase();
+    }
+    return supabase;
+  };
+
   const isInvalidUuidFilterError = (error) =>
     error?.code === '22P02' ||
     (typeof error?.message === 'string' && error.message.toLowerCase().includes('invalid input syntax for type uuid'));
@@ -125,7 +133,8 @@ export const createClientSurveyAssignmentsService = ({
   };
 
   const listAssigned = async ({ context, orgScope, scopedOrgIds, includeCompleted, requestId }) => {
-    if (!supabase) {
+    const supabaseClient = getSupabaseClient();
+    if (!supabaseClient) {
       if (isDemoOrTestMode) {
         return buildDemoAssignments({ context, scopedOrgIds, includeCompleted });
       }
@@ -227,7 +236,7 @@ export const createClientSurveyAssignmentsService = ({
 
     const loadAssignmentsForUser = async (column, value) => {
       const buildQuery = () => {
-        let query = supabase
+        let query = supabaseClient
           .from('assignments')
           .select(assignmentSelect)
           .eq('assignment_type', surveyAssignmentType)

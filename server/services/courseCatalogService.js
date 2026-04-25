@@ -1,6 +1,7 @@
 export const createCourseCatalogService = ({
   logger,
   supabase,
+  getSupabase,
   e2eStore,
   nodeEnv,
   isDemoMode,
@@ -38,6 +39,23 @@ export const createCourseCatalogService = ({
 }) => {
   const isProduction = nodeEnv === 'production';
 
+  const getSupabaseClient = () => {
+    if (typeof getSupabase === 'function') {
+      return getSupabase();
+    }
+    return supabase;
+  };
+
+  const requireSupabaseClient = () => {
+    const client = getSupabaseClient();
+    if (!client) {
+      const error = new Error('Supabase client unavailable');
+      error.code = 'SUPABASE_CLIENT_UNAVAILABLE';
+      throw error;
+    }
+    return client;
+  };
+
   const buildAdminOrgAccess = async ({ req, res, context, requestedOrgId }) => {
     // In demo/test/E2E modes we accept non-UUID org identifiers (slugs) from the
     // request (tests pass 'demo-sandbox-org'). Avoid a hard 403 when coercion to
@@ -71,9 +89,10 @@ export const createCourseCatalogService = ({
       : [];
     let allowedOrgIdSet = new Set(adminOrgIds);
 
-    if (!isPlatformAdmin && adminOrgIds.length === 0 && supabase) {
+    const supabaseClient = getSupabaseClient();
+    if (!isPlatformAdmin && adminOrgIds.length === 0 && supabaseClient) {
       try {
-        const { data: adminMemberships, error: adminMembershipsError } = await supabase
+        const { data: adminMemberships, error: adminMembershipsError } = await supabaseClient
           .from('organization_memberships')
           .select('organization_id, org_id, role, status')
           .eq('user_id', context.userId)
@@ -276,7 +295,7 @@ export const createCourseCatalogService = ({
 
     try {
       const buildQuery = () => {
-        let query = supabase
+        let query = requireSupabaseClient()
           .from('courses')
           .select(`${baseFields.join(',')}${moduleFields}`, { count: 'exact' })
           .order('created_at', { ascending: false })
@@ -297,7 +316,12 @@ export const createCourseCatalogService = ({
       };
 
       const { data, count } = await runSupabaseReadQueryWithRetry('admin.courses.list', buildQuery);
-      const normalizedData = Array.isArray(data) ? data : [];
+      if (data != null && !Array.isArray(data)) {
+        const shapeError = new Error('Invalid admin courses response shape');
+        shapeError.code = 'INVALID_RESPONSE_SHAPE';
+        throw shapeError;
+      }
+      const normalizedData = data || [];
       const hydratedData = includeStructure
         ? await Promise.all(normalizedData.map((courseRecord) => ensureCourseStructureLoaded(courseRecord, { includeLessons })))
         : normalizedData;
@@ -403,7 +427,7 @@ export const createCourseCatalogService = ({
     const fetchCourseRecord = async (column, value) => {
       try {
         const { data } = await runSupabaseReadQueryWithRetry(`admin.courses.detail.${column}`, () =>
-          supabase.from('courses').select(courseWithModulesLessonsSelect).eq(column, value).maybeSingle(),
+          requireSupabaseClient().from('courses').select(courseWithModulesLessonsSelect).eq(column, value).maybeSingle(),
         );
         return data;
       } catch (error) {
@@ -509,7 +533,8 @@ export const createCourseCatalogService = ({
 
     if (!context.isPlatformAdmin && effectiveScopedOrgIds.length === 0) {
       const userIdForFallback = typeof context.userId === 'string' ? context.userId.trim() : '';
-      if (userIdForFallback && supabase) {
+      const supabaseClient = getSupabaseClient();
+      if (userIdForFallback && supabaseClient) {
         try {
           const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
           const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
@@ -517,7 +542,7 @@ export const createCourseCatalogService = ({
             ? `user_id.eq.${userIdForFallback},user_id_uuid.eq.${userIdForFallback}`
             : `user_id.eq.${userIdForFallback}`;
           const { data: assignmentOrgRows } = await runSupabaseReadQueryWithRetry('client.courses.org_scope_fallback', () =>
-            supabase
+            requireSupabaseClient()
               .from('assignments')
               .select(`${assignmentsOrgColumn},organization_id,org_id`)
               .eq('assignment_type', 'course')
@@ -603,7 +628,7 @@ export const createCourseCatalogService = ({
         });
       };
 
-      if (!supabase) {
+      if (!getSupabaseClient()) {
         if (isDemoOrTestMode) {
           pushIds(e2eStore.assignments || []);
           return Array.from(ids);
@@ -640,7 +665,7 @@ export const createCourseCatalogService = ({
 
         for (const candidate of orgColumnCandidates) {
           const buildQuery = () => {
-            let query = supabase.from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
+            let query = requireSupabaseClient().from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
             if (normalizedSessionUserId) {
               if (table === 'assignments' && assignmentsSupportUserIdUuid) {
                 query = query.or(`user_id.eq.${normalizedSessionUserId},user_id_uuid.eq.${normalizedSessionUserId},user_id.is.null`);
@@ -775,7 +800,7 @@ export const createCourseCatalogService = ({
       }
 
       const buildQuery = () => {
-        let courseQuery = supabase
+        let courseQuery = requireSupabaseClient()
           .from('courses')
           .select(courseWithModulesLessonsSelect)
           .eq('status', 'published')
@@ -797,7 +822,12 @@ export const createCourseCatalogService = ({
       };
 
       const { data } = await runSupabaseReadQueryWithRetry('client.courses.published', buildQuery);
-      const list = Array.isArray(data) ? data : [];
+      if (data != null && !Array.isArray(data)) {
+        const shapeError = new Error('Invalid client courses response shape');
+        shapeError.code = 'INVALID_RESPONSE_SHAPE';
+        throw shapeError;
+      }
+      const list = data || [];
       const responseMeta = {
         orgId: assignmentOrgId ?? (effectiveScopedOrgIds.length === 1 ? effectiveScopedOrgIds[0] : null),
         scopedOrgCount: effectiveScopedOrgIds.length,
@@ -965,7 +995,7 @@ export const createCourseCatalogService = ({
     if (!ensureSupabase(res)) return null;
 
     const buildQuery = (column, value) => {
-      let query = supabase
+      let query = requireSupabaseClient()
         .from('courses')
         .select(courseWithModulesLessonsSelect)
         .eq(column, value)

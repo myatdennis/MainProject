@@ -5,6 +5,7 @@ import { createClientSurveyAssignmentsController } from '../controllers/clientSu
 export const createClientSurveyAssignmentsRouter = ({
   logger,
   supabase,
+  getSupabase,
   e2eStore,
   persistE2EStore,
   isDemoOrTestMode,
@@ -24,6 +25,7 @@ export const createClientSurveyAssignmentsRouter = ({
   const router = express.Router({ mergeParams: true });
   const service = createClientSurveyAssignmentsService({
     supabase,
+    getSupabase,
     logger,
     e2eStore,
     persistE2EStore,

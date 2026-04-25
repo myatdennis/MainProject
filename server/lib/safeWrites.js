@@ -1,4 +1,4 @@
-import supabase, { supabaseAdminClient, supabaseAuthClient } from './supabaseClient.js';
+import { getSupabaseAdminClient } from './supabaseClient.js';
 import sql from '../db.js';
 
 // Tables allowed for SQL fallback verification. This prevents SQL injection
@@ -10,14 +10,14 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
   if (!Array.isArray(rows) || rows.length === 0) return { data: [], error: null };
 
   // ALWAYS require admin client for writes on the server. Do not fall back to anon client.
-  if (!supabaseAdminClient) {
+  const client = getSupabaseAdminClient();
+  if (!client) {
     const err = new Error('safeInsert: SUPABASE_SERVICE_ROLE_KEY (admin client) is required for server-side writes');
     // provide a consistent shape for error handling
     err.code = 'missing_service_role_key';
     logger.error('safe_insert_no_admin_client', { requestId, table, message: err.message });
     throw err;
   }
-  const client = supabaseAdminClient;
   try {
     // Invariant checks: ensure required fields for assignments-like tables
     if (String(table).toLowerCase().includes('assign')) {
@@ -157,13 +157,13 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
 }
 
 export async function safeUpsert(table, payload, { logger = console, requestId = null, select = false, verify = false, verifyTimeoutMs = 5000, verifyPredicate = null } = {}) {
-  if (!supabaseAdminClient) {
+  const client = getSupabaseAdminClient();
+  if (!client) {
     const err = new Error('safeUpsert: SUPABASE_SERVICE_ROLE_KEY (admin client) is required for server-side writes');
     err.code = 'missing_service_role_key';
     logger.error('safe_upsert_no_admin_client', { requestId, table, message: err.message });
     throw err;
   }
-  const client = supabaseAdminClient;
   try {
     let res;
     if (select) {
@@ -232,13 +232,13 @@ export async function safeUpsert(table, payload, { logger = console, requestId =
 }
 
 export async function safeDelete(table, predicateBuilder, { logger = console, requestId = null } = {}) {
-  if (!supabaseAdminClient) {
+  const client = getSupabaseAdminClient();
+  if (!client) {
     const err = new Error('safeDelete: SUPABASE_SERVICE_ROLE_KEY (admin client) is required for server-side writes');
     err.code = 'missing_service_role_key';
     logger.error('safe_delete_no_admin_client', { requestId, table, message: err.message });
     throw err;
   }
-  const client = supabaseAdminClient;
   try {
     // predicateBuilder should be a function that accepts a query and returns a query
     const base = client.from(table);

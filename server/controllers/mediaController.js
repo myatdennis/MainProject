@@ -3,17 +3,14 @@
 
 
 import { createMediaService } from '../services/mediaService.js';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdminClient } from '../lib/supabaseClient.js';
 
 // These should match the config in index.js
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 const courseVideosBucket = process.env.SUPABASE_VIDEOS_BUCKET || 'course-videos';
 const documentsBucket = process.env.SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
 
-const supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 const mediaService = createMediaService({
-  getSupabase: () => supabase,
+  getSupabase: () => getSupabaseAdminClient(),
   courseVideosBucket,
   documentsBucket,
 });

@@ -12811,7 +12811,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       const payload = {
         id: course.id ?? undefined,
         slug: course.slug ?? undefined,
-        title: course.title || course.name,
+        title: course.title || 'Untitled Course',
         description: course.description ?? null,
         status: course.status ?? 'draft',
         meta_json: meta,
@@ -13165,6 +13165,7 @@ app.use(
     authenticate,
     logger,
     supabase,
+    getSupabase: () => supabase,
     e2eStore,
     nodeEnv: NODE_ENV,
     isDemoMode,
@@ -13976,6 +13977,7 @@ app.use(
     buildActorFromRequest: (req) => buildActorFromRequest(req),
     logger,
     supabase,
+    getSupabase: () => supabase,
     sendEmail,
     getOrganizationMembershipsOrgColumnName,
     invalidateMembershipCache,
@@ -14195,7 +14197,12 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   try {
     logOrganizationsEvent('base_query_start', { requestId, status: 'start' });
   const result = await runSupabaseReadQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
-    organizations = Array.isArray(result?.data) ? result.data : [];
+    if (result?.data != null && !Array.isArray(result.data)) {
+      const shapeError = new Error('Invalid admin organizations response shape');
+      shapeError.code = 'INVALID_RESPONSE_SHAPE';
+      throw shapeError;
+    }
+    organizations = result?.data || [];
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
     logOrganizationsEvent('base_query_done', {
       requestId,
@@ -17330,6 +17337,7 @@ app.use(
   createClientSurveyAssignmentsRouter({
     logger,
     supabase,
+    getSupabase: () => supabase,
     e2eStore,
     persistE2EStore,
     isDemoOrTestMode,
