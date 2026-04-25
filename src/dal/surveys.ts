@@ -2,8 +2,7 @@ import type { Survey } from '../types/survey';
 import type { CourseAssignment } from '../types/assignment';
 import { request } from './http';
 import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
-import { buildOrgHeaders } from '../utils/orgHeaders';
-import { appendAdminOrgIdQuery } from '../utils/adminOrgScope';
+// Removed unused import
 
 type SurveyApiRecord = any;
 const LEARNER_ASSIGNED_SURVEYS_CACHE_TTL_MS = 10_000;
@@ -203,7 +202,7 @@ export async function getAnalytics(surveyId: string, options: { organizationId?:
 }
 
 export async function listSurveys(): Promise<Survey[]> {
-  const json = await request<SurveyApiRecord[] | { data?: SurveyApiRecord[] }>(appendAdminOrgIdQuery('/api/admin/surveys'));
+  const json = await request<SurveyApiRecord[] | { data?: SurveyApiRecord[] }>('/api/admin/surveys');
   return (unwrapApiData(json) ?? []).map(mapSurveyRecord);
 }
 
@@ -359,9 +358,7 @@ export async function fetchSurveyAssignments(
   options: { organizationId?: string; active?: boolean } = {},
 ): Promise<CourseAssignment[]> {
   const params = new URLSearchParams();
-  if (options.organizationId) {
-    params.set('orgId', options.organizationId);
-  }
+  // Removed orgId usage as backend must enforce org scoping
   if (typeof options.active === 'boolean') {
     params.set('active', options.active ? 'true' : 'false');
   }
@@ -415,9 +412,7 @@ export async function fetchAssignedSurveysForLearner(
   const run = (async () => {
     let lastJson: AssignedResponse | null = null;
     for (let attempt = 0; attempt < MAX_HYDRATION_RETRIES; attempt += 1) {
-      const json = await request<AssignedResponse>('/api/client/surveys/assigned', {
-        headers: buildOrgHeaders(),
-      });
+      const json = await request<AssignedResponse>('/api/client/surveys/assigned');
       lastJson = json;
       const entries = Array.isArray(json.data) ? json.data : [];
       const hydrationPending = Boolean(json.meta?.hydrationPending);
@@ -454,7 +449,7 @@ export async function fetchHdiParticipantReport(
   params: { orgId?: string; participant?: string; limit?: number } = {},
 ) {
   const query = new URLSearchParams();
-  if (params.orgId) query.set('orgId', params.orgId);
+  // frontend must not set orgId; server will scope based on session
   if (params.participant) query.set('participant', params.participant);
   if (typeof params.limit === 'number') query.set('limit', String(params.limit));
   const suffix = query.toString() ? `?${query.toString()}` : '';
@@ -467,7 +462,7 @@ export async function fetchHdiCohortAnalytics(
   params: { orgId?: string; limit?: number } = {},
 ) {
   const query = new URLSearchParams();
-  if (params.orgId) query.set('orgId', params.orgId);
+  // frontend must not set orgId; server will scope based on session
   if (typeof params.limit === 'number') query.set('limit', String(params.limit));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   const json = await request<{ data: any }>(`/api/admin/surveys/${surveyId}/hdi/cohort-analytics${suffix}`);
@@ -480,7 +475,7 @@ export async function fetchHdiPrePostComparison(
 ) {
   const query = new URLSearchParams();
   query.set('participant', params.participant);
-  if (params.orgId) query.set('orgId', params.orgId);
+  // frontend must not set orgId; server will scope based on session
   const json = await request<{ data: any }>(
     `/api/admin/surveys/${surveyId}/hdi/pre-post-comparison?${query.toString()}`,
   );
@@ -491,9 +486,7 @@ export async function fetchLearnerSurveyResults(surveyId: string, assignmentId?:
   const query = new URLSearchParams();
   if (assignmentId) query.set('assignmentId', assignmentId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/results${suffix}`, {
-    headers: buildOrgHeaders(),
-  });
+  const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/results${suffix}`);
   return json.data ?? null;
 }
 
@@ -521,7 +514,6 @@ export async function submitLearnerSurveyResponse(
   const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/submit`, {
     method: 'POST',
     body,
-    headers: buildOrgHeaders(),
   });
   invalidateAssignedSurveysForLearnerCache();
   return json.data ?? null;

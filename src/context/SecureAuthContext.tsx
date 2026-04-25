@@ -57,6 +57,7 @@ import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { setCanonicalSession } from '../lib/canonicalAuth';
 import { isAdminSurface, isLoginPath, resolveLoginPath } from '../utils/surface';
+import { setAuthState } from '../store/authStore';
 
 const logAuthSessionState = () => {};
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
@@ -488,6 +489,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         client: authState.client ? 'ready' : 'idle',
       });
       setUserSession(session);
+      // Mirror the authenticated user into the global auth store for non-React consumers
+      setAuthState({ user: session });
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = resolvedState.activeOrgSource;
       clearMembershipRetryBackoff();
@@ -1817,3 +1820,6 @@ export function useSecureAuth(): AuthContextType {
   }
   return context;
 }
+
+// Directly sync to authStore when session/user changes. Do not read from authStore here.
+// The global store is a mirror only.

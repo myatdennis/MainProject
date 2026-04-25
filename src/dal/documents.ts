@@ -125,7 +125,6 @@ export const listDocuments = async (opts?: {
 }) => {
   const endpoint = resolveDocumentsEndpoint(opts?.forceAdmin);
   const params = new URLSearchParams();
-  if (opts?.organizationId) params.set('orgId', opts.organizationId);
   if (opts?.userId) params.set('userId', opts.userId);
   const url = params.toString() ? `${endpoint}?${params.toString()}` : endpoint;
   const json = await request<{ data: any[] }>(url);

@@ -12,13 +12,8 @@ const buildSessionAuditHeaders = (): Record<string, string> => {
     if (session.id) {
       headers['X-User-Id'] = session.id;
     }
-    if (session.role) {
-      headers['X-User-Role'] = session.role;
-    }
-    const preferredOrgId = session.activeOrgId || session.organizationId;
-    if (preferredOrgId) {
-      headers['X-Org-Id'] = preferredOrgId;
-    }
+    // Do not include role/org override headers from the frontend.
+    // Keep only a stable X-User-Id for lightweight audit/correlation.
   } catch (error) {
     if (import.meta.env?.DEV) {
       console.warn('[sessionAuditHeaders] Failed to read session context for headers', error);

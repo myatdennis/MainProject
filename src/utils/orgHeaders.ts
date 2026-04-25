@@ -30,10 +30,7 @@ export const resolveActiveOrgId = (): string | null => {
 /**
  * Build analytics/org-aware headers when an org id is available.
  */
-export const buildOrgHeaders = (explicitOrgId?: string | null): Record<string, string> | undefined => {
-  const candidate = explicitOrgId?.trim() || resolveActiveOrgId() || '';
-  if (candidate && isUuid(candidate)) {
-    return { 'X-Org-Id': candidate };
-  }
+export const buildOrgHeaders = (): Record<string, string> | undefined => {
+  // No-op: frontend must not set X-Org-Id. Return undefined for compatibility.
   return undefined;
 };

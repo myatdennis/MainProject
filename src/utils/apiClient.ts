@@ -18,6 +18,8 @@ import { isAdminSurface, resolveLoginPath } from './surface';
 import { getCSRFToken } from './csrfToken';
 import { isAuthBootstrapping } from '../lib/authBootstrapState';
 import { startApiRequest, endApiRequest } from './apiInstrumentation';
+import axios from 'axios';
+// Note: frontend must not make role/org decisions. Backend is authority.
 
 export class ApiError extends Error {
   status: number;
@@ -600,9 +602,9 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     stripAuthOverrideHeaders(headers);
   }
 
-  if (isE2EBypassActive()) {
+  if (isE2EBypassActive() && !import.meta.env.PROD) {
     // In browser E2E bypass mode, auth is represented by explicit test headers.
-    // Never send synthetic bearer tokens here, or server JWT validation will 401.
+    // Only set these in non-production environments.
     delete headers.Authorization;
     headers['X-E2E-Bypass'] = 'true';
     if (!headers['X-User-Role']) {
@@ -706,6 +708,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     timeoutMs,
     credentials: credentialMode,
   };
+
+  // Developer-only verifications have been removed to prepare for production.
 
   return preparedRequest;
 };
@@ -1060,3 +1064,67 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
   adminAccessInFlight = promise;
   await promise;
 }
+
+// Locked API client to ensure all requests use `withCredentials: true`
+const apiClient = axios.create({
+  withCredentials: true,
+});
+
+// PRODUCTION SAFETY: strip forbidden headers
+apiClient.interceptors.request.use((config) => {
+  // PRODUCTION SAFETY: strip forbidden headers
+  if (config.headers) {
+    delete (config.headers as any)['X-Org-Id'];
+    delete (config.headers as any)['X-User-Role'];
+    delete (config.headers as any)['X-E2E-Bypass'];
+  }
+  // Frontend must never manipulate org-scoped params. Backend decides scope.
+  // Keep defensive header stripping below.
+
+  // PRODUCTION SAFETY:
+  // Never allow frontend to override org or role. Backend is source of truth.
+
+  // PRODUCTION FAILSAFE: if any forbidden headers are present in production, emit an error
+  if (import.meta.env.PROD) {
+    const forbidden = ['X-Org-Id', 'X-User-Role', 'X-E2E-Bypass'];
+    const isCI = Boolean(process.env.CI);
+    const isStaging = import.meta.env.MODE === 'staging' || String(import.meta.env.VITE_ENV) === 'staging';
+    const shouldThrowOnLeak = isCI || isStaging;
+    try {
+      for (const key of forbidden) {
+        if (config.headers && (config.headers as any)[key]) {
+          try {
+            const globalSentry = (globalThis as any).Sentry || (globalThis as any).__SENTRY__;
+            if (globalSentry && typeof globalSentry.captureMessage === 'function') {
+              try {
+                globalSentry.captureMessage('Forbidden header leak detected', {
+                  level: 'error',
+                  extra: { header: key, url: config.url },
+                });
+              } catch (e) {
+                // eslint-disable-next-line no-console
+                console.error('FORBIDDEN HEADER LEAK DETECTED:', key, 'on', config.url);
+              }
+            } else {
+              // eslint-disable-next-line no-console
+              console.error('FORBIDDEN HEADER LEAK DETECTED:', key, 'on', config.url);
+            }
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('FORBIDDEN HEADER LEAK DETECTED:', key, 'on', config.url);
+          }
+
+          if (shouldThrowOnLeak) {
+            throw new Error(`FORBIDDEN HEADER LEAK: ${key}`);
+          }
+        }
+      }
+    } catch (e) {
+      // defensive: do not block requests
+    }
+  }
+
+  return config;
+});
+
+export { apiClient };

@@ -30,18 +30,13 @@ import {
   loadCachedCatalog,
   saveCachedCatalog,
   clearCatalogCacheEntry,
-  clearAllCatalogCache,
-  clearCatalogCacheForOrg,
+  // clearAllCatalogCache and clearCatalogCacheForOrg are intentionally
+  // not referenced here; tests import them from catalogPersistence directly.
 } from '../utils/catalogPersistence';
 
-// Ensure fetch requests include credentials
-const fetchWithCredentials = async (url, options = {}) => {
-  const response = await fetch(url, {
-    ...options,
-    credentials: 'include',
-  });
-  return response;
-};
+// NOTE: inline fetchWithCredentials helper removed; callers should use apiRequest
+// which normalizes credentials/content-type headers. Keeping the codebase
+// lean avoids accidental direct fetch usage that could bypass auth behavior.
 
 // Run stale key eviction immediately at module load — before any cache reads.
 evictStaleCatalogKeys();
@@ -1774,7 +1769,7 @@ const ensureOrgScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
   orgId: string | null,
-  { skipDiagnostics }: { skipDiagnostics?: boolean } = {},
+  _opts: { skipDiagnostics?: boolean } = {},
 ): Promise<{ [key: string]: Course }> => {
   if (!userId) {
     setLearnerCatalogState({
@@ -1791,7 +1786,7 @@ const ensureOrgScopedCatalog = async (
   try {
     console.info('[HYDRATION TRACE]', { step: 'org_catalog_fetch_start', userId, orgId });
     const published = await retryAsync(
-      async () => fetchPublishedCourses({ orgId: orgId ?? undefined }),
+      async () => fetchPublishedCourses(),
       3,
       150,
     );
@@ -1990,8 +1985,10 @@ const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<str
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     try {
       window.dispatchEvent(new CustomEvent('huddle:catalog-warning', { detail: payload }));
-    } catch (error) {
-      console.warn('[courseStore] catalog warning dispatch failed', error);
+    } catch (err) {
+      // Best effort dispatch — don't throw from diagnostic handler
+      // eslint-disable-next-line no-console
+      console.warn('[courseStore] catalog warning dispatch failed', err);
     }
   }
   const logMethod = event === 'assignment_scope_failed' || event === 'org_selection_required' ? console.error : console.warn;
@@ -2702,7 +2699,8 @@ export const courseStore = {
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
-              dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId });
+              // Backend will scope results by session; frontend should not pass orgId.
+              dbCourses = await fetchPublishedCourses();
             } else {
               console.warn(
                 '[courseStore.init] Missing organizationId; published fallback blocked for learner context.',
@@ -3143,7 +3141,7 @@ export const courseStore = {
     // If caller signals an org switch, flush the stale catalog cache for the old org
     // so the fresh init doesn't serve a 30-minute-old snapshot from a different workspace.
     const incomingOrgId = options?.newOrgId ?? null;
-    const shouldFlushAllCaches = options?.flushCache === true;
+  // const shouldFlushAllCaches = options?.flushCache === true; // unused after refactor
 
     // Clear any in-flight promise so a fresh run can start.
     if (initTimeoutHandle) {

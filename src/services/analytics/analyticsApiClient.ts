@@ -1,7 +1,7 @@
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import type { AnalyticsEvent, LearnerJourney } from '../analyticsService';
 import { getAccessToken, getUserSession } from '../../lib/secureStorage';
-import { buildOrgHeaders, resolveActiveOrgId } from '../../utils/orgHeaders';
+// buildOrgHeaders/resolveActiveOrgId intentionally unused: frontend must not set org headers
 
 const parseEnvAnalyticsFlag = (): boolean => {
   try {
@@ -58,19 +58,16 @@ function schedulePendingOrgFlush() {
   pendingOrgFlushTimer = window.setTimeout(() => {
     pendingOrgFlushTimer = null;
     void flushPendingOrgEvents();
-  }, 2000);
+  }, 2000) as unknown as ReturnType<typeof setTimeout>;
 }
 
-const sendAnalyticsEvent = async (event: AnalyticsEvent, orgId: string | null) => {
-  const headers = buildOrgHeaders(orgId);
+const sendAnalyticsEvent = async (event: AnalyticsEvent) => {
   await apiRequest('/api/analytics/events', {
     method: 'POST',
-    headers,
     credentials: 'include',
     body: {
       id: event.id,
       user_id: event.userId && event.userId !== 'system' ? event.userId : null,
-      org_id: orgId ?? null,
       course_id: event.courseId ?? null,
       lesson_id: event.lessonId ?? null,
       module_id: event.moduleId ?? null,
@@ -84,22 +81,15 @@ const sendAnalyticsEvent = async (event: AnalyticsEvent, orgId: string | null) =
 
 async function flushPendingOrgEvents() {
   if (pendingOrgEvents.size === 0) return;
-  const resolvedOrgId = resolveActiveOrgId();
-  if (!resolvedOrgId) {
-    schedulePendingOrgFlush();
-    return;
-  }
   const pending = Array.from(pendingOrgEvents.values());
   pendingOrgEvents.clear();
   for (const queued of pending) {
     try {
-      await sendAnalyticsEvent(queued, resolvedOrgId);
+      await sendAnalyticsEvent(queued);
     } catch (error) {
       handleAnalyticsFailure(error, { skipped: true }, 'persistEvent', {
         payloadSummary: summarizePayloadKeys(queued.data),
       });
-      enqueuePendingOrgEvent(queued, 'flush_retry');
-      break;
     }
   }
 }
@@ -202,9 +192,7 @@ export const analyticsApiClient = {
   fetchEvents: async () => {
     if (!ensureAnalyticsReady()) return { data: [] };
     try {
-      const headers = buildOrgHeaders();
       return await apiRequest<{ data: any[] }>('/api/analytics/events', {
-        headers,
         credentials: 'include',
       });
     } catch (error) {
@@ -214,9 +202,7 @@ export const analyticsApiClient = {
   fetchJourneys: async () => {
     if (!ensureAnalyticsReady()) return { data: [] };
     try {
-      const headers = buildOrgHeaders();
       return await apiRequest<{ data: any[] }>('/api/analytics/journeys', {
-        headers,
         credentials: 'include',
       });
     } catch (error) {
@@ -226,12 +212,13 @@ export const analyticsApiClient = {
   persistEvent: async (event: AnalyticsEvent) => {
     if (!ensureAnalyticsReady()) return;
     try {
-      const derivedOrgId = event.orgId ?? resolveActiveOrgId();
-      if (!derivedOrgId) {
+      // Do not derive or send orgId from the frontend. Server will infer org from session.
+      // If event lacks orgId, queue locally until server-side processing can attach context.
+      if (!event.orgId) {
         enqueuePendingOrgEvent(event, 'missing_org');
         return;
       }
-      await sendAnalyticsEvent(event, derivedOrgId);
+      await sendAnalyticsEvent(event);
       await flushPendingOrgEvents();
     } catch (error) {
       handleAnalyticsFailure(error, { skipped: true }, 'persistEvent', {
@@ -242,10 +229,8 @@ export const analyticsApiClient = {
   persistJourney: async (journey: LearnerJourney) => {
     if (!ensureAnalyticsReady()) return;
     try {
-      const headers = buildOrgHeaders();
       await apiRequest('/api/analytics/journeys', {
         method: 'POST',
-        headers,
         credentials: 'include',
         body: {
           user_id: journey.userId,
@@ -273,11 +258,9 @@ export const analyticsApiClient = {
   fetchCourseEngagement: async () => {
     if (!ensureAnalyticsReady()) return { data: [] };
     try {
-      const headers = buildOrgHeaders();
       return await apiRequest<{ data: { course_id: string; avg_progress: number; active_users: number }[] }>(
         '/api/analytics/course-engagement',
         {
-          headers,
           credentials: 'include',
         }
       );

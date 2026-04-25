@@ -183,15 +183,10 @@ export const getSurveyById = async (id: string) => {
 };
 
 export const fetchAssignedSurveys = async (
-  orgId: string,
+  // Frontend must not supply orgId; server infers org context from session.
   options: FetchAssignedSurveysOptions = {}
 ): Promise<Survey[]> => {
-  if (!orgId) {
-    throw new Error('orgId is required to fetch assigned surveys');
-  }
-
   const params = new URLSearchParams();
-  params.set('orgId', orgId);
   if (options.status) {
     params.set('status', options.status);
   }
@@ -199,20 +194,20 @@ export const fetchAssignedSurveys = async (
     params.set('userId', options.userId);
   }
 
-  const path = `/api/client/surveys?${params.toString()}`;
+  const path = params.toString() ? `/api/client/surveys?${params.toString()}` : '/api/client/surveys';
   try {
     const json = await apiFetch<{ data: any[] }>(path, { noTransform: true });
     const surveys = (json.data || []).map(mapSurveyRecord);
-    return surveys.filter((survey) => {
-      const assignments = survey.assignedTo;
-      if (assignments?.organizationIds?.length && !assignments.organizationIds.includes(orgId)) {
-        return false;
-      }
-      if (options.userId && assignments?.userIds?.length && !assignments.userIds.includes(options.userId)) {
-        return false;
-      }
-      return true;
-    });
+    if (options.userId) {
+      return surveys.filter((survey) => {
+        const assignments = survey.assignedTo;
+        if (assignments?.userIds?.length && !assignments.userIds.includes(options.userId!)) {
+          return false;
+        }
+        return true;
+      });
+    }
+    return surveys;
   } catch (error) {
     console.error('[surveyService.fetchAssignedSurveys] Failed to load surveys for org:', error);
     return [];

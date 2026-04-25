@@ -1,6 +1,6 @@
 import apiRequest from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { buildOrgHeaders } from '../utils/orgHeaders';
+// buildOrgHeaders intentionally unused to prevent frontend sending org headers
 
 // Types for progress and analytics events
 export type ProgressEvent = {
@@ -131,7 +131,7 @@ export async function flushAnalytics() {
         method: 'POST',
         body: { events: batch },
         timeoutMs: 10000,
-        headers: buildOrgHeaders(),
+  // Do not send X-Org-Id header from frontend; server will scope by session
         credentials: 'include',
       }
     );

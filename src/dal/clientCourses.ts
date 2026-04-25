@@ -5,7 +5,6 @@ import { getUserSession } from '../lib/secureStorage';
 import { mapCourseRecord, type SupabaseCourseRecord } from '../services/courseService';
 
 export interface FetchPublishedCoursesOptions {
-  orgId?: string;
   assignedOnly?: boolean;
 }
 
@@ -35,13 +34,8 @@ const unwrapApiData = <T>(payload: T | { data?: T } | null | undefined): T | nul
 export async function fetchPublishedCourses(
   options: FetchPublishedCoursesOptions = {}
 ): Promise<NormalizedCourse[]> {
-  const { orgId, assignedOnly = false } = options;
+  const { assignedOnly = false } = options;
   const params = new URLSearchParams();
-
-  if (orgId) {
-    params.set('orgId', orgId);
-  }
-
   if (assignedOnly) {
     params.set('assigned', 'true');
   }

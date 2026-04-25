@@ -1543,15 +1543,18 @@ app.use('/api', (req, res, next) => {
 // Only block them when NO Authorization header is present — i.e. when they
 // would be the sole basis for authentication, which is the actual attack vector.
 app.use((req, res, next) => {
-  if (
-    isProduction &&
-    !req.headers['authorization'] &&
-    (req.headers['x-user-role'] || req.headers['x-org-id'] || req.headers['x-organization-id'])
-  ) {
-    return res.status(400).json({
-      error: 'header_override_forbidden',
-      message: 'Request header overrides are not permitted in production',
-    });
+  // In production, disallow client-supplied override headers that would
+  // permit role/org spoofing. If any of these appear, reject the request.
+  if (isProduction) {
+    const forbidden = Boolean(
+      req.headers['x-org-id'] || req.headers['x-user-role'] || req.headers['x-e2e-bypass'],
+    );
+    if (forbidden) {
+      return res.status(400).json({
+        error: 'header_override_forbidden',
+        message: 'Request header overrides are not permitted in production',
+      });
+    }
   }
   next();
 });

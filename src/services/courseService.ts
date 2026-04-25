@@ -36,7 +36,7 @@ import queryClient from '../lib/queryClient';
 import { invalidateCourseQueries } from '../lib/courseQueryKeys';
 import isUuid from '../utils/isUuid';
 import { upsertRequestBodySchema } from '../contracts/courseWriteContract';
-import { appendAdminOrgIdQuery } from '../utils/adminOrgScope';
+// appendAdminOrgIdQuery intentionally unused — frontend mustn't send orgId
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -1116,17 +1116,13 @@ export class CourseService {
     }
   }
 
-  static async getPublishedCourses(options: { orgId?: string; assignedOnly?: boolean } = {}): Promise<NormalizedCourse[]> {
-    const { orgId, assignedOnly = false } = options;
+  static async getPublishedCourses(options: { assignedOnly?: boolean } = {}): Promise<NormalizedCourse[]> {
+    const { assignedOnly = false } = options;
     const params = new URLSearchParams();
 
     if (assignedOnly) {
-      if (!orgId) {
-        console.warn('[CourseService.getPublishedCourses] orgId is required when assignedOnly=true');
-        return [];
-      }
+      // assignedOnly requires server-side scoping. Do not send orgId from frontend.
       params.set('assigned', 'true');
-      params.set('orgId', orgId);
     }
 
     const path = params.toString() ? `/api/client/courses?${params.toString()}` : '/api/client/courses';
@@ -1151,7 +1147,7 @@ export class CourseService {
       //   1. ensureAdminAccessForRequest() still verifies the user has admin portal access
       //      via /api/admin/me before any admin API call proceeds.
       //   2. The server enforces authenticate + requireAdmin on every /api/admin/* route.
-      const endpoint = appendAdminOrgIdQuery('/api/admin/courses?includeStructure=true&includeLessons=true');
+  const endpoint = '/api/admin/courses?includeStructure=true&includeLessons=true';
       const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(
         endpoint,
         { noTransform: true, skipAdminGateCheck: true },

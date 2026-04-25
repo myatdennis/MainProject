@@ -1,5 +1,5 @@
 import apiRequest from '../utils/apiClient';
-import { buildOrgHeaders } from '../utils/orgHeaders';
+// buildOrgHeaders intentionally unused to prevent frontend sending org headers
 
 export type OrgGrowthMetrics = {
   org_id: string;
@@ -62,7 +62,6 @@ export async function fetchGrowthProfile(): Promise<GrowthProfileResponse | null
   try {
     const res = await apiRequest<GrowthProfileResponse>('/api/client/growth', {
       credentials: 'include',
-      headers: buildOrgHeaders(),
     });
     return res ?? null;
   } catch {
@@ -73,7 +72,6 @@ export async function fetchGrowthProfile(): Promise<GrowthProfileResponse | null
 export async function fetchOrgGrowthMetrics(): Promise<OrgGrowthMetrics | null> {
   const res = await apiRequest<OrgGrowthMetrics>('/api/client/growth/org', {
     credentials: 'include',
-    headers: buildOrgHeaders(),
   });
   return res ?? null;
 }

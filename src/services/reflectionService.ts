@@ -1,6 +1,5 @@
 import apiRequest from '../utils/apiClient';
 import type { ReflectionResponseData } from '../utils/reflectionFlow';
-import { buildOrgHeaders } from '../utils/orgHeaders';
 
 export type LearnerReflection = {
   id: string;
@@ -26,10 +25,7 @@ export type AdminReflectionRow = LearnerReflection & {
 export const reflectionService = {
   async fetchLearnerReflection(courseId: string, lessonId: string): Promise<LearnerReflection | null> {
     const params = new URLSearchParams({ courseId });
-    const response = await apiRequest<{ data?: LearnerReflection | null }>(
-      `/api/learner/lessons/${encodeURIComponent(lessonId)}/reflection?${params.toString()}`,
-      { headers: buildOrgHeaders() },
-    );
+    const response = await apiRequest<{ data?: LearnerReflection | null }>(`/api/learner/lessons/${encodeURIComponent(lessonId)}/reflection?${params.toString()}`);
     return response?.data ?? null;
   },
 
@@ -40,34 +36,27 @@ export const reflectionService = {
     responseData?: ReflectionResponseData;
     status?: 'draft' | 'submitted';
   }): Promise<LearnerReflection | null> {
-    const response = await apiRequest<{ data?: LearnerReflection | null }>(
-      `/api/learner/lessons/${encodeURIComponent(payload.lessonId)}/reflection`,
-      {
+    const response = await apiRequest<{ data?: LearnerReflection | null }>(`/api/learner/lessons/${encodeURIComponent(payload.lessonId)}/reflection`, {
       method: 'POST',
       body: payload,
-      headers: buildOrgHeaders(),
     });
     return response?.data ?? null;
   },
 
   async fetchAdminReflections(params: {
-    orgId: string;
     courseId: string;
     lessonId: string;
     limit?: number;
     offset?: number;
   }): Promise<{ rows: AdminReflectionRow[]; total: number }> {
     const query = new URLSearchParams({
-      orgId: params.orgId,
       courseId: params.courseId,
       lessonId: params.lessonId,
       limit: String(params.limit ?? 20),
       offset: String(params.offset ?? 0),
     });
 
-    const response = await apiRequest<{ data?: { rows?: AdminReflectionRow[]; total?: number } }>(
-      `/api/admin/lessons/${encodeURIComponent(params.lessonId)}/reflections?${query.toString()}`,
-    );
+    const response = await apiRequest<{ data?: { rows?: AdminReflectionRow[]; total?: number } }>(`/api/admin/lessons/${encodeURIComponent(params.lessonId)}/reflections?${query.toString()}`);
 
     return {
       rows: response?.data?.rows ?? [],
@@ -76,7 +65,6 @@ export const reflectionService = {
   },
 
   async fetchAdminCourseReflections(params: {
-    orgId: string;
     courseId: string;
     lessonId?: string;
     search?: string;
@@ -84,16 +72,13 @@ export const reflectionService = {
     offset?: number;
   }): Promise<{ rows: AdminReflectionRow[]; total: number }> {
     const query = new URLSearchParams({
-      orgId: params.orgId,
       ...(params.lessonId ? { lessonId: params.lessonId } : {}),
       ...(params.search ? { search: params.search } : {}),
       limit: String(params.limit ?? 50),
       offset: String(params.offset ?? 0),
     });
 
-    const response = await apiRequest<{ data?: { rows?: AdminReflectionRow[]; total?: number } }>(
-      `/api/admin/courses/${encodeURIComponent(params.courseId)}/reflections?${query.toString()}`,
-    );
+    const response = await apiRequest<{ data?: { rows?: AdminReflectionRow[]; total?: number } }>(`/api/admin/courses/${encodeURIComponent(params.courseId)}/reflections?${query.toString()}`);
 
     return {
       rows: response?.data?.rows ?? [],

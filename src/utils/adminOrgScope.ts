@@ -1,17 +1,7 @@
-import { resolveActiveOrgId } from './orgHeaders';
-
-const hasQueryOrgId = (params: URLSearchParams): boolean =>
-  ['orgId', 'organizationId', 'org_id', 'organization_id'].some((key) => {
-    const value = params.get(key);
-    return typeof value === 'string' && value.trim().length > 0;
-  });
-
 export const resolveExplicitAdminOrgId = (preferredOrgId?: string | null): string | null => {
+  // Frontend should not infer org context. Only return the explicit preferredOrgId if provided.
   const explicit = typeof preferredOrgId === 'string' ? preferredOrgId.trim() : '';
-  if (explicit) {
-    return explicit;
-  }
-  return resolveActiveOrgId();
+  return explicit || null;
 };
 
 export const requireExplicitAdminOrgId = (surface: string, preferredOrgId?: string | null): string => {
@@ -25,20 +15,7 @@ export const requireExplicitAdminOrgId = (surface: string, preferredOrgId?: stri
   throw error;
 };
 
-export const appendAdminOrgIdQuery = (path: string, preferredOrgId?: string | null): string => {
-  const orgId = resolveExplicitAdminOrgId(preferredOrgId);
-  if (!orgId) {
-    return path;
-  }
-
-  const [pathname, hash = ''] = path.split('#', 2);
-  const [basePath, search = ''] = pathname.split('?', 2);
-  const params = new URLSearchParams(search);
-  if (!hasQueryOrgId(params)) {
-    params.set('orgId', orgId);
-  }
-
-  const nextQuery = params.toString();
-  const nextPath = nextQuery ? `${basePath}?${nextQuery}` : basePath;
-  return hash ? `${nextPath}#${hash}` : nextPath;
+export const appendAdminOrgIdQuery = (path: string): string => {
+  // No-op for compatibility: frontend should not append orgId query params.
+  return path;
 };

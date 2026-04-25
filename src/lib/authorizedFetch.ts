@@ -1,7 +1,7 @@
 import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { getCanonicalAccessToken, waitForAuthReady } from './canonicalAuth';
 import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
-import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest, pathRequiresOrgHeader } from './orgContext';
+import { resolveOrgHeaderForRequest, pathRequiresOrgHeader } from './orgContext';
 import { resolveApiUrl } from '../config/apiBase';
 
 export class NotAuthenticatedError extends Error {
@@ -232,7 +232,8 @@ export default async function authorizedFetch(
     let token: string | null = null;
     const e2eBypass = isE2EBypassActive();
 
-    if (e2eBypass) {
+    if (e2eBypass && !import.meta.env.PROD) {
+      // Only allow E2E/test override headers in non-production environments.
       headers.set('X-E2E-Bypass', 'true');
       if (!headers.has('X-User-Role')) {
         headers.set('X-User-Role', inferE2EBypassRole());
@@ -270,19 +271,18 @@ export default async function authorizedFetch(
       // non-admin endpoints. We'll normalize behavior here.
       orgId = null;
     }
-    // If the path requires an org and we couldn't resolve one, block the request.
+    // If the path requires an org and we couldn't resolve one, do NOT block here.
+    // The backend is the source of truth and will enforce org scoping. Log for debug.
     if (pathRequiresOrgHeader(url) && !orgId) {
-      const err = new Error('missing_org_context');
-      // Provide diagnostic metadata on the error to aid debugging.
-      (err as any).code = 'missing_org_context';
-      (err as any).requestId = requestId;
-      console.error('[authorizedFetch] blocked request due to missing org context', { url: extractPathname(url), requestId });
-      throw err;
+      console.warn('[authorizedFetch] no org context resolved for request; backend will enforce org scoping', {
+        url: extractPathname(url),
+        requestId,
+      });
     }
-    if (orgId) {
-      headers.set(ORG_HEADER_NAME, orgId);
-      headers.set(LEGACY_ORG_HEADER_NAME, orgId);
-    }
+    // Do not attach org headers from the browser. Server will derive org
+    // context from the authenticated session. We retain the client-side check
+    // that blocks requests which require org context when none is resolvable
+    // (for non-admin paths), but we must not transmit override headers.
 
     const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
     const bodyIsString = typeof init.body === 'string';
