@@ -58,14 +58,17 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 (async () => {
   try {
     const supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const { error } = await supabase.auth.getUser();
+    const { error } = await supabase
+      .from('organizations')
+      .select('id')
+      .limit(1);
     if (error) {
-      throw new Error(`Supabase connection failed: ${error.message}`);
+      console.warn('[startup] Supabase connection warning:', error.message);
+      return;
     }
     console.log('[startup] Supabase connection successful');
   } catch (err) {
-    console.error('[startup] Supabase connection error:', err.message);
-    process.exit(1); // Exit process on failure
+    console.warn('[startup] Supabase connection warning:', err?.message || err);
   }
 })();
 

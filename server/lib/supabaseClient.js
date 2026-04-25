@@ -86,14 +86,20 @@ export function isSupabaseAuthConfigured() {
 
 (async () => {
   try {
-    const client = getSupabaseAuthClient();
+    const client = getSupabaseAdminClient();
     if (!client) throw new Error("Supabase client is not configured.");
 
-    const { data, error } = await client.auth.getSession();
-    if (error) throw error;
+    const { error } = await client
+      .from('organizations')
+      .select('id')
+      .limit(1);
+    if (error) {
+      console.warn("⚠️ Supabase connection warning:", error.message);
+      return;
+    }
 
     console.log("✅ Supabase connected");
   } catch (err) {
-    console.error("❌ Supabase connection failed:", err.message);
+    console.warn("⚠️ Supabase connection warning:", err?.message || err);
   }
 })();
