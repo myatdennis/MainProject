@@ -1,18 +1,12 @@
 // src/config/apiBase.ts
-type MetaEnv = Record<string, string | undefined>;
+// Single canonical API base delegating to src/config/api.ts
+// This replaces older, competing logic and ensures all frontend code uses
+// the same origin for API calls.
+
+import { API_BASE as CANONICAL_API_BASE } from './api';
 
 const API_BASE_OVERRIDE_KEY = '__APP_API_BASE_OVERRIDE__';
 let runtimeApiBaseOverride: string | undefined;
-
-const getRuntimeApiBaseOverride = (): string | undefined => {
-  if (typeof globalThis !== 'undefined' && Object.prototype.hasOwnProperty.call(globalThis, API_BASE_OVERRIDE_KEY)) {
-    const value = (globalThis as Record<string, any>)[API_BASE_OVERRIDE_KEY];
-    if (typeof value === 'string') {
-      return value;
-    }
-  }
-  return runtimeApiBaseOverride;
-};
 
 export const __setApiBaseUrlOverride = (value?: string) => {
   const normalized = typeof value === 'string' ? value.trim() : undefined;
@@ -26,370 +20,79 @@ export const __setApiBaseUrlOverride = (value?: string) => {
   runtimeApiBaseOverride = normalized;
 };
 
-const getMetaEnv = (): MetaEnv => {
-  const env = (import.meta as any)?.env;
-  if (env && typeof env === 'object') {
-    return env as MetaEnv;
+const getRuntimeApiBaseOverride = (): string | undefined => {
+  if (typeof globalThis !== 'undefined' && Object.prototype.hasOwnProperty.call(globalThis, API_BASE_OVERRIDE_KEY)) {
+    const v = (globalThis as Record<string, any>)[API_BASE_OVERRIDE_KEY];
+    if (typeof v === 'string') return v;
   }
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env as MetaEnv;
-  }
-  return {} as MetaEnv;
-};
-
-const DEFAULT_DEV_API_BASE = '/api';
-const DEFAULT_PROD_API_BASE = '/api';
-const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
-const DEFAULT_PROD_API_ORIGIN = 'https://api.the-huddle.co';
-
-const detectDevMode = () => {
-  if (typeof import.meta !== 'undefined' && (import.meta as any)?.env) {
-    return Boolean((import.meta as any).env.DEV);
-  }
-  if (typeof process !== 'undefined' && process.env?.NODE_ENV) {
-    return process.env.NODE_ENV !== 'production';
-  }
-  return true;
-};
-
-const devMode = detectDevMode();
-// If we want to force all API requests to the backend origin, define a simple
-// runtime API origin mapping. This ensures calls to resolveApiUrl('/api/...')
-// will produce absolute URLs pointing to the backend host so cookies and
-// Authorization headers are preserved when calling cross-origin APIs.
-const FORCED_API_ORIGIN = devMode ? 'http://localhost:3000' : DEFAULT_PROD_API_ORIGIN;
-const isTestEnv = (() => {
-  if (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITEST) {
-    return true;
-  }
-  if (typeof process !== 'undefined' && process.env?.VITEST) {
-    return true;
-  }
-  return false;
-})();
-
-const logMissingEnv = (() => {
-  const seen = new Set<string>();
-  return (envName: string, details?: string) => {
-    if (seen.has(envName)) return;
-    seen.add(envName);
-    const suffix = details ? ` ${details}` : '';
-    console.error(`[apiBase] Missing ${envName}.${suffix}`);
-  };
-})();
-
-const isSupabaseFunctionsApiBase = (value: string): boolean => {
-  if (!value) return false;
-  try {
-    const parsed = new URL(value);
-    const host = String(parsed.hostname || '').toLowerCase();
-    const path = String(parsed.pathname || '').toLowerCase();
-    return host.endsWith('.supabase.co') && path.startsWith('/functions/v1');
-  } catch {
-    return /\.supabase\.co\/functions\/v1/i.test(value);
-  }
-};
-
-const getRawApiBase = (): string => {
-  const override = getRuntimeApiBaseOverride();
-  if (typeof override === 'string') {
-    const trimmedOverride = override.trim();
-    if (trimmedOverride && isSupabaseFunctionsApiBase(trimmedOverride)) {
-      const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
-      console.error(
-        `[apiBase] Refusing Supabase Functions URL as API base (${trimmedOverride}). Falling back to ${fallback}.`,
-      );
-      return fallback;
-    }
-    return override;
-  }
-  const value = getMetaEnv().VITE_API_BASE_URL;
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  if (trimmed) {
-    if (!isTestEnv && typeof window !== 'undefined' && /^https?:\/\//i.test(trimmed)) {
-      const localHostPattern = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/i;
-      const currentHost = String(window.location?.hostname || '').trim().toLowerCase();
-      const isLocalRuntime = localHostPattern.test(currentHost);
-      if (isLocalRuntime) {
-        try {
-          const configuredHost = new URL(trimmed).hostname.toLowerCase();
-            // Only warn once to avoid log spam during busy E2E runs
-            if (!localHostPattern.test(configuredHost)) {
-              if (!(getRawApiBase as any)._localRuntimeRemoteHostWarningLogged) {
-                (getRawApiBase as any)._localRuntimeRemoteHostWarningLogged = true;
-                console.warn(
-                  `[apiBase] Local runtime detected (${currentHost}) but VITE_API_BASE_URL points to remote host (${configuredHost}). Falling back to /api.`,
-                );
-              }
-              return DEFAULT_DEV_API_BASE;
-            }
-        } catch {
-          // ignore parse failures and continue with normal handling
-        }
-      }
-    }
-    if (isSupabaseFunctionsApiBase(trimmed)) {
-      const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
-      console.error(
-        `[apiBase] Invalid VITE_API_BASE_URL points to Supabase Functions (${trimmed}). Falling back to ${fallback}.`,
-      );
-      return fallback;
-    }
-    return trimmed;
-  }
-  const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
-  const context = devMode ? 'development' : 'production';
-  const detail = devMode
-    ? 'Falling back to /api proxy because no development value is configured.'
-    : 'Falling back to same-origin /api to avoid accidental production cross-domain requests.';
-  logMissingEnv('VITE_API_BASE_URL', detail);
-  console.warn(`[apiBase] Missing VITE_API_BASE_URL in ${context}. Defaulting to ${fallback}.`);
-  return fallback;
-};
-
-const getRawWsUrl = (): string => {
-  const value = getMetaEnv().VITE_WS_URL;
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  if (!trimmed) {
-    if (devMode) {
-      logMissingEnv('VITE_WS_URL', 'Realtime is disabled unless VITE_WS_URL is defined. Falling back only in dev.');
-    } else {
-      logMissingEnv('VITE_WS_URL', 'Realtime will be disabled until this is set (e.g., wss://api.the-huddle.co/ws).');
-    }
-  }
-  return trimmed;
-};
-
-const getRawApiPath = (): string | undefined => {
-  const value = getMetaEnv().VITE_API_PATH_PREFIX;
-  return typeof value === 'string' ? value.trim() : undefined;
-};
-
-const isBrowser = typeof window !== 'undefined';
-
-const readNodeEnv = (key: string) => (typeof process !== 'undefined' ? process.env?.[key]?.trim() : undefined);
-const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
-const ensureLeadingSlash = (value: string) => (value.startsWith('/') ? value : `/${value}`);
-
-const normalizePathPrefix = (value?: string) => {
-  if (!value || value === '/') return '';
-  return ensureLeadingSlash(value.replace(/^\/+/, '').replace(/\/+$/, ''));
-};
-
-const extractEnvBase = (rawBase: string) => {
-  if (!rawBase) return { origin: '', pathPrefix: '' };
-
-  const trimmed = rawBase.trim();
-  const isAbsolute = /^https?:\/\//i.test(trimmed);
-  const isRelativePath = !isAbsolute && trimmed.startsWith('/') && !trimmed.startsWith('//');
-
-  if (isAbsolute) {
-    try {
-      const parsed = new URL(trimmed);
-      const origin = `${parsed.protocol}//${parsed.host}`;
-      const pathPrefix = parsed.pathname && parsed.pathname !== '/' ? normalizePathPrefix(parsed.pathname) : '';
-      return { origin: trimTrailingSlash(origin), pathPrefix };
-    } catch {
-      return { origin: trimTrailingSlash(trimmed), pathPrefix: '' };
-    }
-  }
-
-  if (isRelativePath) {
-    return { origin: '', pathPrefix: normalizePathPrefix(trimmed) };
-  }
-
-  return { origin: trimTrailingSlash(trimmed), pathPrefix: '' };
-};
-
-const getEnvBase = () => extractEnvBase(getRawApiBase());
-const getApiPathPrefix = () => {
-  const envBase = getEnvBase();
-  return envBase.pathPrefix || normalizePathPrefix(getRawApiPath() || '/api');
-};
-
-const getBrowserOrigin = () => {
-  if (!isBrowser || isTestEnv) return '';
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return trimTrailingSlash(window.location.origin);
-  }
-  return '';
-};
-
-const getNodeOrigin = () => {
-  const fromEnv = readNodeEnv('API_ORIGIN') || readNodeEnv('API_BASE_URL');
-  if (fromEnv) {
-    // Protect against accidentally pointing the API origin at Supabase Functions
-    // (e.g. https://<project>.supabase.co/functions/v1) which would cause
-    // client requests like /api/auth/login to resolve to
-    // https://<project>.supabase.co/functions/v1/api/auth/login and trigger
-    // failing CORS preflights. Treat such values as invalid and fall back.
-    try {
-      if (isSupabaseFunctionsApiBase(fromEnv)) {
-        console.error(
-          `[apiBase] Ignoring node env API origin pointing to Supabase Functions (${fromEnv}). Falling back to ${DEFAULT_NODE_ORIGIN}`,
-        );
-        return trimTrailingSlash(DEFAULT_NODE_ORIGIN);
-      }
-    } catch (e) {
-      // If validation fails, continue and return the raw configured value below.
-    }
-    return trimTrailingSlash(fromEnv);
-  }
-
-  return trimTrailingSlash(DEFAULT_NODE_ORIGIN);
-};
-
-const normalizeBaseOutput = (value?: string | null) => {
-  if (!value) return '';
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimTrailingSlash(trimmed);
-  }
-
-  const relative = ensureLeadingSlash(trimTrailingSlash(trimmed));
-  if (relative === '/') {
-    return '';
-  }
-  return relative;
-};
-
-export function getApiOrigin(): string {
-  // Force API origin to a single canonical backend host so we never resolve
-  // client requests to mixed or incorrect origins. This implements the
-  // project's requirement that all API traffic go to the backend server.
-  return FORCED_API_ORIGIN;
-}
-
-export function getApiBaseUrl(): string {
-  const envBase = getEnvBase();
-  const pathPrefix = getApiPathPrefix();
-
-  if (envBase.origin) {
-    const combined = normalizeBaseOutput(`${envBase.origin}${pathPrefix || ''}`);
-    if (combined) {
-      return combined;
-    }
-  }
-
-  if (!envBase.origin && envBase.pathPrefix && !devMode) {
-    const fallback = normalizeBaseOutput(envBase.pathPrefix);
-    if (fallback) {
-      return fallback;
-    }
-  }
-
-  if (devMode && isBrowser && !isTestEnv) {
-    return normalizeBaseOutput(pathPrefix) || DEFAULT_DEV_API_BASE;
-  }
-
-  const origin = getApiOrigin();
-  const effectiveOrigin = origin || (!devMode ? DEFAULT_PROD_API_ORIGIN : '');
-  const combined = normalizeBaseOutput(`${effectiveOrigin}${pathPrefix || ''}`);
-  if (combined) {
-    return combined;
-  }
-
-  const envFallback = normalizeBaseOutput(getRawApiBase());
-  if (envFallback) {
-    return envFallback;
-  }
-
-  return DEFAULT_DEV_API_BASE;
-}
-
-// Canonical API base (origin + path prefix). Exported for modules that prefer
-// a single constant to compose absolute API URLs with.
-export const API_BASE = getApiBaseUrl();
-
-const splitPathAndSuffix = (input: string) => {
-  if (!input) return { path: '', suffix: '' };
-  const match = input.match(/^[^?#]*/)?.[0] ?? '';
-  const suffix = input.slice(match.length);
-  return { path: match, suffix };
-};
-
-const normalizeResourcePath = (input: string) => {
-  const { path, suffix } = splitPathAndSuffix(input);
-  const trimmed = path.replace(/^\/+/, '').replace(/\/+$/, '');
-  const normalizedPath = trimmed ? `/${trimmed}` : '';
-  return { normalizedPath, suffix };
-};
-
-const shouldWarnDoubleApi = (() => {
-  if (typeof import.meta !== 'undefined' && (import.meta as any)?.env) {
-    return Boolean((import.meta as any).env.DEV);
-  }
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env.NODE_ENV !== 'production';
-  }
-  return false;
-})();
-const logDoubleApi = (url: string) => {
-  const message = `[apiBase] Detected double /api prefix: ${url}`;
-  if (shouldWarnDoubleApi) {
-    console.warn(message);
-  } else {
-    console.error(message);
-  }
-};
-
-export const assertNoDoubleApi = (url: string) => {
-  if (/\/api\/api(\/|$)/i.test(url)) {
-    logDoubleApi(url);
-    if (shouldWarnDoubleApi) {
-      throw new Error(`[apiBase] Refusing to issue request with double /api prefix: ${url}`);
-    }
-  }
+  return runtimeApiBaseOverride;
 };
 
 const stripSlashes = (value: string) => value.replace(/^\/+/, '').replace(/\/+$/, '');
 
-const buildFinalPath = (normalizedPath: string): string => {
-  const apiPathPrefix = getApiPathPrefix();
+const normalizeResourcePath = (input: string) => {
+  if (!input) return { normalizedPath: '', suffix: '' };
+  const match = input.match(/^[^?#]*/)?.[0] ?? '';
+  const suffix = input.slice(match.length);
+  const trimmed = match.replace(/^\/+/, '').replace(/\/+$/, '');
+  return { normalizedPath: trimmed ? `/${trimmed}` : '', suffix };
+};
 
-  if (!apiPathPrefix || apiPathPrefix === '/') {
-    return normalizedPath || apiPathPrefix || '';
+const getEffectiveApiBase = (): string => {
+  return (getRuntimeApiBaseOverride() || CANONICAL_API_BASE).trim();
+};
+
+export function getApiBaseUrl(): string {
+  return getEffectiveApiBase();
+}
+
+export function getApiOrigin(): string {
+  const base = getEffectiveApiBase();
+  try {
+    if (/^https?:\/\//i.test(base)) {
+      const parsed = new URL(base);
+      return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '');
+    }
+  } catch {
+    // fallthrough
   }
+  return '';
+}
 
-  const cleanedPrefix = stripSlashes(apiPathPrefix);
-  if (!normalizedPath) {
-    return cleanedPrefix ? `/${cleanedPrefix}` : '';
+export const assertNoDoubleApi = (url: string) => {
+  if (/\/api\/api(\/|$)/i.test(url)) {
+    if (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) {
+      throw new Error(`[apiBase] Refusing to issue request with double /api prefix: ${url}`);
+    }
+    console.error(`[apiBase] Detected double /api prefix: ${url}`);
   }
-
-  const cleanedPath = stripSlashes(normalizedPath);
-  if (!cleanedPath) {
-    return cleanedPrefix ? `/${cleanedPrefix}` : '';
-  }
-
-  const lowerPrefix = cleanedPrefix.toLowerCase();
-  const lowerPath = cleanedPath.toLowerCase();
-
-  if (lowerPath === lowerPrefix || lowerPath.startsWith(`${lowerPrefix}/`)) {
-    return `/${cleanedPath}`;
-  }
-
-  return `/${cleanedPrefix}/${cleanedPath}`;
 };
 
 export function buildApiUrl(path: string): string {
+  if (!path) return getApiBaseUrl();
   if (/^https?:\/\//i.test(path)) {
     assertNoDoubleApi(path);
     return path;
   }
-
+  const base = getApiBaseUrl();
   const { normalizedPath, suffix } = normalizeResourcePath(path || '');
-  const origin = getApiOrigin();
-  const finalPath = buildFinalPath(normalizedPath);
-  const url = `${origin}${finalPath}${suffix}`;
-  assertNoDoubleApi(url);
-  return url;
+  try {
+    const parsedBase = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined);
+    const origin = `${parsedBase.protocol}//${parsedBase.host}`;
+    const basePath = parsedBase.pathname && parsedBase.pathname !== '/' ? `/${stripSlashes(parsedBase.pathname)}` : '';
+    const finalPath = normalizedPath || basePath || '';
+    const url = `${origin}${finalPath}${suffix}`;
+    assertNoDoubleApi(url);
+    return url;
+  } catch {
+    const cleanedBase = base.replace(/\/+$/, '');
+    const final = `${cleanedBase}${normalizedPath}${suffix}`;
+    assertNoDoubleApi(final);
+    return final;
+  }
 }
 
 export const resolveApiUrl = buildApiUrl;
-
-const DEFAULT_WS_PATH = '/ws';
 
 const toWsOrigin = (httpOrigin: string) => {
   if (httpOrigin.startsWith('https://')) return `wss://${httpOrigin.slice('https://'.length)}`;
@@ -397,33 +100,15 @@ const toWsOrigin = (httpOrigin: string) => {
   return httpOrigin;
 };
 
-const resolveWsPath = (path?: string) => {
-  const candidate = path && path.trim().length > 0 ? path : DEFAULT_WS_PATH;
-  const { normalizedPath, suffix } = normalizeResourcePath(candidate);
-  const wsPath = normalizedPath || DEFAULT_WS_PATH;
-  return { wsPath, suffix };
-};
-
-export function resolveWsUrl(path = DEFAULT_WS_PATH): string {
-  const rawWsUrl = getRawWsUrl();
-  if (rawWsUrl) {
-    return rawWsUrl;
+export function resolveWsUrl(path = '/ws'): string {
+  const base = getApiBaseUrl();
+  try {
+    const parsedBase = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined);
+    const wsOrigin = toWsOrigin(`${parsedBase.protocol}//${parsedBase.host}`);
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    return `${wsOrigin}${normalized}`;
+  } catch {
+    return `${toWsOrigin(getApiOrigin())}${path}`;
   }
-
-  if (!isBrowser) {
-    const nodeWs = readNodeEnv('WS_URL');
-    if (nodeWs) {
-      return nodeWs;
-    }
-  }
-
-  if (/^wss?:\/\//i.test(path || '')) {
-    return path as string;
-  }
-
-  const envBase = getEnvBase();
-  const apiOrigin = envBase.origin || getApiOrigin();
-  const wsOrigin = toWsOrigin(apiOrigin);
-  const { wsPath, suffix } = resolveWsPath(path);
-  return `${wsOrigin}${wsPath}${suffix}`;
 }
+

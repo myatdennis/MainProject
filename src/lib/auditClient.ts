@@ -1,4 +1,5 @@
 import authorizedFetch from './authorizedFetch';
+import { API_BASE } from '../config/api';
 
 export type AuditEvent = {
   action: string;
@@ -83,7 +84,7 @@ export const flushAuditQueue = async (): Promise<void> => {
     while (queue.length > 0) {
       const event = queue[0];
       try {
-        await authorizedFetch('/api/audit-log', {
+        await authorizedFetch(`${API_BASE}/api/audit-log`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(event),

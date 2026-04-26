@@ -4,6 +4,7 @@ import { getSupabase } from './supabaseClient';
 import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
 import { resolveOrgHeaderForRequest, pathRequiresOrgHeader } from './orgContext';
 import { resolveApiUrl } from '../config/apiBase';
+import { API_BASE } from '../config/api';
 import { getNativeFetch } from './nativeFetch';
 
 export class NotAuthenticatedError extends Error {
@@ -43,6 +44,17 @@ const normalizeUrl = (target: string): string => {
       // Fall through to the raw target if URL parsing fails.
     }
     return target;
+  }
+  // If target is a relative API path, prefer the explicit API_BASE so the
+  // frontend always calls the canonical backend origin (development vs prod).
+  try {
+    if (target.startsWith('/api')) {
+      // Ensure no double slash when joining
+      const suffix = target.replace(/^\/+/, '');
+      return `${API_BASE.replace(/\/$/, '')}/${suffix}`;
+    }
+  } catch {
+    // fall back to existing behavior
   }
   return resolveApiUrl(target);
 };
