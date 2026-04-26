@@ -204,7 +204,7 @@ const AdminUsers = () => {
     const clientRequestId = `admin-users-${nanoid(8)}`;
     try {
       const normalizedFilterOrg = filterOrg !== 'all' ? filterOrg : null;
-      const queryOrgId = normalizedFilterOrg ?? activeOrgId ?? null;
+      const queryOrgId = normalizedFilterOrg ?? (!isPlatformAdmin ? activeOrgId : null);
 
       if (!isPlatformAdmin && !queryOrgId) {
         throw new Error('Organization context is required for non-platform administrators.');

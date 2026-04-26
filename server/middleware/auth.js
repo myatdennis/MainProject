@@ -4,7 +4,7 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import supabase, { supabaseAuthClient, supabaseEnv } from '../lib/supabaseClient.js';
+import supabase, { supabaseAuthClient, supabaseEnv, createSupabaseClientForToken, setRequestSupabaseClient } from '../lib/supabaseClient.js';
 import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { getActiveOrgFromRequest, getAccessTokenFromRequest } from '../utils/authCookies.js';
@@ -944,6 +944,14 @@ export const validateAccessToken = (req, res, next) => {
 export async function buildAuthContext(req, { optional = false } = {}) {
   const token = resolveAccessTokenFromRequest(req);
   const preValidatedUser = req.supabaseJwtUser || null;
+  // Attach a per-request supabase client that forwards the user's JWT to Postgres
+  // so RLS policies using request.jwt.claims can evaluate correctly.
+  try {
+    const perRequestClient = createSupabaseClientForToken(token);
+    if (perRequestClient) setRequestSupabaseClient(perRequestClient);
+  } catch (err) {
+    authLog('warn', 'bind_request_supabase_client_failed', { err: err?.message || err });
+  }
   if (AUTH_DEBUG) {
     authLog('info', 'buildAuthContext_start', {
       path: req.originalUrl || req.url,

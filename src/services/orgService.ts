@@ -198,7 +198,6 @@ export type OrgProfileDetails = {
 
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { resolveApiUrl } from '../config/apiBase';
-import { requireExplicitAdminOrgId } from '../utils/adminOrgScope';
 
 // Reduce TTL to make admin lists refresh quickly when backend state changes.
 // Short TTL avoids long stale windows while still deduping rapid repeated requests.
@@ -506,16 +505,15 @@ export const listOrgPage = async (
   }
 
   const run = (async () => {
-  const explicitOrgId = requireExplicitAdminOrgId('admin organizations', options?.preferredOrgId);
-  const query = buildOrgQuery(params);
-  // Frontend must not append orgId. Call admin endpoint; backend will scope based on session/claims.
-  const path = `/api/admin/organizations${query}`;
+    const query = buildOrgQuery(params);
+    // Frontend must not append orgId. Call admin endpoint; backend will scope based on session/claims.
+    const path = `/api/admin/organizations${query}`;
   const clientTraceId = `admin-orgs-${Date.now().toString(36)}`;
   if (import.meta.env.DEV) {
     console.info('[orgService] request_dispatch', {
       clientTraceId,
       route: '/api/admin/organizations',
-      requestedOrgId: explicitOrgId,
+      requestedOrgId: options?.preferredOrgId ?? null,
       url: resolveApiUrl(path),
     });
   }
@@ -535,7 +533,7 @@ export const listOrgPage = async (
     console.info('[orgService] response_received', {
       clientTraceId,
       route: '/api/admin/organizations',
-      requestedOrgId: explicitOrgId,
+      requestedOrgId: options?.preferredOrgId ?? null,
       rowCount: response.data.length,
       totalCount: response.pagination.total,
       envelopeKeys: Object.keys(json ?? {}),

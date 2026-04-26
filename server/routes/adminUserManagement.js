@@ -103,8 +103,8 @@ export const createAdminUserManagementRouter = (deps) => {
     if (!context) return;
     const isPlatformAdmin = Boolean(context.isPlatformAdmin);
     const orgId = pickOrgId(
-      req.query.orgId,
-      req.query.organizationId,
+      req.query?.orgId,
+      req.query?.organizationId,
       isPlatformAdmin ? null : context.requestedOrgId,
       isPlatformAdmin ? null : context.activeOrganizationId,
     );

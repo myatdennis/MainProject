@@ -11,9 +11,6 @@ CREATE POLICY "platform_admin_full_access"
   FOR SELECT TO authenticated
   USING (
     (
-      (select auth.jwt() -> 'app_metadata' ->> 'platform_role')
-    ) = 'platform_admin'
-    OR (
       current_setting('request.jwt.claims', true)::json -> 'app_metadata' ->> 'platform_role'
     ) = 'platform_admin'
   );

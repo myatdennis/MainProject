@@ -8,8 +8,7 @@ CREATE POLICY "platform_admin_full_access_orgs"
   ON public.organizations
   FOR SELECT TO authenticated
   USING (
-    (select auth.jwt() -> 'app_metadata' ->> 'platform_role') = 'platform_admin'
-    OR current_setting('request.jwt.claims', true)::json -> 'app_metadata' ->> 'platform_role' = 'platform_admin'
+    current_setting('request.jwt.claims', true)::json -> 'app_metadata' ->> 'platform_role' = 'platform_admin'
   );
 
 -- Keep existing org-scoped policies intact so organization members remain scoped.

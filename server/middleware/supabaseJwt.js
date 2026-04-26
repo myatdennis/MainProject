@@ -139,7 +139,8 @@ const ensureValidPayload = (payload) => {
   return payload;
 };
 
-const hasRequestAuthToken = (req) => Boolean(extractTokenFromHeader(req.headers?.authorization));
+const hasRequestAuthToken = (req) =>
+  Boolean(extractTokenFromHeader(req.headers?.authorization) || getAccessTokenFromRequest(req));
 
 const normalizePathForBypass = (path) => {
   if (!path || typeof path !== 'string') return '';

@@ -323,7 +323,7 @@ const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
 const ADMIN_API_PATTERN = /^\/api\/admin\//i;
 const LEARNER_OR_CLIENT_API_PATTERN = /^\/api\/(client|learner)(\/|$)/i;
 const ORG_HEADER_CANDIDATES = ['x-org-id', 'x-organization-id'];
-const AUTH_OVERRIDE_HEADER_CANDIDATES = ['x-user-role', 'x-user-id', 'x-org-id', 'x-organization-id'];
+const AUTH_OVERRIDE_HEADER_CANDIDATES = ['x-user-role', 'x-user-id', 'x-org-id', 'x-organization-id', 'x-e2e-bypass'];
 
 const API_ORIGIN_FOR_CREDENTIALS = (() => {
   try {
@@ -407,6 +407,11 @@ const stripAuthOverrideHeaders = (headers: Record<string, string>) => {
       delete headers[key];
     }
   });
+};
+
+const stripProductionOverrideHeaders = (headers: Record<string, string>) => {
+  if (!import.meta.env.PROD) return;
+  stripAuthOverrideHeaders(headers);
 };
 
 const redactHeaders = (headers?: Headers | Record<string, string> | null): Record<string, string> => {
@@ -589,6 +594,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
+  stripProductionOverrideHeaders(headers);
 
   // Learner/client routes should not inherit org headers from stale browser state.
   // If an org header is required for a specific request, callers can pass it explicitly.

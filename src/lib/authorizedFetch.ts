@@ -80,6 +80,14 @@ const isE2EBypassActive = (): boolean => {
   return Boolean((window as any).__E2E_BYPASS);
 };
 
+const stripProductionOverrideHeaders = (headers: Headers): void => {
+  if (!import.meta.env.PROD) return;
+  headers.delete('X-Org-Id');
+  headers.delete('X-Organization-Id');
+  headers.delete('X-User-Role');
+  headers.delete('X-E2E-Bypass');
+};
+
 const inferE2EBypassRole = (): 'admin' | 'learner' => {
   if (typeof window === 'undefined') return 'learner';
   const pathname = String(window.location?.pathname || '').toLowerCase();
@@ -231,8 +239,9 @@ export default async function authorizedFetch(
     console.info('[request_start]', { requestId, url: extractPathname(url), attempt });
     let token: string | null = null;
     const e2eBypass = isE2EBypassActive();
+    const allowE2EBypass = e2eBypass && !import.meta.env.PROD;
 
-    if (e2eBypass && !import.meta.env.PROD) {
+    if (allowE2EBypass) {
       // Only allow E2E/test override headers in non-production environments.
       headers.set('X-E2E-Bypass', 'true');
       if (!headers.has('X-User-Role')) {
@@ -241,7 +250,7 @@ export default async function authorizedFetch(
       headers.delete('Authorization');
     }
 
-    if (requireAuth && !e2eBypass) {
+    if (requireAuth && !allowE2EBypass) {
       // Wait for any in-flight refresh to finish before using token
       await waitForRefresh();
       // Prefer canonical in-memory token (set by SecureAuthContext). Fall back
@@ -289,6 +298,7 @@ export default async function authorizedFetch(
     if (init.body && !bodyIsFormData && !bodyIsString && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }
+    stripProductionOverrideHeaders(headers);
 
     if (devMode && extractPathname(url) === '/api/admin/me') {
       console.debug('[authorizedFetch][dev] /api/admin/me Authorization', {

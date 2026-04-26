@@ -127,6 +127,9 @@ const withAuthHeaders = (init: RequestInit, token: string): RequestInit => {
 };
 
 const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit => {
+  if (process.env.NODE_ENV === 'production') {
+    return init;
+  }
   const orgId = resolveOrgHeaderForRequest(path);
   if (!orgId) {
     return init;
@@ -134,6 +137,18 @@ const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit =
   const headers = new Headers(init.headers ?? undefined);
   headers.set(ORG_HEADER_NAME, orgId);
   headers.set(LEGACY_ORG_HEADER_NAME, orgId);
+  return { ...init, headers };
+};
+
+const stripProductionOverrideHeaders = (init: RequestInit): RequestInit => {
+  if (process.env.NODE_ENV !== 'production') {
+    return init;
+  }
+  const headers = new Headers(init.headers ?? undefined);
+  headers.delete('X-Org-Id');
+  headers.delete('X-Organization-Id');
+  headers.delete('X-User-Role');
+  headers.delete('X-E2E-Bypass');
   return { ...init, headers };
 };
 
@@ -160,6 +175,7 @@ export async function apiFetchRaw(path: string, init: RequestInit = {}, options:
     };
     requestInit = withAuthHeaders(requestInit, token);
     requestInit = applyOrgHeadersIfNeeded(requestInit, path);
+    requestInit = stripProductionOverrideHeaders(requestInit);
     const { controller, cleanup } = createAbortController(options.timeoutMs, init.signal ?? null);
 
     let response: Response;

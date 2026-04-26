@@ -237,6 +237,7 @@ import { deriveSurveyAssignmentOrgScope } from './utils/surveyAssignmentOrgScope
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
+import debugRlsRouter from './routes/debug-rls.js';
 import { createClientPortalRouter } from './routes/clientPortal.js';
 import { createUserProfileRouter } from './routes/userProfile.js';
 import adminAnalyticsRoutes from './routes/admin-analytics.js';
@@ -1356,7 +1357,14 @@ app.use((req, res, next) => {
   next();
 });
 // AsyncLocalStorage to attach per-request metrics (query count, timings)
-const asyncLocalStorage = new AsyncLocalStorage();
+// Use the shared AsyncLocalStorage from server/lib/supabaseClient so
+// per-request supabase client can be stored and later retrieved by the
+// proxy exported from that module.
+import {
+  createSupabaseClientForToken,
+  requestAsyncLocalStorage as asyncLocalStorage,
+  setRequestSupabaseClient,
+} from './lib/supabaseClient.js';
 
 // Middleware to initialize per-request metrics and log them on response finish.
 app.use((req, res, next) => {
@@ -1410,6 +1418,27 @@ const JSON_BODY_LIMIT = process.env.API_JSON_BODY_LIMIT || '25mb';
 
 app.use(attachRequestId);
 app.use(cookieParser());
+app.use('/api', (req, _res, next) => {
+  const token =
+    String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() ||
+    req.cookies?.accessToken ||
+    req.cookies?.sb_access_token ||
+    null;
+  console.log('TOKEN FOUND:', token ? 'YES' : 'NO');
+  try {
+    const requestSupabase = createSupabaseClientForToken(token);
+    if (requestSupabase) {
+      setRequestSupabaseClient(requestSupabase);
+    }
+  } catch (error) {
+    logger.warn('request_supabase_bind_failed', {
+      requestId: req.requestId ?? null,
+      path: req.path ?? null,
+      message: error?.message || String(error),
+    });
+  }
+  next();
+});
 // Ensure the csrf_token cookie exists early so api clients can attach it via X-CSRF-Token.
 app.use(setDoubleSubmitCSRF);
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
@@ -2382,6 +2411,7 @@ if (process.env.NODE_ENV !== 'production') {
 // Auth routes (login, refresh, logout) must run before CSRF enforcement so they can issue tokens
 // without requiring the SPA to fetch a CSRF token first.
 app.use('/api/auth', authRoutes);
+app.use('/api/debug', debugRlsRouter);
 
 // Health endpoints remain public and must be registered before JWT protection.
 app.use('/', healthRouter);
@@ -13764,15 +13794,14 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     ? context.memberships.filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
     : [];
   const adminOrgIds = adminMemberships.map((membership) => membership.orgId).filter(Boolean);
-  const requestedOrgId = pickOrgId(
-    req.query?.orgId,
-    req.query?.organizationId,
-    req.body?.orgId,
-    req.body?.organizationId,
-    req.params?.orgId,
-  );
-
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+  const requestedOrgId = pickOrgId(
+    isPlatformAdmin ? null : req.query?.orgId,
+    isPlatformAdmin ? null : req.query?.organizationId,
+    isPlatformAdmin ? null : req.body?.orgId,
+    isPlatformAdmin ? null : req.body?.organizationId,
+    isPlatformAdmin ? null : req.params?.orgId,
+  );
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
   if (!isPlatformAdmin && !requestedOrgId) {
     logger.warn('admin_organizations_access_denied', {
@@ -13939,7 +13968,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       query = query.in('subscription', subscriptions);
     }
 
-    if (resolvedRequestedOrgId) {
+    if (resolvedRequestedOrgId && !isPlatformAdmin) {
       const requestedOrgIdString = String(resolvedRequestedOrgId).trim();
       if (isUuid(requestedOrgIdString)) {
         query = query.eq('id', requestedOrgIdString);

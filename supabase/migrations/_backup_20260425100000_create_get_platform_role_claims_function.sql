@@ -9,7 +9,7 @@ RETURNS TABLE(
 BEGIN
   RETURN QUERY
   SELECT
-    (select auth.jwt() -> 'app_metadata' ->> 'platform_role')::text,
+    NULL::text,
     (current_setting('request.jwt.claims', true)::json -> 'app_metadata' ->> 'platform_role')::text;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
