@@ -10,7 +10,6 @@ console.log("ENV CHECK END");
 
 import './env/loadEnv.js';
 import express from 'express';
-import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dns from 'node:dns';
@@ -1310,23 +1309,11 @@ app.use((req, res, next) => {
   return next();
 });
 
-// CORS: allow the production frontend origins and Netlify preview host.
-// This must be registered before any routes so preflight and error responses
-// include the proper CORS headers.
-app.use(cors({
-  origin: [
-    'https://the-huddle.co',
-    'https://www.the-huddle.co',
-    'https://api.the-huddle.co',
-    'https://the-huddleco.netlify.app'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// Install centralized CORS handler (single source of truth)
+installCors(app);
 
 // Ensure preflight requests are handled for any route.
-app.options('*', cors());
+// Preflight handler installed by installCors
 // GLOBAL ENTRY LOGGING: Log every request as soon as it enters Express
 // Also record presence/shape of the E2E bypass signal (header / cookie / query)
 // so we can confirm whether Playwright-injected bypass tokens reach the server.
@@ -1416,7 +1403,6 @@ app.set('etag', false);
 
 // Register modular routers
 app.use('/api/media', mediaRouter);
-app.use(corsMiddleware);
 
 const JSON_BODY_LIMIT = process.env.API_JSON_BODY_LIMIT || '25mb';
 
@@ -1600,7 +1586,7 @@ import orgsRouter from './routes/orgs.js';
 import healthRouter from './routes/health.js';
 import onboardingRouter from './routes/onboarding.js';
 import adminOrgProfilesRouter from './routes/adminOrgProfiles.js';
-import corsMiddleware, { resolveCorsOriginDecision, resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
+import installCors, { resolvedCorsOrigins, corsAllowedHeaders, resolveCorsOriginDecision } from './middleware/cors.js';
 import { describeCookiePolicy, getActiveOrgFromRequest } from './utils/authCookies.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';

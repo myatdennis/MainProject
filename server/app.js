@@ -2,7 +2,6 @@ import express from 'express';
 import textContentRouter from './routes/textContent.js';
 import adminUsersRouter from './routes/admin-users.js';
 import healthRouter from './routes/health.js';
-import corsMiddleware from './middleware/cors.js';
 import { getCookieOptions } from './middleware/cookieOptions.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';
@@ -24,8 +23,7 @@ const redactEnv = (input) => {
 
 const app = express();
 
-// Use new CORS middleware
-app.use(corsMiddleware);
+// CORS is installed centrally by server/index.js via installCors(app)
 
 app.use(express.json());
 
