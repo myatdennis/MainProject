@@ -1975,7 +1975,8 @@ type CatalogDiagnosticEvent =
   | 'default_catalog_loaded'
   | 'assignment_scope_failed'
   | 'org_catalog_failed'
-  | 'org_selection_required';
+  | 'org_bootstrap_pending'
+  | 'published_fallback_org_bootstrap_pending';
 
 const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<string, unknown> = {}) => {
   const payload = {
@@ -1992,7 +1993,7 @@ const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<str
       console.warn('[courseStore] catalog warning dispatch failed', err);
     }
   }
-  const logMethod = event === 'assignment_scope_failed' || event === 'org_selection_required' ? console.error : console.warn;
+  const logMethod = event === 'assignment_scope_failed' ? console.error : console.warn;
   logMethod('[courseStore] catalog_diagnostic', payload);
 };
 
@@ -2306,16 +2307,22 @@ export const courseStore = {
       // explicit organization selected before performing catalog/course
       // fetches. This prevents requests from being sent without X-Org-Id.
       if (!effectiveOrgId) {
-        emitCatalogDiagnostic('org_selection_required', { reason: initReason });
-        console.warn('[courseStore.init] Missing organizationId; init blocked until org is selected', { reason: initReason });
+        emitCatalogDiagnostic('org_bootstrap_pending', { reason: initReason });
         setLearnerCatalogState({
-          status: 'error',
+          status: 'loading',
           lastUpdatedAt: Date.now(),
-          lastError: 'org_selection_required',
-          detail: 'org_selection_required',
+          lastError: null,
+          detail: 'org_bootstrap_pending',
         });
-        // Treat this run as non-final and bail out early — caller may retry
-        // once org is resolved via the auth/orig bridge snapshot.
+        if (typeof window !== 'undefined' && !initRetryScheduled && retryCount < 10) {
+          initRetryScheduled = true;
+          window.setTimeout(() => {
+            initRetryScheduled = false;
+            courseStore.init({ force: true, reason: 'org_bootstrap_retry', retryCount: retryCount + 1 }).catch((error) => {
+              console.warn('[courseStore.init] org bootstrap retry failed', error);
+            });
+          }, 250);
+        }
         return;
       }
       if (!orgContext.userId) {
@@ -2667,27 +2674,6 @@ export const courseStore = {
       const publishedFallbackAllowed = !adminSurfaceDetected;
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
-        if (restrictToOrg && orgContext.status === 'ready' && !orgContext.orgId) {
-          console.warn('[courseStore.init] org_selection_required — learner org context resolved but no organization selected', {
-            userId: orgContext.userId,
-            membershipStatus: orgContext.membershipStatus,
-            status: orgContext.status,
-          });
-          emitCatalogDiagnostic('org_selection_required', {
-            userId: orgContext.userId,
-            membershipStatus: orgContext.membershipStatus,
-            status: orgContext.status,
-          });
-          setLearnerCatalogState({
-            status: 'error',
-            lastUpdatedAt: Date.now(),
-            lastError: 'org_selection_required',
-            detail: 'org_selection_required',
-          });
-          courses = {};
-          return;
-        }
-
         if (!publishedFallbackAllowed) {
           console.info('[courseStore.init] admin_surface_detected_blocking_fallback', {
             adminSurfaceDetected,
@@ -2726,9 +2712,7 @@ export const courseStore = {
               // Backend will scope results by session; frontend should not pass orgId.
               dbCourses = await fetchPublishedCourses();
             } else {
-              console.warn(
-                '[courseStore.init] Missing organizationId; published fallback blocked for learner context.',
-              );
+              emitCatalogDiagnostic('published_fallback_org_bootstrap_pending', { reason: initReason });
               dbCourses = [];
             }
           } else {

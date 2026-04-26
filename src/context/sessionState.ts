@@ -26,6 +26,72 @@ export type SessionStateResolution = {
   activeOrgSource: ActiveOrgSource;
 };
 
+const getPlatformRole = (payload: SessionResponsePayload): string | null => {
+  const user = payload.user ?? {};
+  const appMetadata = user.appMetadata ?? user.app_metadata ?? (payload as any).app_metadata ?? null;
+  return (
+    appMetadata?.platform_role ??
+    appMetadata?.platformRole ??
+    user.platformRole ??
+    user.platform_role ??
+    payload.platformRole ??
+    (payload as any).platform_role ??
+    null
+  );
+};
+
+const isPlatformAdminPayload = (payload: SessionResponsePayload): boolean =>
+  Boolean(payload.isPlatformAdmin || payload.user?.isPlatformAdmin || String(getPlatformRole(payload) ?? '').toLowerCase() === 'platform_admin');
+
+const resolveActiveOrg = (
+  payload: SessionResponsePayload,
+  memberships: UserMembership[],
+  organizationIds: string[],
+  preferredOrgId: string | null,
+): { activeOrgId: string | null; source: ActiveOrgSource } => {
+  if (preferredOrgId) {
+    return { activeOrgId: preferredOrgId, source: 'membership_default' };
+  }
+
+  const rawMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
+  const firstRawMembership = rawMemberships[0] as Record<string, any> | undefined;
+  const rawMembershipOrgId =
+    firstRawMembership?.organization_id ??
+    firstRawMembership?.org_id ??
+    firstRawMembership?.organizationId ??
+    firstRawMembership?.orgId ??
+    null;
+  if (rawMembershipOrgId) {
+    return { activeOrgId: String(rawMembershipOrgId), source: 'membership_default' };
+  }
+
+  const normalizedMembershipOrgId = memberships[0]?.orgId ?? null;
+  if (normalizedMembershipOrgId) {
+    return { activeOrgId: normalizedMembershipOrgId, source: 'membership_default' };
+  }
+
+  const directOrgId =
+    (payload as any).organization_id ??
+    (payload as any).org_id ??
+    payload.user?.organization_id ??
+    (payload.user as any)?.org_id ??
+    payload.activeOrgId ??
+    payload.user?.activeOrgId ??
+    payload.user?.organizationId ??
+    organizationIds[0] ??
+    null;
+  if (directOrgId) {
+    return { activeOrgId: String(directOrgId), source: 'session_payload' };
+  }
+
+  if (isPlatformAdminPayload(payload)) {
+    console.warn('Platform admin — no org required');
+    return { activeOrgId: 'ALL_ORGS', source: 'platform_admin' };
+  }
+
+  return { activeOrgId: null, source: 'none' };
+};
+
 export const resolveSessionStatePayload = ({
   payload,
   requestedOrgId,
@@ -70,7 +136,8 @@ export const resolveSessionStatePayload = ({
   });
 
   let activeOrgSource: ActiveOrgSource = 'none';
-  if (preferredOrg.activeOrgId) {
+  let activeOrgId = preferredOrg.activeOrgId ?? null;
+  if (activeOrgId) {
     if (preferredOrg.source === 'requested') {
       activeOrgSource = 'requested_hint';
     } else if (preferredOrg.source === 'lastActive') {
@@ -79,12 +146,17 @@ export const resolveSessionStatePayload = ({
       activeOrgSource = 'membership_default';
     }
   }
+  if (!activeOrgId) {
+    const resolved = resolveActiveOrg(payload, resolvedMemberships, organizationIds, null);
+    activeOrgId = resolved.activeOrgId;
+    activeOrgSource = resolved.source;
+  }
 
   return {
     membershipState,
     resolvedMemberships,
     organizationIds,
-    activeOrgId: preferredOrg.activeOrgId ?? null,
+    activeOrgId,
     activeOrgSource,
   };
 };
@@ -128,18 +200,17 @@ export const buildUserSessionFromPayload = ({
       payload.user?.activeOrgId ??
       payload.user?.organizationId ??
       null,
-    platformRole: payload.user?.platformRole ?? payload.user?.platform_role ?? payload.platformRole ?? null,
+    platformRole: getPlatformRole(payload),
     isPlatformAdmin: (() => {
       const explicitFlag = payload.user?.isPlatformAdmin ?? payload.isPlatformAdmin ?? null;
-      const roleFlag =
-        payload.user?.platformRole === 'platform_admin' || payload.platformRole === 'platform_admin';
+      const roleFlag = String(getPlatformRole(payload) ?? '').toLowerCase() === 'platform_admin';
       return Boolean(explicitFlag || roleFlag);
     })(),
     appMetadata: payload.user?.appMetadata ?? payload.user?.app_metadata ?? null,
     userMetadata: payload.user?.userMetadata ?? payload.user?.user_metadata ?? null,
   };
 
-  if (session.activeOrgId) {
+  if (session.activeOrgId && session.activeOrgId !== 'ALL_ORGS') {
     session.organizationId = session.activeOrgId;
   } else if (activeOrgSource === 'none') {
     if (payload.activeOrgId) {

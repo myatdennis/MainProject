@@ -17,9 +17,9 @@ import { logAuthRedirect } from './logAuthRedirect';
 import { isAdminSurface, resolveLoginPath } from './surface';
 import { getCSRFToken } from './csrfToken';
 import { isAuthBootstrapping } from '../lib/authBootstrapState';
+import { getGlobalActiveOrgIdForApi } from '../lib/orgContext';
 import { startApiRequest, endApiRequest } from './apiInstrumentation';
 import axios from 'axios';
-// Note: frontend must not make role/org decisions. Backend is authority.
 
 export class ApiError extends Error {
   status: number;
@@ -516,12 +516,47 @@ type PreparedRequest = {
   credentials: RequestCredentials;
 };
 
+const ADMIN_OR_CRM_PATH_PATTERN = /^\/api\/admin(?:\/|$)|^\/api\/crm(?:\/|$)/i;
+const ADMIN_ORG_CONTEXT_EXEMPT_PATHS = new Set(['/api/admin/me']);
+
+const appendOrgIdQueryParam = (url: string, orgId: string): string => {
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    if (!parsed.searchParams.has('orgId') && !parsed.searchParams.has('organizationId')) {
+      parsed.searchParams.set('orgId', orgId);
+    }
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return /(?:[?&](?:orgId|organizationId)=)/.test(url) ? url : `${url}${separator}orgId=${encodeURIComponent(orgId)}`;
+  }
+};
+
+const applyAdminOrgContextToUrl = (url: string, pathname: string): string => {
+  if (!ADMIN_OR_CRM_PATH_PATTERN.test(pathname) || ADMIN_ORG_CONTEXT_EXEMPT_PATHS.has(pathname)) {
+    return url;
+  }
+  const session = getActiveSession();
+  if (session?.isPlatformAdmin) {
+    return url;
+  }
+  const activeOrgId = getGlobalActiveOrgIdForApi() ?? session?.activeOrgId ?? session?.organizationId ?? null;
+  if (activeOrgId === 'ALL_ORGS') {
+    return url;
+  }
+  if (!activeOrgId) {
+    console.error('[apiClient] admin_request_missing_org_context', { path: pathname });
+    return url;
+  }
+  return appendOrgIdQueryParam(url, activeOrgId);
+};
+
 const prepareRequest = async (path: string, options: InternalRequestOptions = {}): Promise<PreparedRequest> => {
   assertNoDoubleApi(path);
 
   const method = options.method ?? 'GET';
-  const url = buildApiUrl(path);
   const pathname = extractPathname(path);
+  const url = applyAdminOrgContextToUrl(buildApiUrl(path), pathname);
 
   // NOTE: The client-side pathname guard that previously blocked /api/admin/* requests
   // when isAdminSurface() returned false has been removed.

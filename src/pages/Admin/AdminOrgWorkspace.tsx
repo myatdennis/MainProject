@@ -97,7 +97,14 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
 const AdminOrgWorkspace = () => {
   const { routeKey } = useRouteChangeReset();
   useNavTrace('AdminOrgWorkspace');
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, user } = useSecureAuth();
+  const isPlatformAdmin = String(
+    user?.appMetadata?.platform_role ??
+    user?.appMetadata?.platformRole ??
+    user?.platformRole ??
+    '',
+  ).toLowerCase() === 'platform_admin';
+  const activeOrgScopeId = activeOrgId === 'ALL_ORGS' ? null : activeOrgId;
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
@@ -208,7 +215,7 @@ const AdminOrgWorkspace = () => {
 
   const fetchOrganizations = useCallback(
     async (targetPage = 1, options?: { forceRefresh?: boolean }) => {
-      if (!activeOrgId) {
+      if (!activeOrgId && !isPlatformAdmin) {
         return;
       }
       console.info('[AdminOrgWorkspace] fetch orgs', { targetPage, search: debouncedSearch, statusFilter, subscriptionFilter });
@@ -226,7 +233,7 @@ const AdminOrgWorkspace = () => {
           subscription: subscriptionFilter === 'all' ? undefined : [subscriptionFilter],
         }, {
           ...options,
-          preferredOrgId: activeOrgId ?? undefined,
+          preferredOrgId: activeOrgScopeId ?? undefined,
         });
         if (cancelled) return;
         setOrganizations(response.data);
@@ -268,7 +275,7 @@ const AdminOrgWorkspace = () => {
       return cleanup;
     },
     // selectedOrgId intentionally omitted — read via ref to prevent refetch storms
-    [activeOrgId, debouncedSearch, statusFilter, subscriptionFilter, showToast],
+    [activeOrgId, activeOrgScopeId, debouncedSearch, isPlatformAdmin, statusFilter, subscriptionFilter, showToast],
   );
 
   useEffect(() => {

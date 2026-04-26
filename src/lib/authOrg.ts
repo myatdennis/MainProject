@@ -70,20 +70,15 @@ export const resolvePreferredOrgId = ({
     activeOrgId = normalizedLast as string;
     source = 'lastActive';
   } else {
-    // If the user belongs to multiple orgs and we don't have an explicit hint,
-    // do NOT auto-pick an org. Force an explicit selection to avoid cross-tenant
-    // ambiguity and accidental data exposure.
-    const uniqueMembershipOrgs = new Set(activeMemberships.map((m) => m.orgId).filter(Boolean));
-    const hasMultiple = uniqueMembershipOrgs.size > 1 || fallbackOrgSet.size > 1;
-
-    if (!hasMultiple) {
-      if (activeMemberships[0]?.orgId) {
-        activeOrgId = activeMemberships[0].orgId;
-        source = 'membership';
-      } else if (fallbackOrgList[0]) {
-        activeOrgId = fallbackOrgList[0];
-        source = 'membership';
-      }
+    // Always establish a deterministic active organization after login.
+    // Request/org hints win above; otherwise pick the first active membership
+    // after the existing recency sort, then fall back to the first org id.
+    if (activeMemberships[0]?.orgId) {
+      activeOrgId = activeMemberships[0].orgId;
+      source = 'membership';
+    } else if (fallbackOrgList[0]) {
+      activeOrgId = fallbackOrgList[0];
+      source = 'membership';
     }
   }
 

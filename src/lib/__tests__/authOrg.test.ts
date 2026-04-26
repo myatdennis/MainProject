@@ -43,7 +43,7 @@ describe('resolvePreferredOrgId', () => {
     expect(result.source).toBe('lastActive');
   });
 
-  it('does not auto-pick an org when multiple memberships exist and no hints provided', () => {
+  it('auto-picks the first sorted membership when multiple memberships exist and no hints are provided', () => {
     const memberships = [
       buildMembership({ orgId: 'legacy', acceptedAt: '2020-01-01T00:00:00Z' }),
       buildMembership({ orgId: 'newest', acceptedAt: '2026-02-02T00:00:00Z' }),
@@ -55,11 +55,11 @@ describe('resolvePreferredOrgId', () => {
       lastActiveOrgId: null,
     });
 
-    expect(result.activeOrgId).toBe(null);
-    expect(result.source).toBe('none');
+    expect(result.activeOrgId).toBe('newest');
+    expect(result.source).toBe('membership');
   });
 
-  it('does not auto-pick an org when multiple fallback orgs exist and no active memberships exist', () => {
+  it('auto-picks the first fallback org when no active memberships exist', () => {
     const memberships: MembershipLike[] = [
       buildMembership({ orgId: 'inactive-1', status: 'invited' }),
       buildMembership({ orgId: null }),
@@ -72,8 +72,8 @@ describe('resolvePreferredOrgId', () => {
       fallbackOrgIds: ['org-abc', 'org-def'],
     });
 
-    expect(result.activeOrgId).toBe(null);
-    expect(result.source).toBe('none');
+    expect(result.activeOrgId).toBe('org-abc');
+    expect(result.source).toBe('membership');
     expect(result.hasActiveMembership).toBe(false);
   });
 

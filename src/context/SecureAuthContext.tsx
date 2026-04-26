@@ -479,9 +479,39 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setUser(session);
       setMemberships(resolvedMemberships);
       setOrganizationIds(orgIds);
-      setGlobalActiveOrgIdForApi(session.activeOrgId ?? null);
-      setActiveOrgIdState(session.activeOrgId ?? null);
-      setActiveOrgPreference(session.activeOrgId ?? null);
+      // Resolve active org deterministically and ensure platform_admin gets a special ALL_ORGS flag
+      const resolveActiveOrg = (sess: UserSession | null) => {
+        const membershipsList = sess?.memberships || [];
+        if (membershipsList.length > 0) {
+          const m = membershipsList[0] as any;
+          const orgId = m.organization_id || m.org_id || m.organizationId || m.orgId || null;
+          if (orgId) return orgId;
+        }
+  if ((sess as any)?.organizationId) return (sess as any).organizationId;
+  if ((sess as any)?.orgId) return (sess as any).orgId;
+        // Check app metadata for platform_role
+  const platformRole = (sess as any)?.appMetadata?.platform_role ?? (sess as any)?.appMetadata?.platformRole ?? null;
+  if (platformRole === 'platform_admin') {
+          console.warn('Platform admin — no org required');
+          return 'ALL_ORGS';
+        }
+        return null;
+      };
+
+      const resolvedOrgId = resolveActiveOrg(session);
+
+      setGlobalActiveOrgIdForApi(resolvedOrgId ?? null);
+      setActiveOrgIdState(resolvedOrgId ?? null);
+      setActiveOrgPreference(resolvedOrgId ?? null);
+      console.log('[ORG BOOTSTRAP]', {
+        memberships: resolvedMemberships,
+        activeOrgId: session.activeOrgId ?? null,
+      });
+      console.log('[ORG RESOLVED]', {
+        orgId: session.activeOrgId ?? null,
+        memberships: resolvedMemberships,
+        role: session.appMetadata?.platform_role ?? session.appMetadata?.platformRole ?? session.platformRole ?? null,
+      });
       const authState = computeAuthState(session, surface);
       setIsAuthenticated(authState);
       setSurfaceAuthStatus({
@@ -747,7 +777,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         user?.activeOrgId ??
         user?.organizationId ??
         null;
-      if (!userId || !orgId) {
+      if (!userId || !orgId || orgId === 'ALL_ORGS') {
         return false;
       }
       if (!tracker.shouldAttempt(userId, orgId)) {
@@ -1386,12 +1416,30 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           // deterministic choice: pick the first membership (server orders may be deterministic)
           resolvedOrg = currentMemberships[0].orgId ?? null;
           lastActiveOrgSourceRef.current = 'membership_default';
+        } else if (
+          user?.isPlatformAdmin ||
+          String(user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? '').toLowerCase() === 'platform_admin'
+        ) {
+          console.warn('Platform admin — no org required');
+          resolvedOrg = 'ALL_ORGS';
+          lastActiveOrgSourceRef.current = 'platform_admin';
         } else {
           resolvedOrg = null;
           lastActiveOrgSourceRef.current = 'none';
         }
         lastAppliedActiveOrgIdRef.current = resolvedOrg;
   setActiveOrgIdState(resolvedOrg);
+  setActiveOrgPreference(resolvedOrg);
+  setGlobalActiveOrgIdForApi(resolvedOrg);
+  console.log('[ORG BOOTSTRAP]', {
+    memberships: currentMemberships,
+    activeOrgId: resolvedOrg,
+  });
+  console.log('[ORG RESOLVED]', {
+    orgId: resolvedOrg,
+    memberships: currentMemberships,
+    role: user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? null,
+  });
   e2eLog('resolved_org', { resolvedOrg, lastActiveOrgSource: lastActiveOrgSourceRef.current });
 
         // STEP 6: Write a single bridge snapshot reflecting final membership/org

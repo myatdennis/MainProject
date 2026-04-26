@@ -1,5 +1,5 @@
 import { emailSchema, loginSchema, registerSchema } from '../utils/validators';
-import apiRequest, { ApiError } from '../utils/apiClient';
+import apiRequest from '../utils/apiClient';
 import { getSupabase } from '../lib/supabaseClient';
 import { getUserSession } from '../lib/secureStorage';
 import type { SessionResponsePayload } from './sessionBootstrap';
@@ -7,6 +7,17 @@ import { normalizeSessionResponsePayload } from './sessionBootstrap';
 import type { LoginResult, RegisterField, RegisterInput, RegisterResult } from './authTypes';
 
 type BuildAuditHeaders = () => Record<string, string>;
+
+const isApiErrorLike = (error: unknown): error is { status: number; body?: unknown } =>
+  Boolean(error && typeof error === 'object' && 'status' in error && typeof (error as { status?: unknown }).status === 'number');
+
+const resolveBrowserFetchUrl = (path: string): string => {
+  if (/^https?:\/\//i.test(path)) return path;
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return new URL(path, window.location.origin).toString();
+  }
+  return path;
+};
 
 type AuthActionsDependencies = {
   buildSessionAuditHeaders: BuildAuditHeaders;
@@ -49,7 +60,7 @@ export const createAuthActions = ({
         url: `/api/auth/login`,
       });
 
-      const response = await fetch(`/api/auth/login`, {
+      const response = await fetch(resolveBrowserFetchUrl('/api/auth/login'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,6 +152,27 @@ export const createAuthActions = ({
         };
       }
 
+      if (!payloadFromFallback.activeOrgId && !(payloadFromFallback.memberships?.length)) {
+        try {
+          const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
+            method: 'GET',
+            requireAuth: true,
+            credentials: 'include',
+          });
+          const sessionPayload = normalizeSessionResponsePayload(sessionPayloadRaw);
+          if (sessionPayload?.user) {
+            payloadFromFallback = {
+              ...payloadFromFallback,
+              ...sessionPayload,
+              accessToken: payloadFromFallback.accessToken ?? sessionPayload.accessToken,
+              refreshToken: payloadFromFallback.refreshToken ?? sessionPayload.refreshToken,
+            };
+          }
+        } catch (sessionError) {
+          console.warn('[SecureAuth] post-login organization bootstrap failed', sessionError);
+        }
+      }
+
       applySessionPayload(payloadFromFallback, {
         surface: type,
         persistTokens: true,
@@ -169,7 +201,7 @@ export const createAuthActions = ({
 
       return { success: true };
     } catch (error: any) {
-      if (error instanceof ApiError) {
+      if (isApiErrorLike(error)) {
         const body = (error.body as { message?: string; mfaRequired?: boolean } | undefined) ?? {};
         if (body.mfaRequired) {
           return {
@@ -214,7 +246,7 @@ export const createAuthActions = ({
       return {
         success: false,
         error:
-          (error instanceof ApiError && (error.body as { message?: string } | undefined)?.message) ||
+          (isApiErrorLike(error) && (error.body as { message?: string } | undefined)?.message) ||
           'Login failed. Please try again.',
         errorType: 'unknown_error',
       };

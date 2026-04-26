@@ -714,9 +714,25 @@ export function clearAuth(reason?: string): void {
 export function setActiveOrgPreference(orgId: string | null): void {
   if (!orgId) {
     secureRemove(ACTIVE_ORG_PREFERENCE_KEY);
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage?.removeItem('activeOrgId');
+        window.localStorage?.removeItem('huddle_active_org');
+      }
+    } catch {
+      // ignore storage failures
+    }
     return;
   }
   secureSet(ACTIVE_ORG_PREFERENCE_KEY, orgId);
+  try {
+    if (typeof window !== 'undefined') {
+      window.localStorage?.setItem('activeOrgId', orgId);
+      window.localStorage?.setItem('huddle_active_org', orgId);
+    }
+  } catch {
+    // ignore storage failures
+  }
 }
 
 export function getActiveOrgPreference(): string | null {

@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient';
-import { getAccessToken as getStoredAccessToken, setAccessToken, setRefreshToken } from './secureStorage';
-import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
+import { getAccessToken as getStoredAccessToken, getUserSession, setAccessToken, setRefreshToken } from './secureStorage';
+import { getGlobalActiveOrgIdForApi, LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 import { buildApiUrl } from '../config/apiBase';
 import buildAuthHeaders from '../utils/requestContext';
 
@@ -140,6 +140,43 @@ const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit =
   return { ...init, headers };
 };
 
+const appendAdminOrgQueryIfNeeded = (path: string): string => {
+  let pathname = path;
+  try {
+    pathname = new URL(path, typeof window !== 'undefined' ? window.location.origin : 'http://localhost').pathname;
+  } catch {
+    pathname = path.split(/[?#]/)[0] ?? path;
+  }
+  if (!/^\/api\/admin(?:\/|$)|^\/api\/crm(?:\/|$)/i.test(pathname) || pathname === '/api/admin/me') {
+    return path;
+  }
+  const session = getUserSession();
+  if (session?.isPlatformAdmin) {
+    return path;
+  }
+  const orgId = getGlobalActiveOrgIdForApi() ?? session?.activeOrgId ?? session?.organizationId ?? null;
+  if (orgId === 'ALL_ORGS') {
+    return path;
+  }
+  if (!orgId) {
+    console.error('[apiFetchRaw] admin_request_missing_org_context', { path: pathname });
+    return path;
+  }
+  try {
+    const parsed = new URL(path, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    if (!parsed.searchParams.has('orgId') && !parsed.searchParams.has('organizationId')) {
+      parsed.searchParams.set('orgId', orgId);
+    }
+    if (/^https?:\/\//i.test(path)) {
+      return parsed.toString();
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    const separator = path.includes('?') ? '&' : '?';
+    return /(?:[?&](?:orgId|organizationId)=)/.test(path) ? path : `${path}${separator}orgId=${encodeURIComponent(orgId)}`;
+  }
+};
+
 const stripProductionOverrideHeaders = (init: RequestInit): RequestInit => {
   if (process.env.NODE_ENV !== 'production') {
     return init;
@@ -153,7 +190,8 @@ const stripProductionOverrideHeaders = (init: RequestInit): RequestInit => {
 };
 
 export async function apiFetchRaw(path: string, init: RequestInit = {}, options: ApiFetchOptions = {}) {
-  const url = buildApiUrl(path);
+  const scopedPath = appendAdminOrgQueryIfNeeded(path);
+  const url = buildApiUrl(scopedPath);
   let attempt = 0;
   let authHeaders = await buildAuthHeaders();
   let token = authHeaders.Authorization?.replace(/^Bearer\s+/i, '') ?? null;
@@ -174,7 +212,7 @@ export async function apiFetchRaw(path: string, init: RequestInit = {}, options:
       }),
     };
     requestInit = withAuthHeaders(requestInit, token);
-    requestInit = applyOrgHeadersIfNeeded(requestInit, path);
+    requestInit = applyOrgHeadersIfNeeded(requestInit, scopedPath);
     requestInit = stripProductionOverrideHeaders(requestInit);
     const { controller, cleanup } = createAbortController(options.timeoutMs, init.signal ?? null);
 

@@ -62,9 +62,18 @@ export const getUserTransferToastMessage = (
 
 const AdminUsers = () => {
   useNavTrace('AdminUsers');
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, user } = useSecureAuth();
   const authSnap = getAuthState();
-  const isPlatformAdmin = Boolean(authSnap?.isAdmin);
+  const isPlatformAdmin = String(
+    user?.appMetadata?.platform_role ??
+    user?.appMetadata?.platformRole ??
+    user?.platformRole ??
+    authSnap?.user?.appMetadata?.platform_role ??
+    authSnap?.user?.appMetadata?.platformRole ??
+    authSnap?.user?.platformRole ??
+    '',
+  ).toLowerCase() === 'platform_admin';
+  const activeOrgScopeId = activeOrgId === 'ALL_ORGS' ? null : activeOrgId;
   const { routeKey } = useRouteChangeReset();
 
   // Reset transient UI state (filters, selections) whenever the user navigates
@@ -161,7 +170,7 @@ const AdminUsers = () => {
     const rawStatus = (member?.status || profile?.status || 'inactive').toString().toLowerCase();
     const normalizedStatus = ['active', 'pending', 'inactive'].includes(rawStatus) ? rawStatus : rawStatus;
 
-    const canonicalOrgId = orgFromMember || activeOrgId || '';
+    const canonicalOrgId = orgFromMember || activeOrgScopeId || '';
     const profileOrgId = profile.organization_id ?? profile.org_id ?? null;
     if (profileOrgId && profileOrgId !== canonicalOrgId) {
       console.warn('[AdminUsers] organization_id mismatch', {
@@ -196,7 +205,7 @@ const AdminUsers = () => {
       totalModules: progressKeys.length,
       feedbackSubmitted: false,
     };
-  }, [activeOrgId]);
+  }, [activeOrgScopeId]);
 
   const fetchUsers = useCallback(async () => {
     setUsersLoading(true);
@@ -204,7 +213,7 @@ const AdminUsers = () => {
     const clientRequestId = `admin-users-${nanoid(8)}`;
     try {
       const normalizedFilterOrg = filterOrg !== 'all' ? filterOrg : null;
-      const queryOrgId = normalizedFilterOrg ?? (!isPlatformAdmin ? activeOrgId : null);
+      const queryOrgId = normalizedFilterOrg ?? (!isPlatformAdmin ? activeOrgScopeId : null);
 
       if (!isPlatformAdmin && !queryOrgId) {
         throw new Error('Organization context is required for non-platform administrators.');
@@ -257,7 +266,7 @@ const AdminUsers = () => {
     } finally {
       setUsersLoading(false);
     }
-  }, [activeOrgId, filterOrg, isPlatformAdmin, mapMemberToUser]);
+  }, [activeOrgId, activeOrgScopeId, filterOrg, isPlatformAdmin, mapMemberToUser]);
 
   useEffect(() => {
     void fetchUsers();
@@ -279,8 +288,8 @@ const AdminUsers = () => {
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     let cancelled = false;
-    if (!activeOrgId) return;
-    listOrgs(undefined, { preferredOrgId: activeOrgId })
+    if (!activeOrgId && !isPlatformAdmin) return;
+    listOrgs(undefined, { preferredOrgId: activeOrgScopeId })
       .then((orgs) => {
         if (cancelled) return;
         setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
@@ -289,14 +298,14 @@ const AdminUsers = () => {
         console.warn('[AdminUsers] Failed to load organizations for filter', err);
       });
     return () => { cancelled = true; };
-  }, [activeOrgId]);
+  }, [activeOrgId, activeOrgScopeId, isPlatformAdmin]);
 
   // Refresh organizations list when other parts of the app invalidate org list
   useEffect(() => {
     const unsub = onOrgListInvalidated?.(() => {
       let cancelled = false;
-      if (!activeOrgId) return;
-      listOrgs({}, { forceRefresh: true, preferredOrgId: activeOrgId })
+      if (!activeOrgId && !isPlatformAdmin) return;
+      listOrgs({}, { forceRefresh: true, preferredOrgId: activeOrgScopeId })
         .then((orgs) => {
           if (cancelled) return;
           setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
@@ -307,7 +316,7 @@ const AdminUsers = () => {
       return () => { cancelled = true; };
     });
     return () => { if (typeof unsub === 'function') unsub(); };
-  }, [activeOrgId]);
+  }, [activeOrgId, activeOrgScopeId, isPlatformAdmin]);
 
   // ── Org course modules (dynamic, falls back to defaults) ─────────────
   const DEFAULT_MODULE_KEYS = ['foundations', 'bias', 'empathy', 'conversations', 'planning'];
@@ -323,7 +332,7 @@ const AdminUsers = () => {
   );
 
   useEffect(() => {
-    if (!activeOrgId) return;
+    if (!activeOrgId || activeOrgId === 'ALL_ORGS') return;
     let active = true;
     (async () => {
       try {
@@ -414,7 +423,7 @@ const AdminUsers = () => {
             body: {
               subject: 'Course Reminder',
               body: 'This is a reminder to continue your course progress.',
-              orgId: activeOrgId,
+              orgId: activeOrgScopeId,
             },
           }).catch(() => null), // don't let one failure block others
         ),
@@ -500,10 +509,10 @@ const AdminUsers = () => {
 
     const resolveArchiveOrganizationId = (userId: string): string | null => {
       const target = usersList.find((entry) => entry.id === userId);
-      return target?.organization || activeOrgId || (filterOrg !== 'all' ? filterOrg : null);
+      return target?.organization || activeOrgScopeId || (filterOrg !== 'all' ? filterOrg : null);
     };
 
-    if (pendingUserActionMode === 'archive' && !isPlatformAdmin && !activeOrgId && filterOrg === 'all') {
+    if (pendingUserActionMode === 'archive' && !isPlatformAdmin && !activeOrgScopeId && filterOrg === 'all') {
       showToast('Select an organization before archiving users.', 'error');
       return;
     }
@@ -564,7 +573,7 @@ const AdminUsers = () => {
 
   const handleUserUpdated = (updatedUser?: User, transfer?: { fromOrganizationId?: string | null; toOrganizationId?: string | null }) => {
     if (updatedUser) {
-      const currentOrgContext = activeOrgId || (filterOrg !== 'all' ? filterOrg : null);
+      const currentOrgContext = activeOrgScopeId || (filterOrg !== 'all' ? filterOrg : null);
       const transferMessage = getUserTransferToastMessage(currentOrgContext, transfer, organizations);
       if (transferMessage) {
         showToast(transferMessage, 'success');
@@ -946,7 +955,7 @@ const AdminUsers = () => {
         onClose={() => setShowAddUserModal(false)}
         onUserAdded={handleUserAdded}
         organizations={organizations}
-        defaultOrgId={filterOrg !== 'all' ? filterOrg : activeOrgId}
+        defaultOrgId={filterOrg !== 'all' ? filterOrg : activeOrgScopeId}
       />
 
       <UserCsvImportModal
@@ -992,7 +1001,7 @@ const AdminUsers = () => {
           onUserAdded={handleUserUpdated}
           editUser={userToEdit}
           organizations={organizations}
-          defaultOrgId={filterOrg !== 'all' ? filterOrg : activeOrgId}
+          defaultOrgId={filterOrg !== 'all' ? filterOrg : activeOrgScopeId}
         />
       )}
     </PageWrapper>

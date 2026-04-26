@@ -525,6 +525,17 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     );
   }
 
+  if (
+    hasSession &&
+    (normalizedSessionStatus === 'loading' || orgResolutionStatus === 'resolving')
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-softwhite">
+        <Loading size="lg" />
+      </div>
+    );
+  }
+
   // At this point we have a session (or auth is still resolving with a session).
   // Do NOT block here on unauthenticated state — the useEffect above fires the
   // navigate() redirect.  Returning null here caused blank flashes on navigation

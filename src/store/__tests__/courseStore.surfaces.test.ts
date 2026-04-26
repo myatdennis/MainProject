@@ -164,7 +164,7 @@ describe('courseStore surface behaviour (focused tests)', () => {
     expect(fetchPublishedCoursesMock).toHaveBeenCalled();
   });
 
-  it('when org is ready but no org selected, learner state becomes org_selection_required', async () => {
+  it('when org is ready but no org selected, learner state waits for org bootstrap', async () => {
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',
@@ -177,7 +177,7 @@ describe('courseStore surface behaviour (focused tests)', () => {
   await courseStore.forceInit({ flushCache: true });
 
     const learnerState = courseStore.getLearnerCatalogState();
-    expect(learnerState.status).toBe('error');
-    expect(learnerState.detail).toBe('org_selection_required');
+    expect(learnerState.status).toBe('loading');
+    expect(learnerState.detail).toBe('org_bootstrap_pending');
   });
 });

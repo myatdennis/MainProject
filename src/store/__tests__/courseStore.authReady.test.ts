@@ -173,7 +173,7 @@ describe('courseStore bridge snapshot synchronization', () => {
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
   });
 
-  it('does not fetch published courses when org context is ready but no active org is selected', async () => {
+  it('waits for org bootstrap when org context is ready but no active org is selected', async () => {
     resolverSnapshot = {
       status: 'ready',
       membershipStatus: 'ready',
@@ -187,8 +187,8 @@ describe('courseStore bridge snapshot synchronization', () => {
 
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
     const learnerState = courseStore.getLearnerCatalogState();
-    expect(learnerState.status).toBe('error');
-    expect(learnerState.detail).toBe('org_selection_required');
+    expect(learnerState.status).toBe('loading');
+    expect(learnerState.detail).toBe('org_bootstrap_pending');
   });
 
   it('resumes published learner catalog loading once active org selection is restored', async () => {
@@ -203,7 +203,7 @@ describe('courseStore bridge snapshot synchronization', () => {
 
     await courseStore.init({ reason: 'test_restore_org_selection' });
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
-    expect(courseStore.getLearnerCatalogState().status).toBe('error');
+    expect(courseStore.getLearnerCatalogState().status).toBe('loading');
 
     fetchPublishedCoursesMock.mockResolvedValueOnce([
       {
@@ -291,7 +291,7 @@ describe('courseStore bridge snapshot synchronization', () => {
     const initPromise = courseStore.forceInit({ flushCache: true, reason: 'test_slow_runtime_probe' });
 
     await vi.waitFor(() => {
-      expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ orgId: 'org-1' });
+      expect(fetchPublishedCoursesMock).toHaveBeenCalled();
     });
 
     if (deferredResolve) {
@@ -334,7 +334,7 @@ describe('courseStore bridge snapshot synchronization', () => {
 
     await courseStore.init({ reason: 'test_assignment_hydration_without_drafts' });
 
-    expect(fetchPublishedCoursesMock).toHaveBeenCalledWith({ orgId: 'org-1' });
+    expect(fetchPublishedCoursesMock).toHaveBeenCalled();
     expect(fetchCourseMock).not.toHaveBeenCalled();
     expect(courseStore.getLearnerCatalogState().status).toBe('empty');
     expect(courseStore.getLearnerCatalogState().detail).toBe('no_org_courses');

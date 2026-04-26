@@ -60,4 +60,32 @@ describe('sessionState', () => {
     expect(session.activeOrgId).toBe('org-2');
     expect(session.organizationId).toBe('org-2');
   });
+
+  it('uses ALL_ORGS for platform admins without memberships or a direct org', () => {
+    const payload: SessionResponsePayload = {
+      user: {
+        id: 'platform-1',
+        email: 'platform@the-huddle.co',
+        app_metadata: { platform_role: 'platform_admin' },
+      },
+      memberships: [],
+      membershipStatus: 'ready',
+      organizationIds: [],
+    };
+
+    const resolved = resolveSessionStatePayload({ payload });
+    const session = buildUserSessionFromPayload({
+      payload,
+      organizationIds: resolved.organizationIds,
+      memberships: resolved.resolvedMemberships,
+      activeOrgId: resolved.activeOrgId,
+      activeOrgSource: resolved.activeOrgSource,
+    });
+
+    expect(resolved.activeOrgId).toBe('ALL_ORGS');
+    expect(resolved.activeOrgSource).toBe('platform_admin');
+    expect(session.activeOrgId).toBe('ALL_ORGS');
+    expect(session.organizationId).toBeNull();
+    expect(session.isPlatformAdmin).toBe(true);
+  });
 });

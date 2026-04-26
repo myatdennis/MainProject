@@ -8,6 +8,7 @@ export type ActiveOrgSource =
   | 'membership_default'
   | 'session_payload'
   | 'user_payload'
+  | 'platform_admin'
   | 'none';
 
 export const dedupeStrings = (values: Array<string | null | undefined>): string[] => {
@@ -106,7 +107,12 @@ export const deriveOrgContextSnapshot = ({
     };
   }
 
-  const resolvedOrgId = activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? lastActiveOrgId ?? null;
+  const resolvedOrgId =
+    activeOrgId ??
+    user?.activeOrgId ??
+    user?.organizationId ??
+    lastActiveOrgId ??
+    (user?.isPlatformAdmin ? 'ALL_ORGS' : null);
 
   return {
     status: 'ready',
@@ -117,4 +123,3 @@ export const deriveOrgContextSnapshot = ({
     userId: user?.id ?? null,
   };
 };
-
