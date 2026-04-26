@@ -52,7 +52,7 @@ interface RequestContext {
 
 const corsHeaders: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "authorization, x-user-id, x-user-role, x-org-id, content-type",
+  "access-control-allow-headers": "authorization, x-user-id, x-user-role, x-org-id, content-type, __authsource",
   "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   "content-type": "application/json",
 };
