@@ -34,6 +34,7 @@ export const corsAllowedHeaders = [
   'X-Runtime-Status',
   'X-CSRF-Token',
   'X-Request-Id',
+  '__authsource',
 ];
 
 export function resolveCorsOriginDecision(origin) {
