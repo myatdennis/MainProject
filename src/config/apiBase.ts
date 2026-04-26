@@ -40,6 +40,7 @@ const getMetaEnv = (): MetaEnv => {
 const DEFAULT_DEV_API_BASE = '/api';
 const DEFAULT_PROD_API_BASE = '/api';
 const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
+const DEFAULT_PROD_API_ORIGIN = 'https://api.the-huddle.co';
 
 const detectDevMode = () => {
   if (typeof import.meta !== 'undefined' && (import.meta as any)?.env) {
@@ -285,7 +286,8 @@ export function getApiBaseUrl(): string {
   }
 
   const origin = getApiOrigin();
-  const combined = normalizeBaseOutput(`${origin || ''}${pathPrefix || ''}`);
+  const effectiveOrigin = origin || (!devMode ? DEFAULT_PROD_API_ORIGIN : '');
+  const combined = normalizeBaseOutput(`${effectiveOrigin}${pathPrefix || ''}`);
   if (combined) {
     return combined;
   }

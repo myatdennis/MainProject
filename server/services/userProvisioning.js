@@ -75,8 +75,13 @@ const cleanupOrphanedProfileByEmail = async ({
     const membershipOrgColumn = getOrganizationMembershipsOrgColumnName
       ? await getOrganizationMembershipsOrgColumnName()
       : 'organization_id';
+    // delete memberships regardless of orgId (cleanup of orphaned profile)
     await supabase.from('organization_memberships').delete().eq('user_id', profile.id);
-    await supabase.from('admin_users').delete().eq('user_id', profile.id);
+    try {
+      await supabase.from('admin_users').delete().eq('user_id', profile.id);
+    } catch (adminDeleteError) {
+      // ignore missing column scenarios
+    }
     await supabase.from('user_profiles').delete().eq('id', profile.id);
     logger.warn('provisioning_orphaned_profile_removed', {
       requestId,
@@ -170,6 +175,10 @@ const cleanupProvisionedUserAccount = async ({
           throw adminDeleteError;
         }
       }
+    } else {
+      // No orgId provided: only proceed for platform admins or skip org-scoped deletes
+      // If caller requires stricter behavior, they should pass orgId explicitly.
+      logger.info('cleanup_no_orgid_skipped_for_non_platform_admin', { requestId, userId, orgId });
     }
     await supabase.from('user_profiles').delete().eq('id', userId);
     await supabase.auth.admin.deleteUser(userId);

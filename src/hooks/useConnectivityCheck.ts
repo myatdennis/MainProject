@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveApiUrl } from '../config/apiBase';
+import authorizedFetch from '../lib/authorizedFetch';
 
 export interface ConnectivitySnapshot {
   isOnline: boolean;
@@ -37,13 +38,10 @@ const fetchWithTimeout = async (
   options: RequestInit = {},
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<Response> => {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { credentials: 'include', ...options, signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
+  // Use centralized authorizedFetch so Authorization header and cookies are
+  // consistently sent for all runtime API requests. authorizedFetch handles
+  // timeouts and credential forwarding.
+  return authorizedFetch(url, { ...options, credentials: options.credentials ?? 'include' }, { timeoutMs });
 };
 
 export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 30000, enabled = true }: ConnectivityOptions = {}) => {

@@ -1349,6 +1349,10 @@ app.use((req, res, next) => {
         cookiePresent: cookieBypassPresent,
         queryPresent: Boolean(queryBypass),
       },
+      auth: {
+        authorizationPresent: Boolean(req.headers && req.headers.authorization),
+        authorizationPreview: typeof req.headers?.authorization === 'string' ? String(req.headers.authorization).slice(0,64) : null,
+      },
     });
   } catch (err) {
     // Keep global entry logging resilient
@@ -1424,7 +1428,8 @@ app.use('/api', (req, _res, next) => {
     req.cookies?.accessToken ||
     req.cookies?.sb_access_token ||
     null;
-  console.log('TOKEN FOUND:', token ? 'YES' : 'NO');
+  // User-requested explicit token presence log for debugging auth propagation
+  console.log('TOKEN FOUND:', !!req.headers.authorization || !!req.cookies);
   try {
     const requestSupabase = createSupabaseClientForToken(token);
     if (requestSupabase) {
@@ -9487,7 +9492,8 @@ const sendOrganizationMessage = async ({
   actor,
   requestId = null,
 }) => {
-  if (!orgId) throw new Error('org_id_required');
+  const isPlatformAdmin = Boolean(actor && (actor.isPlatformAdmin === true || String(actor.platformRole || '').trim().toLowerCase() === 'platform_admin'));
+  if (!isPlatformAdmin && !orgId) throw new Error('org_id_required');
   if (!body || !body.trim()) throw new Error('message_body_required');
   const normalizedChannel = normalizeMessageChannel(channel);
   const resolvedRecipients = await resolveOrgMessageRecipients(orgId, recipients);

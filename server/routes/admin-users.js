@@ -245,7 +245,8 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       previousOrgId = (String(profileRow?.organization_id || '').trim() || null);
     }
 
-    if (!orgId) {
+    // Platform admins can operate without providing an orgId (they act across all orgs).
+    if (!orgId && !isPlatformAdminActor(actor)) {
       return res.status(400).json({ ok: false, code: 'org_id_required', message: 'organizationId is required.' });
     }
 
@@ -601,7 +602,8 @@ router.post('/', async (req, res, next) => {
     const cohort = normalizeText(req.body?.cohort ?? '');
     const phoneNumber = normalizeText(req.body?.phoneNumber ?? req.body?.phone_number ?? '');
 
-    if (!orgId) {
+    // Platform admins are allowed to create users without specifying orgId.
+    if (!orgId && !req.user?.isPlatformAdmin) {
       return next(createHttpError(400, 'org_id_required', 'organizationId is required.'));
     }
     if (!firstName || !lastName || !email) {

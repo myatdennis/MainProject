@@ -68,7 +68,9 @@ export const createAdminSurveysService = ({
       context.requestedOrgId,
       context.activeOrganizationId,
     );
-    if (!requestedOrgId) {
+    const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (!isPlatformAdmin && !requestedOrgId) {
       return {
         status: 400,
         error: { code: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' },

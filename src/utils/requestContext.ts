@@ -74,10 +74,27 @@ export const clearSupabaseAuthSnapshot = () => {
   supabaseSessionSnapshot = null;
 };
 
-export function buildAuthHeaders() {
-  return {
+export async function buildAuthHeaders(): Promise<AuthHeaders> {
+  const headers: AuthHeaders = {
     'Content-Type': 'application/json',
   };
+
+  try {
+    const token = await resolveSupabaseAccessToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+      headers.__authSource = 'supabase';
+    } else {
+      headers.__authSource = 'none';
+    }
+  } catch (err) {
+    // Keep best-effort — if session lookup fails, return minimal headers.
+    const msg = err && typeof err === 'object' && 'message' in err ? (err as any).message : String(err);
+    console.warn('[requestContext] unable to resolve supabase session for auth headers', msg);
+    headers.__authSource = 'none';
+  }
+
+  return headers;
 }
 
 export default buildAuthHeaders;

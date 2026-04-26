@@ -39,7 +39,9 @@ export const createTeamHuddleRouter = ({
     const context = requireUserContext(req, res);
     if (!context) return;
     const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
-    if (orgScope.requiresExplicitSelection || !orgScope.orgId) {
+    const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId: orgScope.orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (!isPlatformAdmin && (orgScope.requiresExplicitSelection || !orgScope.orgId)) {
       return sendError(res, 400, 'org_required', 'Select an organization to view Team Huddle posts.');
     }
     const access = await requireOrgAccess(req, res, orgScope.orgId, { write: false });
@@ -67,11 +69,11 @@ export const createTeamHuddleRouter = ({
     let query = supabase
       .from(TEAM_HUDDLE_TABLES.posts)
       .select('*')
-      .eq('organization_id', orgScope.orgId)
       .is('deleted_at', null)
       .order('pinned_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
       .limit(limit);
+    if (!isPlatformAdmin && orgScope.orgId) query = query.eq('organization_id', orgScope.orgId);
 
     if (!includeHidden) query = query.is('hidden_at', null);
     if (search) {
@@ -92,8 +94,8 @@ export const createTeamHuddleRouter = ({
       const { data: reactionRows, error: reactionError } = await supabase
         .from(TEAM_HUDDLE_TABLES.reactions)
         .select('post_id,user_id,reaction_type')
-        .in('post_id', postIds)
-        .eq('organization_id', orgScope.orgId);
+    .in('post_id', postIds);
+    if (!isPlatformAdmin && orgScope.orgId) reactionQuery = reactionQuery.eq('organization_id', orgScope.orgId);
       if (reactionError) throw reactionError;
       (reactionRows || []).forEach((reaction) => {
         if (!reaction || !reaction.post_id) return;
@@ -115,8 +117,8 @@ export const createTeamHuddleRouter = ({
       const { data: commentRows, error: commentError } = await supabase
         .from(TEAM_HUDDLE_TABLES.comments)
         .select('post_id')
-        .in('post_id', postIds)
-        .eq('organization_id', orgScope.orgId)
+    .in('post_id', postIds)
+    if (!isPlatformAdmin && orgScope.orgId) commentQuery = commentQuery.eq('organization_id', orgScope.orgId)
         .is('deleted_at', null);
       if (commentError) throw commentError;
       (commentRows || []).forEach((comment) => {

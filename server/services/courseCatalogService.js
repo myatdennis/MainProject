@@ -271,7 +271,9 @@ export const createCourseCatalogService = ({
       context.requestedOrgId,
       context.activeOrganizationId,
     );
-    if (!requestedOrgId) {
+    // Allow platform_admin to omit orgId (they can see all orgs). For non-platform
+    // admins an explicit orgId or header is still required.
+    if (!requestedOrgId && !context.isPlatformAdmin) {
       return {
         status: 400,
         body: { error: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' },
@@ -384,9 +386,10 @@ export const createCourseCatalogService = ({
       : '';
 
     try {
+      // If requester is platform admin, do not restrict to organization scope.
       const orgScopeIds = orgFilter ? [orgFilter] : !isPlatformAdmin ? adminOrgIds : [];
       const scopedCourseIds =
-        orgScopeIds.length > 0
+        !isPlatformAdmin && orgScopeIds.length > 0
           ? await resolveOrganizationCourseIds(orgScopeIds, { requestId: req.requestId ?? null })
           : null;
 
@@ -476,7 +479,8 @@ export const createCourseCatalogService = ({
         if (statusFilter.length) {
           query = query.in('status', statusFilter);
         }
-        if (orgScopeIds.length > 0) {
+        // Only restrict by resolved scopedCourseIds for non-platform admins.
+        if (!isPlatformAdmin && orgScopeIds.length > 0) {
           query = query.in('id', scopedCourseIds);
         }
         return query;

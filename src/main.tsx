@@ -102,7 +102,8 @@ if (import.meta.env?.DEV && typeof window !== 'undefined') {
   const healthUrl = `${normalizeBase(apiBaseForLogs)}/health`;
   (async () => {
     try {
-      const response = await fetch(healthUrl, { credentials: 'include' });
+      const authorizedFetch = (await import('./lib/authorizedFetch')).default;
+      const response = await authorizedFetch(healthUrl, { method: 'GET', credentials: 'include' });
       console.debug('[dev][api] health ping', {
         url: healthUrl,
         status: response.status,
@@ -132,7 +133,7 @@ if (typeof window !== 'undefined') {
   if (import.meta.env.DEV) {
     registerApiNavigationGuard();
 
-    const globalScope = window as typeof window & { __fetchDebugPatched?: boolean };
+  const globalScope = window as typeof window & { __fetchDebugPatched?: boolean };
     const fetchDebugEnabled = Boolean((window as any).__FETCH_DEBUG__);
     if (import.meta.env.DEV && fetchDebugEnabled && !globalScope.__fetchDebugPatched && typeof window.fetch === 'function') {
       const originalFetch = window.fetch.bind(window);
@@ -177,6 +178,18 @@ if (typeof window !== 'undefined') {
 
         return response;
       };
+
+      // Replace global fetch with an unsafe implementation after boot to
+      // surface any code paths that use direct fetch rather than authorizedFetch.
+      try {
+        const { installUnsafeGlobalFetch } = await import('./lib/nativeFetch');
+        // Install only in development to avoid breaking CI/tests unintentionally
+        if (import.meta.env.DEV) {
+          installUnsafeGlobalFetch();
+        }
+      } catch (e) {
+        // ignore failures installing the unsafe fetch
+      }
     }
   }
 }

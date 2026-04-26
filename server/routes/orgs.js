@@ -10,6 +10,8 @@ router.post('/:orgId/memberships/accept', async (req, res) => {
   const { supabase, ensureSupabase, requireUserContext, invalidateMembershipCache, buildMembershipSelect, getOrgInvitesOrganizationColumnName, buildActorFromRequest, recordActivationEvent, markActivationStep } = req.app.locals;
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
+  const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -20,7 +22,7 @@ router.post('/:orgId/memberships/accept', async (req, res) => {
       .from('organization_memberships')
       .update({ status: 'inactive', is_active: false, last_seen_at: now })
       .eq('user_id', context.userId)
-      .neq('organization_id', orgId)
+    .neq('organization_id', orgId)
       .eq('is_active', true);
     if (deactivateOthersError) throw deactivateOthersError;
 

@@ -173,10 +173,10 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
   try {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 4000);
-    const response = await fetch(resolveApiUrl('/health'), {
+    const { default: authorizedFetch } = await import('../lib/authorizedFetch');
+    const response = await authorizedFetch(resolveApiUrl('/health'), {
       method: 'GET',
       headers: { 'x-runtime-status': '1' },
-      credentials: 'include',
       signal: controller.signal,
     });
     window.clearTimeout(timeout);

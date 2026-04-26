@@ -111,9 +111,12 @@ const shouldStringifyBody = (body: any): boolean => {
   return typeof body === 'object';
 };
 
-const withAuthHeaders = (init: RequestInit, token: string): RequestInit => {
+
+const withAuthHeaders = (init: RequestInit, token?: string | null): RequestInit => {
   const headers = new Headers(init.headers ?? undefined);
-  headers.set('Authorization', `Bearer ${token}`);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
 
   let body = init.body;
   if (shouldStringifyBody(body)) {
@@ -193,14 +196,18 @@ export async function apiFetchRaw(path: string, init: RequestInit = {}, options:
   const scopedPath = appendAdminOrgQueryIfNeeded(path);
   const url = buildApiUrl(scopedPath);
   let attempt = 0;
+  // buildAuthHeaders may perform async session resolution
   let authHeaders = await buildAuthHeaders();
-  let token = authHeaders.Authorization?.replace(/^Bearer\s+/i, '') ?? null;
+  let token: string | null = (authHeaders.Authorization?.replace(/^Bearer\s+/i, '') ?? null) as string | null;
   if (!token) {
-    token = await ensureAccessToken();
-    authHeaders = {
-      ...authHeaders,
-      Authorization: `Bearer ${token}`,
-    };
+    // As a final fallback, ensure access token via canonical/session storage
+    token = await ensureAccessToken().catch(() => null);
+    if (token) {
+      authHeaders = {
+        ...authHeaders,
+        Authorization: `Bearer ${token}`,
+      };
+    }
   }
 
   while (attempt < 2) {
@@ -218,7 +225,9 @@ export async function apiFetchRaw(path: string, init: RequestInit = {}, options:
 
     let response: Response;
     try {
-      response = await fetch(url, { ...requestInit, credentials: requestInit.credentials ?? 'include', signal: controller.signal });
+      // Use centralized authorizedFetch so Authorization and cookie forwarding
+      // are handled consistently for API calls.
+      response = await (await import('../lib/authorizedFetch')).default(url, { ...requestInit, credentials: requestInit.credentials ?? 'include', signal: controller.signal });
     } catch (error: any) {
       cleanup();
       if (error instanceof DOMException && error.name === 'AbortError') {

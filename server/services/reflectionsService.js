@@ -1,3 +1,5 @@
+import isPlatformAdminFor from '../lib/platformAdmin.js';
+
 export const createReflectionsService = ({
   logger,
   supabase,
@@ -140,6 +142,8 @@ export const createReflectionsService = ({
   });
 
   const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lessonId }) => {
+    const isPlatformAdmin = isPlatformAdminFor({ req, context: null });
+    console.log('[ADMIN ENDPOINT]', { path: req?.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     if (!lessonId) return { status: 400, payload: { error: 'validation_failed', message: 'lessonId is required.' } };
     if (isDemoOrTestMode) {
       let fallbackMatch = null;
@@ -181,7 +185,7 @@ export const createReflectionsService = ({
     }
 
     if (!ensureSupabase(res)) return null;
-    const lessonResult = await supabase.from('lessons').select('id,module_id,title').eq('id', lessonId).maybeSingle();
+  const lessonResult = await supabase.from('lessons').select('id,module_id,title').eq('id', lessonId).maybeSingle();
     if (lessonResult.error) {
       if (isMissingRelationError(lessonResult.error) || isMissingColumnError(lessonResult.error)) {
         if (courseId) return { courseId: String(courseId), lessonId: String(lessonId), moduleId: null, lessonTitle: null, moduleTitle: null, orgId };
@@ -197,7 +201,7 @@ export const createReflectionsService = ({
       return { status: 503, payload: { error: 'reflection_storage_unavailable', message: 'Reflection lesson is missing module context.' } };
     }
 
-    const moduleResult = await supabase.from('modules').select('id,course_id,title').eq('id', moduleId).maybeSingle();
+  const moduleResult = await supabase.from('modules').select('id,course_id,title').eq('id', moduleId).maybeSingle();
     if (moduleResult.error) {
       if (isMissingRelationError(moduleResult.error) || isMissingColumnError(moduleResult.error)) {
         if (courseId) return { courseId: String(courseId), lessonId: String(lessonId), moduleId, lessonTitle: lessonResult.data.title ?? null, moduleTitle: null, orgId };
@@ -214,7 +218,7 @@ export const createReflectionsService = ({
     if (courseId && String(resolvedCourseId) !== String(courseId)) {
       return { status: 404, payload: { error: 'lesson_not_found', message: 'The requested reflection lesson was not found in this course.' } };
     }
-    const courseResult = await supabase.from('courses').select('id,organization_id,org_id,title').eq('id', resolvedCourseId).maybeSingle();
+  const courseResult = await supabase.from('courses').select('id,organization_id,org_id,title').eq('id', resolvedCourseId).maybeSingle();
     if (courseResult.error) {
       if (isMissingRelationError(courseResult.error) || isMissingColumnError(courseResult.error)) {
         if (courseId) return { courseId: String(courseId), lessonId: String(lessonId), moduleId, lessonTitle: lessonResult.data.title ?? null, moduleTitle: moduleResult.data?.title ?? null, orgId };
@@ -225,7 +229,7 @@ export const createReflectionsService = ({
     const course = courseResult.data;
     if (!course) return { status: 404, payload: { error: 'course_not_found', message: 'Course not found.' } };
     const courseOrgId = pickOrgId(course.organization_id, course.org_id);
-    if (courseOrgId && String(courseOrgId).toLowerCase() !== String(orgId).toLowerCase()) {
+    if (!isPlatformAdmin && courseOrgId && String(courseOrgId).toLowerCase() !== String(orgId).toLowerCase()) {
       return { status: 403, payload: { error: 'org_scope_mismatch', message: 'This lesson does not belong to the selected organization.' } };
     }
     return {
@@ -275,7 +279,13 @@ export const createReflectionsService = ({
       const record = e2eStore.lessonReflections.get(buildReflectionStoreKey({ orgId, courseId: lessonContext.courseId, lessonId: lessonContext.lessonId, userId })) || null;
       return { status: 200, payload: { data: record ? shapeReflectionRecord(record) : null, meta: { mode: 'demo' } } };
     }
-    const { data, error } = await supabase.from('lesson_reflections').select('*').eq('organization_id', orgId).eq('course_id', lessonContext.courseId).eq('lesson_id', lessonContext.lessonId).eq('user_id', userId).maybeSingle();
+    const isPlatformAdmin = isPlatformAdminFor({ req, context: null });
+    const detailQuery = () => {
+      let q = supabase.from('lesson_reflections').select('*').eq('course_id', lessonContext.courseId).eq('lesson_id', lessonContext.lessonId).eq('user_id', userId).maybeSingle();
+      if (!isPlatformAdmin && orgId) q = q.eq('organization_id', orgId);
+      return q;
+    };
+    const { data, error } = await detailQuery();
     if (error) {
       if (isMissingRelationError(error) || isMissingColumnError(error)) {
         return { status: 200, payload: { data: null, meta: { degraded: true, reason: 'reflection_storage_unavailable' } } };
@@ -520,7 +530,12 @@ export const createReflectionsService = ({
       });
       return { status: 200, payload: { data: { rows: paged, total: rows.length }, meta: { mode: 'demo' } } };
     }
-    const { data, count, error } = await supabase.from('lesson_reflections').select('*', { count: 'exact' }).eq('organization_id', orgId).eq('course_id', lessonContext.courseId).eq('lesson_id', lessonContext.lessonId).order('updated_at', { ascending: false }).range(offset, offset + limit - 1);
+    const listQuery = () => {
+      let q = supabase.from('lesson_reflections').select('*', { count: 'exact' }).eq('course_id', lessonContext.courseId).eq('lesson_id', lessonContext.lessonId).order('updated_at', { ascending: false }).range(offset, offset + limit - 1);
+      if (!isPlatformAdmin && orgId) q = q.eq('organization_id', orgId);
+      return q;
+    };
+    const { data, count, error } = await listQuery();
     if (error) {
       if (isMissingRelationError(error) || isMissingColumnError(error)) return { status: 200, payload: { data: { rows: [], total: 0 }, meta: { degraded: true, reason: 'reflection_storage_unavailable' } } };
       throw error;
@@ -602,7 +617,8 @@ export const createReflectionsService = ({
       lessonTitle: lesson.title ?? null,
       moduleTitle: moduleLookup.get(String(lesson.module_id || '').toLowerCase())?.title ?? null,
     }]));
-    let query = supabase.from('lesson_reflections').select('*', { count: 'exact' }).eq('organization_id', orgId).eq('course_id', courseId).order('updated_at', { ascending: false });
+  let query = supabase.from('lesson_reflections').select('*', { count: 'exact' }).eq('course_id', courseId).order('updated_at', { ascending: false });
+  if (!isPlatformAdmin && orgId) query = query.eq('organization_id', orgId);
     if (lessonIdFilter) query = query.eq('lesson_id', lessonIdFilter);
     const queryResult = await query.range(offset, offset + limit - 1);
     const { data, count, error } = queryResult;

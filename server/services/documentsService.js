@@ -139,7 +139,8 @@ export const createDocumentsService = ({
       };
     }
 
-    const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId: resolvedRequestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     const adminOrgIds = Array.isArray(context.memberships)
       ? context.memberships
           .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
@@ -182,7 +183,9 @@ export const createDocumentsService = ({
       let next = query.order('created_at', { ascending: false });
       if (visibility) next = next.eq('visibility', visibility);
       if (resolvedRequestedOrgId) {
-        next = next.eq('organization_id', resolvedRequestedOrgId);
+        if (!isPlatformAdmin) {
+          next = next.eq('organization_id', resolvedRequestedOrgId);
+        }
       } else if (!isPlatformAdmin) {
         if (adminOrgIds.length > 0) {
           next = next.or(`visibility.eq.global,organization_id.in.(${adminOrgIds.join(',')})`);

@@ -1,4 +1,5 @@
 import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
+import isPlatformAdminFor from '../lib/platformAdmin.js';
 
 export const createCourseAssignmentsService = ({
   supabase,
@@ -158,6 +159,8 @@ export const createCourseAssignmentsService = ({
       });
     }
 
+    const isPlatformAdmin = isPlatformAdminFor({ req, context: null });
+    console.log('[ADMIN ENDPOINT]', { path: req?.path, isPlatformAdmin, orgId: finalOrganizationId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     if (!finalOrganizationId) {
       try {
         const headerOrgStrict = req.headers['x-org-id'] || req.headers['x-organization-id'];
@@ -190,10 +193,13 @@ export const createCourseAssignmentsService = ({
           headersSummary: summarizeHeaders(req.headers),
           bodySummary: summarizeRequestBody(req.body ?? null),
         });
-        return {
-          status: 400,
-          error: { code: 'organization_required', message: 'organization_id is required' },
-        };
+        if (!isPlatformAdmin) {
+          return {
+            status: 400,
+            error: { code: 'organization_required', message: 'organization_id is required' },
+          };
+        }
+        // platform admins may proceed without an explicit org; treat as ALL_ORGS
       }
     }
 

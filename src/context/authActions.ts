@@ -60,18 +60,14 @@ export const createAuthActions = ({
         url: `/api/auth/login`,
       });
 
-      const response = await fetch(resolveBrowserFetchUrl('/api/auth/login'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await (await import('../lib/authorizedFetch')).default(
+        resolveBrowserFetchUrl('/api/auth/login'),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: normalizedEmail, password, mfaCode }),
         },
-        credentials: 'include',
-        body: JSON.stringify({
-          email: normalizedEmail,
-          password,
-          mfaCode,
-        }),
-      });
+      );
 
       const data = await response.json();
 

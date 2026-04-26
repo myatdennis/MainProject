@@ -1,8 +1,10 @@
 import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { getCanonicalAccessToken, waitForAuthReady } from './canonicalAuth';
+import { getSupabase } from './supabaseClient';
 import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
 import { resolveOrgHeaderForRequest, pathRequiresOrgHeader } from './orgContext';
 import { resolveApiUrl } from '../config/apiBase';
+import { getNativeFetch } from './nativeFetch';
 
 export class NotAuthenticatedError extends Error {
   constructor(message = 'Backend session is unavailable') {
@@ -118,7 +120,9 @@ const refreshAuthToken = async (): Promise<boolean> => {
       if (!hasRefreshToken && devMode) {
         console.warn('[authorizedFetch] no refresh token in secureStorage; attempting cookie-based refresh fallback');
       }
-      const refreshResponse = await fetch(normalizeUrl('/api/auth/refresh'), {
+      const native = getNativeFetch();
+      const fetchImpl = native ?? fetch;
+      const refreshResponse = await fetchImpl(normalizeUrl('/api/auth/refresh'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -253,9 +257,19 @@ export default async function authorizedFetch(
     if (requireAuth && !allowE2EBypass) {
       // Wait for any in-flight refresh to finish before using token
       await waitForRefresh();
-      // Prefer canonical in-memory token (set by SecureAuthContext). Fall back
-      // to persisted secureStorage value if needed.
-      token = getCanonicalAccessToken() ?? getStoredAccessToken();
+      // Prefer explicit Supabase session token when available (ensures token
+      // is current and matches client session). Fall back to canonical in-memory
+      // token, then persisted secureStorage value if needed.
+      try {
+        const supabase = getSupabase();
+        if (supabase && typeof supabase.auth?.getSession === 'function') {
+          const { data } = await supabase.auth.getSession();
+          token = data?.session?.access_token ?? null;
+        }
+      } catch (err) {
+        // ignore and fallback
+      }
+      if (!token) token = getCanonicalAccessToken() ?? getStoredAccessToken();
       if (!token) {
         // If canonical auth isn't yet set, wait briefly for auth ready event
         // (use a short timeout so public endpoints are not blocked long).
@@ -311,16 +325,29 @@ export default async function authorizedFetch(
     let response: Response;
     const targetUrl = normalizeUrl(url);
     try {
+      // Attach Authorization only for internal API requests (not external services)
+      try {
+        const parsed = new URL(targetUrl, typeof window !== 'undefined' ? window.location.origin : undefined);
+        const apiOrigin = new URL(resolveApiUrl('/')).origin;
+        if (parsed.origin === apiOrigin && token) {
+          headers.set('Authorization', `Bearer ${token}`);
+        }
+      } catch {
+        // If URL parsing fails, fall back to attaching Authorization when we have a token.
+        if (token) headers.set('Authorization', `Bearer ${token}`);
+      }
       if (isAuthEndpoint(targetUrl)) {
         console.log('[AUTH REQUEST]', targetUrl);
         console.log('[COOKIES]', readCookieSnapshot());
       }
-      response = await fetch(targetUrl, {
+      const native = getNativeFetch();
+      const fetchImpl = native ?? fetch;
+      response = await fetchImpl(targetUrl, {
         ...init,
         credentials: init.credentials ?? 'include',
         headers,
         signal: controller.signal,
-      });
+      } as any);
       if (isAuthEndpoint(targetUrl)) {
         console.log('[AUTH RESPONSE]', response.status);
         console.log('[COOKIES]', readCookieSnapshot());
