@@ -53,6 +53,11 @@ const detectDevMode = () => {
 };
 
 const devMode = detectDevMode();
+// If we want to force all API requests to the backend origin, define a simple
+// runtime API origin mapping. This ensures calls to resolveApiUrl('/api/...')
+// will produce absolute URLs pointing to the backend host so cookies and
+// Authorization headers are preserved when calling cross-origin APIs.
+const FORCED_API_ORIGIN = devMode ? 'http://localhost:3000' : DEFAULT_PROD_API_ORIGIN;
 const isTestEnv = (() => {
   if (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITEST) {
     return true;
@@ -251,16 +256,10 @@ const normalizeBaseOutput = (value?: string | null) => {
 };
 
 export function getApiOrigin(): string {
-  const envBase = getEnvBase();
-  if (envBase.origin) {
-    return envBase.origin;
-  }
-  if (devMode && isBrowser && !isTestEnv) {
-    return '';
-  }
-  const browserOrigin = getBrowserOrigin();
-  if (browserOrigin) return browserOrigin;
-  return getNodeOrigin();
+  // Force API origin to a single canonical backend host so we never resolve
+  // client requests to mixed or incorrect origins. This implements the
+  // project's requirement that all API traffic go to the backend server.
+  return FORCED_API_ORIGIN;
 }
 
 export function getApiBaseUrl(): string {
@@ -299,6 +298,10 @@ export function getApiBaseUrl(): string {
 
   return DEFAULT_DEV_API_BASE;
 }
+
+// Canonical API base (origin + path prefix). Exported for modules that prefer
+// a single constant to compose absolute API URLs with.
+export const API_BASE = getApiBaseUrl();
 
 const splitPathAndSuffix = (input: string) => {
   if (!input) return { path: '', suffix: '' };
