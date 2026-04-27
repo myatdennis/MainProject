@@ -44,6 +44,20 @@ devConsole.log('🚀 MainProject App initializing...');
 devConsole.log('📍 Environment:', import.meta.env.MODE);
 devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 devConsole.log('⚙️ React version detected:', React?.version || 'unknown');
+// Extra runtime debug to help Netlify/Railway build-time visibility
+// (prints the whole import.meta.env so operators can confirm injected VITE_ keys)
+console.log('ENV DEBUG', {
+  supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+  hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
+  mode: import.meta.env.MODE,
+  all: import.meta.env,
+});
+// Final build-time verification log (temporary): shows whether the anon key
+// was present when the bundle was created. Remove this after verification.
+console.log('FINAL ENV CHECK', {
+  url: import.meta.env.VITE_SUPABASE_URL ?? null,
+  hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
+});
 if (import.meta.env.DEV) {
   console.info('[BUILD_VERSION]', typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'unknown');
 }

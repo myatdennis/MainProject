@@ -1345,18 +1345,26 @@ app.use((req, res, next) => {
 
   // Monkey-patch res.json and res.send so sends are logged
   const origJson = res.json.bind(res);
-  res.json = function patchedJson(body) {
+  const origSend = res.send.bind(res);
+
+  // Centralized safe logger for response sends to avoid duplication and
+  // accidental truncation/corruption when editing the two patched methods.
+  const logResSend = (body) => {
     try {
-      console.info('[RES SEND]', { ...meta, durationMs: Date.now() - start, status: res.statusCode, bodyPreview: typeof body === 'object' ? '[object]' : String(body).slice(0,200) });
-    } catch (e) {}
+      const bodyPreview = typeof body === 'object' ? '[object]' : String(body).slice(0, 200);
+      console.info('[RES SEND]', { ...meta, durationMs: Date.now() - start, status: res.statusCode, bodyPreview });
+    } catch (e) {
+      // swallow logging errors to avoid affecting response flow
+    }
+  };
+
+  res.json = function patchedJson(body) {
+    logResSend(body);
     return origJson(body);
   };
 
-  const origSend = res.send.bind(res);
   res.send = function patchedSend(body) {
-    try {
-      console.info('[RES SEND]', { ...meta, durationMs: Date.now() - start, status: res.statusCode, bodyPreview: typeof body === 'object' ? '[object]' : String(body).slice(0,200) });
-    } catch (e) {}
+    logResSend(body);
     return origSend(body);
   };
 

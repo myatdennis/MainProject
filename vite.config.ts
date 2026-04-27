@@ -34,6 +34,9 @@ export default async () => {
   }
 
   return defineConfig({
+    // Ensure Vite exposes envs prefixed with VITE_. Some CI setups or
+    // custom tooling may override envPrefix; be explicit to avoid surprises.
+    envPrefix: ['VITE_'],
     define: {
       // Build version stamp — visible in browser console as __APP_BUILD_TIME__
       // Confirms which bundle is running after a deploy. Check: console.log(__APP_BUILD_TIME__)

@@ -89,25 +89,43 @@ async function ensureVite() {
     console.log('[e2e-dev] Vite dev already running on 5174');
     return;
   } catch {
+    // Build an env object for the Vite dev process. Intentionally do NOT
+    // unconditionally clear VITE_SUPABASE_* in all environments — clearing
+    // them caused production builds to bake empty anon keys into the bundle
+    // when scripts were executed in CI. Only apply dev/E2E overrides when
+    // running locally (NODE_ENV !== 'production').
+    const viteEnv = {
+      ...process.env,
+      PORT: '5174',
+      // vite.config.ts reads VITE_PORT (not PORT) to set the dev server port
+      VITE_PORT: '5174',
+      VITE_E2E_TEST_MODE: 'true',
+      VITE_DEV_FALLBACK: 'true',
+      // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
+      // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
+      // Without this, Vite would proxy to port 3000 (the regular dev server)
+      // which does not have E2E_TEST_MODE set and therefore rejects e2e tokens.
+      VITE_API_PROXY_TARGET: 'http://127.0.0.1:8888',
+      // Force API client to use relative /api (Vite proxy) instead of any pre-set external base
+      VITE_API_BASE_URL: '',
+    };
+
+    // Only apply the demo-mode Supabase clearing when we are not running in
+    // a production environment. This prevents CI or Netlify/GH Actions runs
+    // from accidentally injecting empty VITE_* values into a build.
+    if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
+      viteEnv.VITE_SUPABASE_URL = '';
+      viteEnv.VITE_SUPABASE_ANON_KEY = '';
+    } else {
+      // In production, never overwrite or clear VITE_* values. If they are
+      // missing, warn so operators can correct the build environment.
+      if (!process.env.VITE_SUPABASE_ANON_KEY) {
+        console.warn('[e2e-dev] production environment detected but VITE_SUPABASE_ANON_KEY is not set; skipping dev override');
+      }
+    }
+
     vite = spawnProc('npm', ['run', 'dev'], {
-      env: {
-        ...process.env,
-        PORT: '5174',
-        // vite.config.ts reads VITE_PORT (not PORT) to set the dev server port
-        VITE_PORT: '5174',
-        VITE_E2E_TEST_MODE: 'true',
-        VITE_DEV_FALLBACK: 'true',
-        // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
-        // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
-        // Without this, Vite would proxy to port 3000 (the regular dev server)
-        // which does not have E2E_TEST_MODE set and therefore rejects e2e tokens.
-        VITE_API_PROXY_TARGET: 'http://127.0.0.1:8888',
-        // Force API client to use relative /api (Vite proxy) instead of any pre-set external base
-        VITE_API_BASE_URL: '',
-        // Disable Supabase during E2E runs so the app uses demo mode and Vite proxy for /api
-        VITE_SUPABASE_URL: '',
-        VITE_SUPABASE_ANON_KEY: ''
-      },
+      env: viteEnv,
       shell: true,
     });
     await waitForUrl(VITE_URL, 30_000);

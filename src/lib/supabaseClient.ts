@@ -19,6 +19,9 @@ const _supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const _supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const _supabaseConfigured = Boolean(_supabaseUrl && _supabaseAnonKey);
 
+// E2E detection: Playwright may set a cookie to indicate bypass mode.
+const isE2E = typeof document !== 'undefined' && document.cookie.includes('x-e2e-bypass=true');
+
 // Guard: if credentials are missing (E2E / demo mode), use a stub placeholder URL so
 // createClient doesn't throw at module-load time. All actual calls go through the Proxy
 // below which redirects to window.__E2E_SUPABASE_CLIENT when present.
@@ -106,6 +109,12 @@ export function getSupabase(): SupabaseClient | null {
   }
 
   if (!hasSupabaseConfig()) {
+    // When running E2E tests we intentionally allow missing build-time
+    // env vars because tests may inject a runtime fake via
+    // window.__E2E_SUPABASE_CLIENT or rely on an in-memory fallback.
+    if (isE2E) {
+      return null;
+    }
     if (import.meta.env.DEV && !warnedMissingConfig) {
       console.warn('[supabaseClient] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY');
       warnedMissingConfig = true;
