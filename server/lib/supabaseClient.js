@@ -6,6 +6,35 @@
 import '../env/loadEnv.js';
 import { createClient } from '@supabase/supabase-js';
 import { AsyncLocalStorage } from 'async_hooks';
+// lightweight timeout wrapper to protect admin client calls from hanging
+const withTimeoutMs = (promise, ms = 3000) => {
+  if (!promise || typeof promise.then !== 'function') return promise;
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`supabase_call_timeout:${ms}ms`)), ms);
+  });
+  return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
+};
+
+const wrapClientWithTimeout = (client, ms = Number(process.env.SUPABASE_CALL_TIMEOUT_MS || 3000)) => {
+  if (!client || typeof client !== 'object') return client;
+  return new Proxy(client, {
+    get(target, prop) {
+      const v = target[prop];
+      if (typeof v === 'function') {
+        return function wrapped(...args) {
+          try {
+            const result = v.apply(target, args);
+            return withTimeoutMs(result, ms);
+          } catch (err) {
+            return Promise.reject(err);
+          }
+        };
+      }
+      return v;
+    },
+  });
+};
 
 const configuredSupabaseUrl = process.env.SUPABASE_URL;
 const configuredSupabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -29,10 +58,19 @@ export function getSupabaseAdminClient() {
   const signature = clientSignature(url, key);
   if (!signature) return null;
   if (!cachedAdminClient || cachedAdminSignature !== signature) {
-    cachedAdminClient = createClient(url, key);
+    try {
+      if (!key) {
+        console.error('[SUPABASE ADMIN CLIENT] missing service role key');
+      }
+      cachedAdminClient = createClient(url, key);
+      console.info('[SUPABASE ADMIN CLIENT] created');
+    } catch (err) {
+      console.error('[SUPABASE ADMIN CLIENT] creation failed', err?.message || err);
+      throw err;
+    }
     cachedAdminSignature = signature;
   }
-  return cachedAdminClient;
+  return wrapClientWithTimeout(cachedAdminClient);
 }
 
 export function getSupabaseUserClient() {
@@ -91,7 +129,14 @@ export function createSupabaseClientForToken(token) {
   const anonKey = configuredSupabaseAnonKey;
   if (!url || !anonKey) return null;
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
-  return createClient(url, anonKey, { global: { headers } });
+  try {
+    const client = createClient(url, anonKey, { global: { headers } });
+    // Note: don't attempt any network operation here; creation is cheap.
+    return client;
+  } catch (err) {
+    console.error('[SUPABASE REQUEST CLIENT] creation failed', err?.message || err);
+    return null;
+  }
 }
 
 /**

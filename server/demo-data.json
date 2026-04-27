@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-27T02:56:18.392Z",
+        "published_at": "2026-04-27T15:46:16.333Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -156,9 +156,9 @@
   "documents": [],
   "surveys": [
     [
-      "e2e-survey-1777258578391",
+      "e2e-survey-1777304776332",
       {
-        "id": "e2e-survey-1777258578391",
+        "id": "e2e-survey-1777304776332",
         "title": "Demo Survey",
         "organization_id": "demo-sandbox-org",
         "organizationId": "demo-sandbox-org"
@@ -201,8 +201,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-27T02:56:38.962Z",
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "created_at": "2026-04-27T15:52:49.280Z",
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -244,8 +244,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-27T02:56:38.962Z",
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "created_at": "2026-04-27T15:52:49.280Z",
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -284,8 +284,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-27T02:56:38.962Z",
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "created_at": "2026-04-27T15:52:49.280Z",
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -326,8 +326,8 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-27T02:56:38.962Z",
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "created_at": "2026-04-27T15:52:49.280Z",
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -367,8 +367,46 @@
           "cohortIds": [],
           "departmentIds": []
         },
-        "created_at": "2026-04-27T02:56:38.962Z",
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "created_at": "2026-04-27T15:52:49.280Z",
+        "updated_at": "2026-04-27T15:52:49.280Z"
+      }
+    ],
+    [
+      "survey-mohdlxfk",
+      {
+        "id": "survey-mohdlxfk",
+        "title": "e2e test survey",
+        "description": "",
+        "type": "custom",
+        "status": "draft",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-04-27T15:52:49.280Z",
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ]
   ],
@@ -384,7 +422,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -400,7 +438,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -413,7 +451,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -428,7 +466,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ],
     [
@@ -442,7 +480,7 @@
         "user_ids": [],
         "cohort_ids": [],
         "department_ids": [],
-        "updated_at": "2026-04-27T02:56:38.962Z"
+        "updated_at": "2026-04-27T15:52:49.280Z"
       }
     ]
   ],

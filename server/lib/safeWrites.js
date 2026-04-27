@@ -1,6 +1,23 @@
 import { getSupabaseAdminClient } from './supabaseClient.js';
 import sql from '../db.js';
 
+// Local helper: wrap a promise and reject if it doesn't settle within `ms` ms
+const withTimeout = (promise, ms = 3000, label = 'operation') => {
+  if (!promise || typeof promise.then !== 'function') return promise;
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${ms}ms`);
+      err.code = 'ETIMEDOUT_SAFEWRITE';
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
+};
+
+const SUPABASE_CALL_TIMEOUT_MS = Number(process.env.SUPABASE_CALL_TIMEOUT_MS || 3000);
+const SAFEWRITE_VERIFY_MAX_ATTEMPTS = Number(process.env.SAFEWRITE_VERIFY_MAX_ATTEMPTS || 3);
+
 // Tables allowed for SQL fallback verification. This prevents SQL injection
 // and limits direct SQL checks to known safe tables.
 const SQL_FALLBACK_ALLOWED = new Set(['assignments', 'courses', 'surveys', 'organizations']);
@@ -47,9 +64,9 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
     let res;
     if (select) {
       const sel = typeof select === 'string' ? select : '*';
-      res = await client.from(table).insert(rows).select(sel);
+      res = await withTimeout(client.from(table).insert(rows).select(sel), SUPABASE_CALL_TIMEOUT_MS, 'safeInsert.insert.select');
     } else {
-      res = await client.from(table).insert(rows);
+      res = await withTimeout(client.from(table).insert(rows), SUPABASE_CALL_TIMEOUT_MS, 'safeInsert.insert');
     }
 
     // Optional read-after-write verification. Callers opt into this to get
@@ -77,20 +94,18 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
         if (!verifyFn) {
           logger.warn('safe_insert_verify_skipped', { requestId, table, reason: 'no_ids_or_predicate' });
         } else {
-          const start = Date.now();
-          const backoffs = [100, 250, 500, 1000, 2000];
-          let backoffIndex = 0;
           let ok = false;
-          while (Date.now() - start < verifyTimeoutMs) {
+          let attempt = 0;
+          const backoffs = [100, 250, 500];
+          while (attempt < SAFEWRITE_VERIFY_MAX_ATTEMPTS) {
+            attempt += 1;
             try {
-              // eslint-disable-next-line no-await-in-loop
-              ok = await verifyFn();
+              ok = await withTimeout(verifyFn(), SUPABASE_CALL_TIMEOUT_MS, `safeInsert.verify.attempt${attempt}`);
               if (ok) break;
             } catch (e) {
-              // swallow and retry until timeout
+              logger.warn('safe_insert_verify_attempt_error', { requestId, table, attempt, message: e?.message || String(e) });
             }
-            const delay = backoffs[Math.min(backoffIndex, backoffs.length - 1)];
-            backoffIndex += 1;
+            const delay = backoffs[Math.min(attempt - 1, backoffs.length - 1)];
             // eslint-disable-next-line no-await-in-loop
             await new Promise((r) => setTimeout(r, delay));
           }
@@ -122,7 +137,7 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
 
                 // Use uuid[] parameter type for correct typing in Postgres.
                 const query = `select id from public.${tableName} where id = any($1::uuid[])`;
-                const sqlRes = await sql.unsafe(query, [insertedIds]);
+                const sqlRes = await withTimeout(sql.unsafe(query, [insertedIds]), SUPABASE_CALL_TIMEOUT_MS, 'safeInsert.sql_fallback');
                 const rowsFound = Array.isArray(sqlRes) ? sqlRes : (sqlRes && sqlRes.rows) ? sqlRes.rows : [];
                 if (rowsFound && rowsFound.length > 0) {
                   logger.info('safe_insert_sql_fallback_success', { requestId, table, found: rowsFound.length });
@@ -143,7 +158,7 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
             }
           }
         }
-      } catch (verifyErr) {
+          } catch (verifyErr) {
         logger.error('safe_insert_verify_error', { requestId, table, message: verifyErr?.message ?? String(verifyErr) });
         throw verifyErr;
       }
