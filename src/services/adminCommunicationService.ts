@@ -21,6 +21,11 @@ const unwrapApiData = <T,>(payload: T | { data?: T } | null | undefined): T | nu
 };
 
 export const sendOrganizationMessage = async (organizationId: string, payload: SendMessagePayload) => {
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (sendOrganizationMessage)');
+    throw new Error('Organization context is required');
+  }
+
   const response = await apiRequest<AdminMessageRecord | { data?: AdminMessageRecord }>(
     `/api/admin/organizations/${organizationId}/messages`,
     {
@@ -32,6 +37,11 @@ export const sendOrganizationMessage = async (organizationId: string, payload: S
 };
 
 export const listOrganizationMessages = async (organizationId: string) => {
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (listOrganizationMessages)');
+    return [];
+  }
+
   const response = await apiRequest<AdminMessageRecord[] | { data?: AdminMessageRecord[] }>(
     `/api/admin/organizations/${organizationId}/messages`,
   );

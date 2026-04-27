@@ -333,13 +333,16 @@ const AdminUsers = () => {
   );
 
   useEffect(() => {
+    // Only fetch org-scoped modules when we have a concrete activeOrgId
+    // (and it's not the ALL_ORGS sentinel). RequireAuth and auth context
+    // should ensure this is available during initial page load; this is an
+    // extra defensive guard to prevent accidental requests.
     if (!activeOrgId || activeOrgId === 'ALL_ORGS') return;
     let active = true;
     (async () => {
       try {
-        const res = await apiRequest<{ courses: Array<{ modules?: Array<{ slug?: string; title?: string; id?: string }> }> }>(
-          `/api/admin/courses?orgId=${activeOrgId}&status=published&limit=5`
-        );
+        const path = `/api/admin/courses${activeOrgId ? `?orgId=${encodeURIComponent(activeOrgId)}` : ''}&status=published&limit=5`;
+        const res = await apiRequest<{ courses: Array<{ modules?: Array<{ slug?: string; title?: string; id?: string }> }> }>(path);
         if (!active) return;
         const allModules: Array<{ key: string, name: string }> = [];
         const seen = new Set<string>();
@@ -419,14 +422,21 @@ const AdminUsers = () => {
       // Send reminder emails via the server for each selected user
       await Promise.all(
         selectedUsers.map((userId) =>
-          apiRequest(`/api/admin/users/${userId}/messages`, {
-            method: 'POST',
-            body: {
-              subject: 'Course Reminder',
-              body: 'This is a reminder to continue your course progress.',
-              orgId: activeOrgScopeId,
-            },
-          }).catch(() => null), // don't let one failure block others
+          (async () => {
+            if (!activeOrgScopeId && !isPlatformAdmin) {
+              console.warn('Skipping API call — no org selected (handleSendReminder)');
+              // org call skipped during hardening: no-op
+              return null;
+            }
+            return apiRequest(`/api/admin/users/${userId}/messages`, {
+              method: 'POST',
+              body: {
+                subject: 'Course Reminder',
+                body: 'This is a reminder to continue your course progress.',
+                orgId: activeOrgScopeId,
+              },
+            }).catch(() => null);
+          })(),
         ),
       );
       showToast(`Reminder sent to ${selectedUsers.length} user(s)`, 'success');
@@ -531,6 +541,11 @@ const AdminUsers = () => {
             body.organizationId = organizationId;
           }
 
+          if (body.organizationId == null) {
+            console.warn('Skipping API call — no org selected (confirmDeleteUser)');
+            // org call skipped during hardening: no-op
+            throw new Error('Organization context is required');
+          }
           await apiRequest(`/api/admin/users/${userId}`, {
             method: 'DELETE',
             body,

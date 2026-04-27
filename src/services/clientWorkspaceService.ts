@@ -1,8 +1,8 @@
-import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+import apiRequest from '../utils/apiClient';
 
 // Workspace APIs use mixed casing on the wire. We disable auto-transforms here
 // to preserve expected request/response shapes and rely on explicit mappers.
-const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
+const apiFetch = async <T>(path: string, options: any = {}) =>
   apiRequest<T>(path, { noTransform: true, ...options });
 
 export type StrategicPlanVersion = {
@@ -85,6 +85,11 @@ const mapActionItem = (record: any): ActionItem => ({
 });
 
 export const getWorkspace = async (orgId: string): Promise<OrgWorkspace> => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (getWorkspace)');
+    throw new Error('Organization context is required');
+  }
+
   const json = await apiFetch<{ data: { orgId: string; strategicPlans: any[]; sessionNotes: any[]; actionItems: any[] } }>(
     `/api/orgs/${orgId}/workspace`
   );
@@ -103,6 +108,11 @@ export const addStrategicPlanVersion = async (
   createdBy = 'Huddle Co.',
   metadata: Record<string, any> = {}
 ): Promise<StrategicPlanVersion> => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (addStrategicPlanVersion)');
+    throw new Error('Organization context is required');
+  }
+
   const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/strategic-plans`, {
     method: 'POST',
     body: { content, createdBy, metadata }
@@ -112,11 +122,21 @@ export const addStrategicPlanVersion = async (
 };
 
 export const listStrategicPlans = async (orgId: string): Promise<StrategicPlanVersion[]> => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (listStrategicPlans)');
+    return [];
+  }
+
   const json = await apiFetch<{ data: any[] }>(`/api/orgs/${orgId}/workspace/strategic-plans`);
   return (json.data ?? []).map(mapStrategicPlan);
 };
 
 export const deleteStrategicPlanVersion = async (orgId: string, versionId: string) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (deleteStrategicPlanVersion)');
+    return;
+  }
+
   await apiFetch<void>(`/api/orgs/${orgId}/workspace/strategic-plans/${versionId}`, {
     method: 'DELETE',
     expectedStatus: [200, 204],
@@ -125,6 +145,11 @@ export const deleteStrategicPlanVersion = async (orgId: string, versionId: strin
 };
 
 export const getStrategicPlanVersion = async (orgId: string, versionId: string) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (getStrategicPlanVersion)');
+    return null;
+  }
+
   const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/strategic-plans/${versionId}`);
   return json?.data ? mapStrategicPlan(json.data) : null;
 };
@@ -134,6 +159,11 @@ export const addSessionNote = async (
   note: Omit<SessionNote, 'id' | 'createdBy' | 'orgId'>,
   createdBy = 'Huddle Co.'
 ) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (addSessionNote)');
+    throw new Error('Organization context is required');
+  }
+
   const payload = {
     title: note.title,
     body: note.body,
@@ -152,11 +182,21 @@ export const addSessionNote = async (
 };
 
 export const listSessionNotes = async (orgId: string) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (listSessionNotes)');
+    return [];
+  }
+
   const json = await apiFetch<{ data: any[] }>(`/api/orgs/${orgId}/workspace/session-notes`);
   return (json.data ?? []).map(mapSessionNote);
 };
 
 export const addActionItem = async (orgId: string, item: Omit<ActionItem, 'id' | 'orgId'>) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (addActionItem)');
+    throw new Error('Organization context is required');
+  }
+
   const payload = {
     title: item.title,
     description: item.description,
@@ -175,6 +215,11 @@ export const addActionItem = async (orgId: string, item: Omit<ActionItem, 'id' |
 };
 
 export const updateActionItem = async (orgId: string, item: ActionItem) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (updateActionItem)');
+    throw new Error('Organization context is required');
+  }
+
   const payload = {
     title: item.title,
     description: item.description,
@@ -193,11 +238,21 @@ export const updateActionItem = async (orgId: string, item: ActionItem) => {
 };
 
 export const listActionItems = async (orgId: string) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (listActionItems)');
+    return [];
+  }
+
   const json = await apiFetch<{ data: any[] }>(`/api/orgs/${orgId}/workspace/action-items`);
   return (json.data ?? []).map(mapActionItem);
 };
 
 export const checkWorkspaceAccess = async (orgId: string) => {
+  if (!orgId) {
+    console.warn('Skipping API call — no org selected (checkWorkspaceAccess)');
+    return null;
+  }
+
   try {
     const json = await apiFetch<{ data: { role: string } }>(`/api/orgs/${orgId}/workspace/access`);
     return json?.data ?? null;

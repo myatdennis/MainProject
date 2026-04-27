@@ -704,6 +704,11 @@ export const getOrgStats = async (id: string): Promise<any> => {
 
 export const listOrgMembers = async (organizationId: string): Promise<OrgMember[]> => {
   requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (listOrgMembers)');
+    return [];
+  }
+
   const json = await apiRequest<{ data: any[] }>(`/api/admin/organizations/${organizationId}/members`);
   return (json.data ?? []).map(mapMemberRecord);
 };
@@ -712,6 +717,12 @@ export const addOrgMember = async (
   organizationId: string,
   payload: { userId: string; role?: string }
 ): Promise<OrgMember> => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (addOrgMember)');
+    throw new Error('Organization context is required');
+  }
+
   const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/members`, {
     method: 'POST',
     body: payload,
@@ -721,6 +732,12 @@ export const addOrgMember = async (
 };
 
 export const removeOrgMember = async (organizationId: string, membershipId: string): Promise<void> => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (removeOrgMember)');
+    return;
+  }
+
   await apiRequest(`/api/admin/organizations/${organizationId}/members/${membershipId}`, {
     method: 'DELETE',
     expectedStatus: [200, 204],
@@ -739,10 +756,22 @@ export type OrgInviteInput = {
 };
 
 export const listOrgInvites = async (organizationId: string) => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (listOrgInvites)');
+    return { data: [] } as any;
+  }
+
   return apiRequest<{ data: OrgProfileInvite[] }>(`/api/admin/organizations/${organizationId}/invites`);
 };
 
 export const createOrgInvite = async (organizationId: string, payload: OrgInviteInput) => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (createOrgInvite)');
+    throw new Error('Organization context is required');
+  }
+
   return apiRequest<{ data: any; duplicate?: boolean }>(`/api/admin/organizations/${organizationId}/invites`, {
     method: 'POST',
     body: payload,
@@ -750,6 +779,12 @@ export const createOrgInvite = async (organizationId: string, payload: OrgInvite
 };
 
 export const bulkOrgInvites = async (organizationId: string, invites: OrgInviteInput[]) => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (bulkOrgInvites)');
+    return { results: [] } as any;
+  }
+
   return apiRequest<{ results: Array<Record<string, any>> }>(`/api/admin/organizations/${organizationId}/invites/bulk`, {
     method: 'POST',
     body: { invites },
@@ -757,18 +792,36 @@ export const bulkOrgInvites = async (organizationId: string, invites: OrgInviteI
 };
 
 export const resendOrgInvite = async (organizationId: string, inviteId: string) => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (resendOrgInvite)');
+    return { data: null } as any;
+  }
+
   return apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/invites/${inviteId}/resend`, {
     method: 'POST',
   });
 };
 
 export const remindOrgInvite = async (organizationId: string, inviteId: string) => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (remindOrgInvite)');
+    return { data: null } as any;
+  }
+
   return apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/invites/${inviteId}/remind`, {
     method: 'POST',
   });
 };
 
 export const revokeOrgInvite = async (organizationId: string, inviteId: string) => {
+  requireExplicitAdminOrgId('admin', organizationId);
+  if (!organizationId) {
+    console.warn('Skipping API call — no org selected (revokeOrgInvite)');
+    return { data: null } as any;
+  }
+
   return apiRequest(`/api/admin/organizations/${organizationId}/invites/${inviteId}`, {
     method: 'DELETE',
     expectedStatus: [200, 204],

@@ -6,12 +6,17 @@ import type { AuthState, SessionSurface, SurfaceAuthStatus } from './surfaceAcce
 export interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
+  authReady?: boolean;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
   membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
   hasActiveMembership: boolean;
   surfaceAuthStatus: Record<SessionSurface, SurfaceAuthStatus>;
   orgResolutionStatus: OrgResolutionStatus;
+  // orgReady is true when organization resolution has completed (ready or degraded)
+  orgReady: boolean;
+  // selectedOrgId mirrors activeOrgId but named for compatibility with callers
+  selectedOrgId?: string | null;
   user: UserSession | null;
   memberships: UserMembership[];
   organizationIds: string[];
@@ -35,18 +40,21 @@ export interface AuthContextType {
 export const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false, client: false },
   authInitializing: true,
+  authReady: false,
   authStatus: 'booting',
   sessionStatus: 'loading',
   membershipStatus: 'idle',
   hasActiveMembership: false,
   surfaceAuthStatus: { admin: 'idle', lms: 'idle', client: 'idle' },
   orgResolutionStatus: 'idle',
+  orgReady: false,
   user: null,
   memberships: [],
   organizationIds: [],
   activeOrgId: null,
   lastActiveOrgId: null,
   requestedOrgId: null,
+  selectedOrgId: null,
   setRequestedOrgHint() {},
   async login() {
     return {

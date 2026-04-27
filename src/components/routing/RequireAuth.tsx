@@ -62,6 +62,8 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     organizationIds,
     logout,
   } = useSecureAuth();
+  const orgReady = orgResolutionStatus === 'ready' || orgResolutionStatus === 'degraded';
+  const authReady = (useSecureAuth() as any).authReady ?? true;
   const location = useLocation();
   const params = useParams<Record<string, string | undefined>>();
   // Once authentication succeeds once, this ref stays true for the lifetime of
@@ -753,6 +755,18 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   // run in the background and update state without blocking the page render.
   const shouldShowBootstrapSpinner =
     !hasResolvedAuthRef.current && bootstrapInProgress;
+
+  // Global bootstrap guard: if the auth subsystem or org resolution hasn't
+  // completed yet during initial bootstrap, block rendering to avoid routes
+  // issuing API calls with null org id. This mirrors the signals exposed
+  // from the auth context.
+  if (!hasResolvedAuthRef.current && (!authReady || !orgReady)) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
+        <Loading size="lg" />
+      </div>
+    );
+  }
 
   if (shouldShowBootstrapSpinner) {
     return (

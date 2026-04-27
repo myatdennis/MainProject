@@ -207,7 +207,7 @@ function App() {
  *  4. No other hooks exist in this component — there is nothing after the return.
  */
 const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
-  const { authInitializing, authStatus, sessionStatus, orgResolutionStatus } = useSecureAuth();
+  const { authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus } = useSecureAuth();
   const location = useLocation();
 
   const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
@@ -220,7 +220,13 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
   // Block protected surfaces until the auth bootstrap reaches a stable state.
   // This prevents any protected UI from rendering before auth/org resolution
   // which was the root cause of numerous flaky E2E races.
-  const blocking = isProtectedSurface && !isPublicAuthPath && (authInitializing || sessionStatus === 'loading' || orgResolutionStatus === 'resolving');
+  // Block protected surfaces until the auth subsystem reports ready and
+  // bootstrap has settled. This prevents races where components assume a
+  // session that hasn't been established yet.
+  const blocking =
+    isProtectedSurface &&
+    !isPublicAuthPath &&
+    (!authReady || authInitializing || sessionStatus === 'loading' || orgResolutionStatus === 'resolving');
 
   if (import.meta.env.DEV) {
     console.debug('[AUTH ROOT GATE]', {

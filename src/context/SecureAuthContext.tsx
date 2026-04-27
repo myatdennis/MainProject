@@ -210,6 +210,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   // Hoist authInitializing and setAuthInitializing to top-level scope
   const [authInitializing, setAuthInitializing] = useState(true);
+  // New: authReady indicates Supabase auth subsystem has reported a state (via getSession or onAuthStateChange)
+  const [authReady, setAuthReady] = useState(false);
+  const authReadyRef = useRef<boolean>(false);
+  useEffect(() => {
+    authReadyRef.current = authReady;
+  }, [authReady]);
+  // If we need to defer showing a bootstrap error until auth subsystem reports, store the reason here
+  const [pendingBootstrapReason, setPendingBootstrapReason] = useState<string | null>(null);
   type AuthBootstrapState =
     | 'not_started'
     | 'loading_local_session'
@@ -505,6 +513,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       setUser(session);
       setMemberships(resolvedMemberships);
+      // Debug: surface auth readiness and session presence when session applied
+      try {
+        // eslint-disable-next-line no-console
+        console.log('AUTH STATE', { authReady: authReadyRef.current, hasSession: !!session });
+      } catch (e) {
+        // ignore
+      }
       setOrganizationIds(orgIds);
       // Resolve active org deterministically and ensure platform_admin gets a special ALL_ORGS flag
       const resolveActiveOrg = (sess: UserSession | null) => {
@@ -891,7 +906,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   setAuthStatus('unauthenticated', `continueAsGuest:${reason}`);
   setSessionStatus('unauthenticated', `continueAsGuest:${reason}`);
   setAuthInitializing(false);
-  setBootstrapError(reason.startsWith('bootstrap_') ? 'Session bootstrap failed. Please log in.' : null);
+  // Only show the blocking bootstrap error if the auth subsystem has
+  // already reported its readiness. Otherwise defer until onAuthStateChange
+  // arrives so we avoid false negatives during init races.
+  if (reason.startsWith('bootstrap_')) {
+    if (authReadyRef.current) {
+      setBootstrapError('Session bootstrap failed. Please log in.');
+    } else {
+      setPendingBootstrapReason(reason);
+      // clear any visible error for now
+      setBootstrapError(null);
+      console.warn('[AUTH] deferred bootstrap error until authReady', { reason });
+    }
+  } else {
+    setBootstrapError(null);
+  }
   lastSessionFetchResultRef.current = 'unauthenticated';
     },
     [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError, setSessionStatus],
@@ -1229,6 +1258,72 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     fetchServerSessionRef.current = fetchServerSession;
   }, [fetchServerSession]);
 
+  // Subscribe to Supabase auth state to mark the auth subsystem as ready
+  useEffect(() => {
+    try {
+      const client = getSupabase();
+      if (!client || !client.auth || typeof client.auth.onAuthStateChange !== 'function') {
+        return;
+      }
+      const { data: sub } = client.auth.onAuthStateChange((event: any, session: any) => {
+        // Mark auth subsystem as ready once we receive an event
+        if (!authReadyRef.current) {
+          setAuthReady(true);
+          // eslint-disable-next-line no-console
+          console.log('AUTH STATE', { authReady: true, hasSession: !!session });
+        } else {
+          // eslint-disable-next-line no-console
+          console.log('AUTH STATE CHANGE', { event, hasSession: !!session });
+        }
+
+        // If we had deferred a bootstrap error because auth wasn't ready,
+        // resolve it now based on whether a session exists.
+        if (pendingBootstrapReason) {
+          if (session) {
+            // session present, clear pending error and continue
+            setPendingBootstrapReason(null);
+            setBootstrapError(null);
+            setAuthInitializing(false);
+            setAuthStatus('authenticated', 'onAuthStateChange:session_present');
+            setSessionStatus('authenticated', 'onAuthStateChange:session_present');
+          } else {
+            // no session — surface the error now
+            setPendingBootstrapReason(null);
+            setAuthInitializing(false);
+            setAuthStatus('unauthenticated', 'onAuthStateChange:no_session');
+            setSessionStatus('unauthenticated', 'onAuthStateChange:no_session');
+            setBootstrapError('Session bootstrap failed. Please log in.');
+          }
+        }
+      });
+      return () => {
+        try {
+          // handle multiple client library return shapes
+          if (!sub) return;
+          // supabase-js v2 sometimes returns { data: { subscription } }
+          const candidate: any = sub;
+          if (typeof candidate.unsubscribe === 'function') {
+            candidate.unsubscribe();
+            return;
+          }
+          if (candidate?.subscription && typeof candidate.subscription.unsubscribe === 'function') {
+            candidate.subscription.unsubscribe();
+            return;
+          }
+          // fallback: if it exposes data and a subscription
+          if (candidate?.data?.subscription && typeof candidate.data.subscription.unsubscribe === 'function') {
+            candidate.data.subscription.unsubscribe();
+            return;
+          }
+        } catch (e) {
+          // ignore unsubscribe errors
+        }
+      };
+    } catch (e) {
+      // ignore
+    }
+  }, [pendingBootstrapReason]);
+
   useEffect(() => {
     refreshTokenCallbackRef.current = refreshTokenCallback;
     // Mark this context as the central refresh manager so lower-level
@@ -1318,13 +1413,46 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
               try {
                 clearBootstrapFailOpenTimer();
                 if (typeof window !== 'undefined') {
-                  bootstrapFailOpenTimerRef.current = window.setTimeout(() => {
-                    if (authInitializing) {
-                      console.error('AUTH BOOTSTRAP FAILED: no session');
-                      setAuthInitializing(false);
-                      setAuthStatus('unauthenticated', 'bootstrap:timeout');
-                      setSessionStatus('unauthenticated', 'bootstrap:timeout');
-                      setBootstrapError('AUTH BOOTSTRAP FAILED: no session');
+                  // Use an async timeout handler to consult Supabase session and
+                  // avoid surfacing a bootstrap error until the auth subsystem
+                  // has had a chance to report its state.
+                  bootstrapFailOpenTimerRef.current = window.setTimeout(async () => {
+                    if (!authInitializing) return;
+                    try {
+                      const client = getSupabase();
+                      let sessionExists = false;
+                      if (client && client.auth && typeof client.auth.getSession === 'function') {
+                        try {
+                          const res = await client.auth.getSession();
+                          const session = res?.data?.session ?? null;
+                          sessionExists = Boolean(session);
+                          // Debug log for presence
+                          // eslint-disable-next-line no-console
+                          console.log('AUTH STATE (bootstrap timeout check)', { authReady: authReadyRef.current, hasSession: !!session });
+                        } catch (e) {
+                          // ignore getSession errors and treat as no session for now
+                        }
+                      }
+                      if (!sessionExists) {
+                        // Only set a blocking bootstrap error if the auth subsystem
+                        // has already reported (authReady) and there's no session.
+                        if (authReadyRef.current) {
+                          console.error('AUTH BOOTSTRAP FAILED: no session');
+                          setAuthInitializing(false);
+                          setAuthStatus('unauthenticated', 'bootstrap:timeout');
+                          setSessionStatus('unauthenticated', 'bootstrap:timeout');
+                          setBootstrapError('Session bootstrap failed. Please log in.');
+                        } else {
+                          // Otherwise, defer and wait for onAuth events to arrive.
+                          console.warn('[AUTH] bootstrap timeout occurred but auth subsystem not ready; deferring error until authReady');
+                          setPendingBootstrapReason('bootstrap:timeout');
+                        }
+                      } else {
+                        // Session exists - consider bootstrap step complete
+                        setAuthInitializing(false);
+                      }
+                    } catch (e) {
+                      // swallow
                     }
                   }, 8000);
                 }
@@ -1854,18 +1982,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
+    authReady,
     authStatus,
     sessionStatus,
     membershipStatus,
     hasActiveMembership: Boolean(activeOrgId && memberships.some(m => m.orgId === activeOrgId)),
     surfaceAuthStatus,
     orgResolutionStatus,
+    // orgReady is derived: true when orgResolutionStatus indicates completion
+    orgReady: orgResolutionStatus === 'ready' || orgResolutionStatus === 'degraded',
     user,
     memberships,
     organizationIds,
   activeOrgId,
   lastActiveOrgId: activeOrgId, // for type compatibility, always mirrors activeOrgId
   requestedOrgId: requestedOrgHint,
+  // selectedOrgId kept for compatibility with older callers
+  selectedOrgId: activeOrgId,
     login,
     register,
     logout,
@@ -1879,6 +2012,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     loadSession,
     retryBootstrap
   };
+
+  // Global debug visibility for org/auth readiness
+  try {
+    // eslint-disable-next-line no-console
+  // Intentionally silent in production-hardening pass
+  } catch (e) {
+    // swallow
+  }
 
   return (
     <AuthContext.Provider value={value}>

@@ -50,18 +50,31 @@ const basePath = '/api/admin/analytics/leadership';
 export const leadershipService = {
   async fetchHealth(orgId?: string): Promise<LeadershipHealthRecord[]> {
     const url = buildScopedApiUrl(`${basePath}/health`, orgId);
+    if (!orgId) {
+      console.warn('Skipping API call — no org selected (leadershipService.fetchHealth)');
+      return [];
+    }
+
     const json = await apiRequest<ApiListResponse<LeadershipHealthRecord>>(url);
     return json.data ?? [];
   },
 
   async fetchRecommendations(orgId: string): Promise<LeadershipRecommendation[]> {
-    if (!orgId) return [];
+    if (!orgId) {
+      console.warn('Skipping API call — no org selected (leadershipService.fetchRecommendations)');
+      return [];
+    }
+
     const json = await apiRequest<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId}/recommendations`);
     return json.data ?? [];
   },
 
   async generateRecommendations(orgId: string, payload?: { limit?: number; instructions?: string }) {
-    if (!orgId) throw new Error('orgId required');
+    if (!orgId) {
+      console.warn('Skipping API call — no org selected (leadershipService.generateRecommendations)');
+      throw new Error('Organization context is required');
+    }
+
     const json = await apiRequest<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId}/recommendations`, {
       method: 'POST',
       body: payload ?? {},

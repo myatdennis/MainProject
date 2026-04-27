@@ -331,9 +331,10 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     if (!wsClient.isEnabled()) return;
 
     wsClient.connect();
+    const filteredOrgIds = effectiveOrgIds.filter((id) => Boolean(id));
     const topics = [
       `notifications:user:${effectiveUserId}`,
-      ...effectiveOrgIds.map((orgId) => `notifications:org:${orgId}`),
+      ...filteredOrgIds.map((orgId) => `notifications:org:${orgId}`),
     ];
 
     const handleRealtimeNotification = (payload: any) => {

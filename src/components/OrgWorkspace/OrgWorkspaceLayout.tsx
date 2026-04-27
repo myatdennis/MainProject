@@ -13,7 +13,7 @@ const OrgWorkspaceLayout: React.FC = () => {
   const { isAuthenticated } = useSecureAuth();
   const { showToast } = useToast();
   const { memberships, selectOrganization } = useActiveOrganization({ surface: 'client' });
-  const [orgName, setOrgName] = useState<string>(`Organization ${orgId}`);
+  const [orgName, setOrgName] = useState<string>('Organization');
   const [allowed, setAllowed] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<any[]>([]);
 
@@ -131,7 +131,7 @@ const OrgWorkspaceLayout: React.FC = () => {
             <p className={`text-sm mb-4 ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}>You must be a member of this organization or a Huddle Co. admin to view this workspace.</p>
             <div className="space-x-2">
               <Link
-                to={`/contact?topic=workspace-access&orgId=${encodeURIComponent(orgId ?? '')}`}
+                to={orgId ? `/contact?topic=workspace-access&orgId=${encodeURIComponent(orgId)}` : '/contact?topic=workspace-access'}
                 onClick={() =>
                   showToast(
                     'Workspace access requests are routed through the contact form so the team can verify your organization membership.',

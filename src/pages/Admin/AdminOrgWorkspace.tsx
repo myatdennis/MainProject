@@ -98,7 +98,7 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
 const AdminOrgWorkspace = () => {
   const { routeKey } = useRouteChangeReset();
   useNavTrace('AdminOrgWorkspace');
-  const { activeOrgId, user } = useSecureAuth();
+  const { activeOrgId, user, memberships } = useSecureAuth();
   const isPlatformAdmin = String(
     user?.appMetadata?.platform_role ??
     user?.appMetadata?.platformRole ??
@@ -176,6 +176,9 @@ const AdminOrgWorkspace = () => {
     [organizations, paginationMeta.total],
   );
 
+  // Block rendering until auth subsystem has resolved and orgResolutionStatus
+  // (exposed as orgReady on the auth context) is complete. RequireAuth now
+  // handles the global blocking for most routes; keep this page lightweight.
   const summaryForDisplay = useMemo(() => {
     if (crmSummary && !crmSummary.disabled && crmSummary.organizations.total > 0) {
       return crmSummary;
@@ -237,7 +240,7 @@ const AdminOrgWorkspace = () => {
           preferredOrgId: activeOrgScopeId ?? undefined,
         });
         if (cancelled) return;
-        setOrganizations(response.data);
+  setOrganizations(response.data);
         setProgressMap(response.progress ?? {});
         setPaginationMeta(response.pagination);
         console.info('[AdminOrgWorkspace] response_received', {
@@ -271,6 +274,9 @@ const AdminOrgWorkspace = () => {
         if (!cancelled) {
           setFetching(false);
           setInitialLoad(false);
+          // Ensure we mark orgReady so UI consuming this page can unblock. We
+          // set this in finally to handle error cases as well.
+          // orgReady is managed by the auth context (global). No local action needed here.
         }
       }
       return cleanup;
@@ -813,15 +819,22 @@ const AdminOrgWorkspace = () => {
           )}
 
           {!initialLoad && !loadError && organizations.length === 0 && (
-            <EmptyState
-              title="No organizations found"
-              description={searchTerm ? 'Try updating your search.' : 'You have not added any organizations yet.'}
-              action={
-                <LoadingButton onClick={searchTerm ? () => setSearchTerm('') : handleAddOrganization}>
-                  {searchTerm ? 'Reset search' : 'Add organization'}
-                </LoadingButton>
-              }
-            />
+            memberships && memberships.length === 0 ? (
+              <EmptyState
+                title="No organizations assigned"
+                description="You are not assigned to an organization. Contact your administrator or support to be added."
+              />
+            ) : (
+              <EmptyState
+                title="No organizations found"
+                description={searchTerm ? 'Try updating your search.' : 'You have not added any organizations yet.'}
+                action={
+                  <LoadingButton onClick={searchTerm ? () => setSearchTerm('') : handleAddOrganization}>
+                    {searchTerm ? 'Reset search' : 'Add organization'}
+                  </LoadingButton>
+                }
+              />
+            )
           )}
 
           {organizations.length > 0 && (

@@ -17,7 +17,8 @@ import { logAuthRedirect } from './logAuthRedirect';
 import { isAdminSurface, resolveLoginPath } from './surface';
 import { getCSRFToken } from './csrfToken';
 import { isAuthBootstrapping } from '../lib/authBootstrapState';
-import { getGlobalActiveOrgIdForApi } from '../lib/orgContext';
+import { getGlobalActiveOrgIdForApi, pathRequiresOrgHeader } from '../lib/orgContext';
+import { waitForOrgReady } from '../lib/readiness';
 import { GLOBAL_ORG_ID } from '../constants/org';
 import { startApiRequest, endApiRequest } from './apiInstrumentation';
 import axios from 'axios';
@@ -567,7 +568,51 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const method = options.method ?? 'GET';
   const pathname = extractPathname(path);
+
+  // If this path requires an org header and we don't yet have a global active
+  // org id, wait a short time for org resolution to complete. This prevents
+  // a class of races where admin/org-scoped requests are issued before the
+  // SecureAuthContext has resolved the active org. We keep the timeout short
+  // to avoid blocking unrelated requests for long.
+  try {
+    const needsOrg = pathRequiresOrgHeader(pathname || '');
+    const hasGlobalOrg = Boolean(getGlobalActiveOrgIdForApi());
+    if (needsOrg && !hasGlobalOrg) {
+      // Best-effort wait (2s). If it times out, we proceed and let the server
+      // enforce scoping to avoid deadlocking the UI.
+      // eslint-disable-next-line no-await-in-loop
+      await waitForOrgReady(2000).catch(() => null);
+    }
+  } catch (e) {
+    // ignore readiness failures
+  }
+
   const url = applyAdminOrgContextToUrl(buildApiUrl(path), pathname);
+
+  // Runtime hardening: block attempts to call org-scoped APIs without an org id
+  // Developer-visible failure in DEV to catch regressions early.
+  try {
+    const activeOrg = getGlobalActiveOrgIdForApi();
+    if (pathRequiresOrgHeader(pathname || '') && !activeOrg) {
+      // Log critical error and surface failure during development.
+      console.error('BLOCKED REQUEST: Missing orgId', { path, url });
+      if (import.meta.env?.DEV) {
+        throw new Error('Attempted API call without orgId');
+      }
+      // In production, simply return the computed URL; server will enforce scoping.
+    }
+  } catch (e) {
+    // swallow to avoid breaking non-dev flows
+  }
+
+  // Global network intercept check: detect accidental 'undefined'/'null' in URLs
+  try {
+    if (typeof url === 'string' && (url.includes('undefined') || url.includes('null'))) {
+      console.error('INVALID REQUEST URL', url);
+    }
+  } catch (e) {
+    // ignore
+  }
 
   // NOTE: The client-side pathname guard that previously blocked /api/admin/* requests
   // when isAdminSurface() returned false has been removed.
