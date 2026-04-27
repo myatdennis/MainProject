@@ -12,7 +12,7 @@ describe('assignmentStorage request dedupe', () => {
       {
         id: 'assignment-1',
         course_id: 'course-1',
-        user_id: 'user-123',
+        user_id: '11111111-1111-1111-1111-111111111111',
         status: 'assigned',
         progress: 0,
       },
@@ -25,7 +25,7 @@ describe('assignmentStorage request dedupe', () => {
       },
     }));
     vi.doMock('../../lib/secureStorage', () => ({
-      getUserSession: () => ({ id: 'user-123', email: 'user@example.com' }),
+      getUserSession: () => ({ id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' }),
       getActiveOrgPreference: () => 'org-1',
       secureGet: vi.fn(() => null),
       secureSet: vi.fn(),
@@ -46,12 +46,12 @@ describe('assignmentStorage request dedupe', () => {
     const { getAssignmentsForUser } = await import('../assignmentStorage');
 
     const [first, second] = await Promise.all([
-      getAssignmentsForUser('user-123', 'org-1'),
-      getAssignmentsForUser('user-123', 'org-1'),
+      getAssignmentsForUser('11111111-1111-1111-1111-111111111111', 'org-1'),
+      getAssignmentsForUser('11111111-1111-1111-1111-111111111111', 'org-1'),
     ]);
 
     expect(apiRequestMock).toHaveBeenCalledTimes(1);
-    expect(apiRequestMock).toHaveBeenCalledWith('/api/learner/assignments?include_completed=true&orgId=org-1');
+  expect(apiRequestMock).toHaveBeenCalledWith('/api/learner/assignments?include_completed=true');
     expect(first).toEqual(second);
     expect(first).toHaveLength(1);
   });

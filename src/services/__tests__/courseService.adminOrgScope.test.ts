@@ -32,8 +32,9 @@ describe('CourseService admin org scoping', () => {
     const { CourseService } = await import('../courseService');
     await CourseService.getAllCoursesFromDatabase();
 
+    // admin requests should not append orgId query params; server enforces scope.
     expect(apiRequestMock).toHaveBeenCalledWith(
-      '/api/admin/courses?includeStructure=true&includeLessons=true&orgId=org-ctx-1',
+      '/api/admin/courses?includeStructure=true&includeLessons=true',
       expect.objectContaining({ noTransform: true, skipAdminGateCheck: true }),
     );
   });

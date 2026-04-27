@@ -1,6 +1,8 @@
 import type { Survey } from '../types/survey';
 import apiRequest from '../utils/apiClient';
 import { getAnalytics as getSurveyAnalyticsFromDal } from '../dal/surveys';
+import { getGlobalActiveOrgIdForApi, buildScopedApiUrl } from '../lib/orgContext';
+import { GLOBAL_ORG_ID } from '../constants/org';
 
 const apiFetch = async <T>(path: string, options: any = {}) => apiRequest<T>(path, options);
 
@@ -194,19 +196,43 @@ export const fetchAssignedSurveys = async (
     params.set('userId', options.userId);
   }
 
-  const path = params.toString() ? `/api/client/surveys?${params.toString()}` : '/api/client/surveys';
+  const path = params.toString() ? `/client/surveys?${params.toString()}` : '/client/surveys';
   try {
-    const json = await apiFetch<{ data: any[] }>(path, { noTransform: true });
-    const surveys = (json.data || []).map(mapSurveyRecord);
-    if (options.userId) {
-      return surveys.filter((survey) => {
-        const assignments = survey.assignedTo;
-        if (assignments?.userIds?.length && !assignments.userIds.includes(options.userId!)) {
-          return false;
+    const activeOrgId = getGlobalActiveOrgIdForApi();
+    const url = buildScopedApiUrl(path, activeOrgId ?? undefined);
+    const json = await apiFetch<{ data: any[] }>(url, { noTransform: true });
+    let surveys = (json.data || []).map(mapSurveyRecord);
+
+    // Service-layer filtering: when the client is scoped to a concrete org,
+    // the backend may still return platform-wide rows for admin users; ensure
+    // non-admin users only see their org's surveys.
+    if (activeOrgId && activeOrgId !== GLOBAL_ORG_ID) {
+      surveys = surveys.filter((survey) => {
+        const assignments = survey.assignedTo || {};
+        const orgIds: string[] = (assignments?.organizationIds || (assignments as any)?.organization_ids) ?? [];
+        if (Array.isArray(orgIds) && orgIds.length > 0) {
+          return orgIds.includes(activeOrgId);
         }
-        return true;
+        if (options.userId) {
+          const userIds: string[] = (assignments?.userIds || (assignments as any)?.user_ids) ?? [];
+          if (Array.isArray(userIds) && userIds.length > 0) {
+            return userIds.includes(options.userId!);
+          }
+        }
+        // If no explicit assignment info, exclude to be conservative
+        return false;
+      });
+    } else if (options.userId) {
+      surveys = surveys.filter((survey) => {
+        const assignments = survey.assignedTo || {};
+        const userIds: string[] = (assignments?.userIds || (assignments as any)?.user_ids) ?? [];
+        if (Array.isArray(userIds) && userIds.length > 0) {
+          return userIds.includes(options.userId!);
+        }
+        return false;
       });
     }
+
     return surveys;
   } catch (error) {
     console.error('[surveyService.fetchAssignedSurveys] Failed to load surveys for org:', error);

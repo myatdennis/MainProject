@@ -613,7 +613,12 @@ router.post('/', async (req, res, next) => {
       return next(createHttpError(400, 'invalid_password', `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters.`));
     }
 
-    const actorUserId = req.user?.userId || req.user?.id || null;
+    // Defensive: ensure we don't read undefined req.user properties.
+    const actorUserId = (typeof req.getUserId === 'function' ? req.getUserId() : (req.user && (req.user.userId || req.user.id))) || null;
+    if (!actorUserId) {
+      // If no actor context is available, be explicit: unauthenticated for admin routes.
+      return next(createHttpError(401, 'unauthenticated', 'Authentication required'));
+    }
     const result = await createOrProvisionOrganizationUser(
       {
         orgId,

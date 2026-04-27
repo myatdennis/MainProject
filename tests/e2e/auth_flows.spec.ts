@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
 import { getFrontendBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 test.describe('Portal authentication flows', () => {
   test.setTimeout(90_000);
@@ -16,12 +17,13 @@ test.describe('Portal authentication flows', () => {
       localStorage.clear();
     });
 
-    // LMS login flow
-    await page.goto(`${base}/lms/login`, { waitUntil: 'domcontentloaded' });
-    await page.fill('#email', 'user@pacificcoast.edu');
-    await page.fill('#password', 'user123');
-    await page.click('[data-test="lms-sign-in"]');
-    await page.waitForURL('**/lms/dashboard', { timeout: 20_000 });
+  // LMS login flow
+  await page.goto(`${base}/lms/login`);
+  await expect(page.locator('#email')).toBeVisible({ timeout: 15_000 });
+  await page.fill('#email', 'user@pacificcoast.edu');
+  await page.fill('#password', 'user123');
+  await page.click('[data-test="lms-sign-in"]');
+  await page.waitForURL('**/lms/dashboard', { timeout: 20_000 });
 
     const learningPathHeading = page.getByText('Your Learning Path');
     if (await learningPathHeading.count()) {

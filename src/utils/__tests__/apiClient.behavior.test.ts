@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { __setApiBaseUrlOverride } from '../../config/apiBase';
+import { __setApiBaseUrlOverride, getApiBaseUrl } from '../../config/apiBase';
 import * as sessionGate from '../../lib/sessionGate';
 import { supabase } from '../../lib/supabaseClient';
 import { __setTestOrgContext } from '../../lib/orgContext';
@@ -183,8 +183,11 @@ describe('apiClient', () => {
     fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
 
     await apiRequest('/courses');
-
-  expect(fetchSpy).toHaveBeenCalledWith('http://localhost:8888/api/courses', expect.any(Object));
+  const expectedBase = getApiBaseUrl().replace(/\/+$/, '');
+  // New invariant: callers should not include a leading /api prefix — the
+  // canonical api base is responsible for adding /api. Expect a single
+  // '/api' coming from the base, not duplicated in the path.
+  expect(fetchSpy).toHaveBeenCalledWith(`${expectedBase}/courses`, expect.any(Object));
   });
 
   it('attaches auth headers on outgoing requests', async () => {
@@ -227,7 +230,7 @@ describe('apiClient', () => {
   it('blocks protected requests locally when no bearer token is available', async () => {
     shouldRequireSessionSpy.mockReturnValue(true);
     mockBuildAuthHeaders.mockResolvedValue({});
-    const { apiRequest, ApiError } = await loadApiClient();
+  const { apiRequest } = await loadApiClient();
 
     await expect(apiRequest('/api/learner/assignments?orgId=org-1')).rejects.toMatchObject({
       name: 'ApiError',
@@ -284,25 +287,25 @@ describe('apiClient', () => {
   it('throws ApiError with parsed message on non-2xx status', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-  const { apiRequest, ApiError } = await loadApiClient();
+  const { apiRequest } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ message: 'Forbidden' }, { status: 403 }));
 
     await expect(apiRequest('/courses')).rejects.toMatchObject({
       status: 403,
       body: { message: 'Forbidden' },
-    } satisfies Partial<InstanceType<typeof ApiError>>);
+    });
   });
 
   it('throws ApiError via apiRequestRaw on server errors', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    const { apiRequestRaw, ApiError } = await loadApiClient();
+  const { apiRequestRaw } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ error: 'boom' }, { status: 500 }));
 
     await expect(apiRequestRaw('/fail')).rejects.toMatchObject({
       status: 500,
       body: { error: 'boom' },
-    } satisfies Partial<InstanceType<typeof ApiError>>);
+    });
   });
 
   it('aborts when timeoutMs elapses', async () => {
@@ -360,11 +363,12 @@ describe('apiClient', () => {
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
     mockBuildAuthHeaders.mockResolvedValue({});
-    const { apiRequest, ApiError } = await loadApiClient();
+
+  const { apiRequest } = await loadApiClient();
 
     await expect(apiRequest('/api/client/data')).rejects.toMatchObject({
       status: 401,
-    } satisfies Partial<InstanceType<typeof ApiError>>);
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

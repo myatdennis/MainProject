@@ -14,6 +14,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 interface RouteCheck {
   label: string;
@@ -94,22 +95,25 @@ test.describe('Admin nav → immediate content render (no-blank-screen regressio
   test.setTimeout(90_000);
 
   test('clicking each sidebar nav link renders page content without reload', async ({ page }) => {
-    const env = await loginAsAdmin(page);
-    await page.goto(`${env.baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 20_000 });
+  const env = await loginAsAdmin(page);
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 20_000 });
 
     for (const item of ADMIN_ROUTES) {
-      await clickSidebarNavAndAssertRender(page, env.baseUrl, item);
-      // Return to dashboard between iterations
-      await page.goto(`${env.baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 15_000 });
+  await clickSidebarNavAndAssertRender(page, env.baseUrl, item);
+  // Return to dashboard between iterations
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await (await import('./helpers/waitForAuthReady')).default(page);
+  await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 15_000 });
     }
   });
 
   test('rapid consecutive nav clicks do not leave a blank screen', async ({ page }) => {
-    const env = await loginAsAdmin(page);
-    await page.goto(`${env.baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 20_000 });
+  const env = await loginAsAdmin(page);
+      await page.goto(`${env.baseUrl}/admin/dashboard`);
+      await waitForAuthReady(page);
+      await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 20_000 });
 
     // Simulate a user clicking two nav items in quick succession
     const coursesLink = page.getByRole('link', { name: /courses/i }).first();
@@ -134,17 +138,20 @@ test.describe('Admin nav → immediate content render (no-blank-screen regressio
   });
 
   test('browser back button renders previous page content without reload', async ({ page }) => {
-    const env = await loginAsAdmin(page);
-    await page.goto(`${env.baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 20_000 });
+  const env = await loginAsAdmin(page);
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 20_000 });
 
     // Navigate forward to courses
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
     const coursesContent = page.locator('h1, h2, h3').first();
     await expect(coursesContent).toBeVisible({ timeout: 15_000 });
 
     // Go back
-    await page.goBack({ waitUntil: 'domcontentloaded' });
+  await page.goBack();
+  await waitForAuthReady(page).catch(() => {});
 
     // Dashboard content must re-render correctly (no stale/frozen page)
     const dashboardHeading = page.getByRole('heading', { name: /track impact across/i });

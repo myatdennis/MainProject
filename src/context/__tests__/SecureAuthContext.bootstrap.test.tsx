@@ -56,7 +56,7 @@ const buildJsonResponse = (payload: unknown, init?: ResponseInit) =>
   });
 
 const buildUser = () => ({
-  id: 'user-123',
+  id: '11111111-1111-1111-1111-111111111111',
   email: 'admin@the-huddle.co',
   role: 'admin',
   organizationId: 'org-1',

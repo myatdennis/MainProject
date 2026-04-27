@@ -33,6 +33,7 @@ import {
   // clearAllCatalogCache and clearCatalogCacheForOrg are intentionally
   // not referenced here; tests import them from catalogPersistence directly.
 } from '../utils/catalogPersistence';
+import { waitForOrgReady } from '../lib/readiness';
 import { getAuthState } from './authStore';
 
 // NOTE: inline fetchWithCredentials helper removed; callers should use apiRequest
@@ -2156,15 +2157,30 @@ export const courseStore = {
       // snapshot. This avoids long-running 'loading' phases that prevent the
       // UI from recovering within the Playwright test timeout.
       if (orgContext.status === 'loading' && !snapshot) {
-        console.debug('[courseStore.init] org_context_loading_no_snapshot — scheduling short retry', { reason: initReason });
-        if (!initRetryScheduled) {
-          initRetryScheduled = true;
-          setTimeout(() => {
-            initRetryScheduled = false;
-            void courseStore.init({ reason: 'retry_waiting_for_bridge_snapshot', retryCount: (options?.retryCount ?? 0) + 1 });
-          }, 120);
+        console.debug('[courseStore.init] org_context_loading_no_snapshot — awaiting bridge snapshot', { reason: initReason });
+        try {
+          const orgInfo = await waitForOrgReady(1000).catch(() => null);
+          if (!orgInfo) {
+            // If still not ready after a short wait, treat this run as non-final
+            // and return so caller/outer bootstrap can trigger a final init when
+            // auth/org are resolved. This avoids scheduling ad-hoc retries.
+            return;
+          }
+          // Re-read snapshot after wait
+          const post = resolveOrgContextFromBridge();
+          if (post) {
+            orgContext = {
+              orgId: post.activeOrgId ?? post.orgId ?? null,
+              activeOrgId: post.activeOrgId ?? post.orgId ?? null,
+              role: post.role ?? null,
+              userId: post.userId ?? null,
+              status: post.status ?? 'ready',
+              membershipStatus: post.membershipStatus ?? 'ready',
+            } as ResolvedOrgContext;
+          }
+        } catch (e) {
+          return;
         }
-        return;
       }
       if (orgContext.status === 'loading' && snapshot) {
         // Trust the snapshot if present: treat org as ready from snapshot.
@@ -2314,16 +2330,18 @@ export const courseStore = {
           lastError: null,
           detail: 'org_bootstrap_pending',
         });
-        if (typeof window !== 'undefined' && !initRetryScheduled && retryCount < 10) {
-          initRetryScheduled = true;
-          window.setTimeout(() => {
-            initRetryScheduled = false;
-            courseStore.init({ force: true, reason: 'org_bootstrap_retry', retryCount: retryCount + 1 }).catch((error) => {
-              console.warn('[courseStore.init] org bootstrap retry failed', error);
-            });
-          }, 250);
+        // Wait deterministically for org to become ready for a bounded time
+        try {
+          const info = await waitForOrgReady(2000).catch(() => null);
+          if (!info || !info.orgId) {
+            // not ready — return and let higher-level bootstrap trigger a
+            // final init when auth/org readiness is guaranteed.
+            return;
+          }
+          // otherwise re-evaluate effectiveOrgId below after the loop
+        } catch (e) {
+          return;
         }
-        return;
       }
       if (!orgContext.userId) {
         // Log the resolved orgContext and any userId passed via options so

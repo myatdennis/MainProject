@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Request } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 const VERIFIED_E2E_ORG_ID = 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8';
 
@@ -49,7 +50,7 @@ test.describe('Admin workspace hardening', () => {
     let crmResponseStatus: number | null = null;
 
     for (const surface of SURFACES) {
-      const requestPromise = waitForSurfaceRequest(page, surface);
+  const requestPromise = waitForSurfaceRequest(page, surface);
       const crmPromise =
         surface.name === 'organizations'
           ? page.waitForResponse((response) => response.url().includes('/api/admin/crm/summary'), { timeout: 20_000 })
@@ -57,8 +58,9 @@ test.describe('Admin workspace hardening', () => {
       const responsePromise = page.waitForResponse((response) => response.url().includes(surface.apiPath), {
         timeout: 20_000,
       });
-      await page.goto(`${env.baseUrl}${surface.route}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}${surface.route}`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
       const request = await requestPromise;
       const response = await responsePromise;
@@ -87,22 +89,29 @@ test.describe('Admin workspace hardening', () => {
   test('supports deep links, refreshes, and rapid page switching without collapsing the workspace', async ({ page }) => {
     const env = await loginAsAdmin(page, { activeOrgId: VERIFIED_E2E_ORG_ID });
 
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${env.baseUrl}/admin/organizations`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/organizations`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${env.baseUrl}/admin/users`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/users`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${env.baseUrl}/admin/surveys`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/surveys`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
-    await page.goto(`${env.baseUrl}/admin/users`, { waitUntil: 'domcontentloaded' });
-    await page.goto(`${env.baseUrl}/admin/organizations`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await page.goto(`${env.baseUrl}/admin/users`);
+  await waitForAuthReady(page).catch(() => {});
+  await page.goto(`${env.baseUrl}/admin/organizations`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
   });
 
   test('isolates a failing surveys request so other admin surfaces still load', async ({ page }) => {
@@ -116,18 +125,22 @@ test.describe('Admin workspace hardening', () => {
       });
     });
 
-    await page.goto(`${env.baseUrl}/admin/surveys`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText(/Refresh surveys/i)).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/surveys`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.getByText(/Refresh surveys/i)).toBeVisible({ timeout: 20_000 });
 
-    await page.unroute('**/api/admin/surveys**');
+  await page.unroute('**/api/admin/surveys**');
 
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${env.baseUrl}/admin/organizations`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/organizations`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${env.baseUrl}/admin/users`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/users`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1').first()).toBeVisible({ timeout: 20_000 });
   });
 });

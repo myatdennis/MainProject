@@ -123,7 +123,7 @@ describe('Auth middleware helpers', () => {
 
   it('ensureAdminAccess rejects if role is not platform admin and not allowlisted', async () => {
     const { ensureAdminAccess } = await import('../../server/middleware/requireAdminAccess.js');
-    const req = { supabaseJwtUser: { id: 'user-123', email: 'user@example.com' }, requestId: 'rid' };
+  const req = { supabaseJwtUser: { id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' }, requestId: 'rid' };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
 
     const result = await ensureAdminAccess(req, res);

@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
-import { getAccessToken as getStoredAccessToken, getUserSession, setAccessToken, setRefreshToken } from './secureStorage';
-import { getGlobalActiveOrgIdForApi, LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
+import { getAccessToken as getStoredAccessToken, setAccessToken, setRefreshToken } from './secureStorage';
+import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
+import { GLOBAL_ORG_ID } from '../constants/org';
 import { buildApiUrl } from '../config/apiBase';
 import buildAuthHeaders from '../utils/requestContext';
 
@@ -143,41 +144,12 @@ const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit =
   return { ...init, headers };
 };
 
+// Historically we appended ?orgId=... for admin API calls. The platform has
+// migrated to deterministic org-scoping via headers (X-Org-Id / legacy header)
+// and a GLOBAL sentinel for platform-wide requests. Avoid mutating the path
+// here — headers will carry the org context via applyOrgHeadersIfNeeded.
 const appendAdminOrgQueryIfNeeded = (path: string): string => {
-  let pathname = path;
-  try {
-    pathname = new URL(path, typeof window !== 'undefined' ? window.location.origin : 'http://localhost').pathname;
-  } catch {
-    pathname = path.split(/[?#]/)[0] ?? path;
-  }
-  if (!/^\/api\/admin(?:\/|$)|^\/api\/crm(?:\/|$)/i.test(pathname) || pathname === '/api/admin/me') {
-    return path;
-  }
-  const session = getUserSession();
-  if (session?.isPlatformAdmin) {
-    return path;
-  }
-  const orgId = getGlobalActiveOrgIdForApi() ?? session?.activeOrgId ?? session?.organizationId ?? null;
-  if (orgId === 'ALL_ORGS') {
-    return path;
-  }
-  if (!orgId) {
-    console.error('[apiFetchRaw] admin_request_missing_org_context', { path: pathname });
-    return path;
-  }
-  try {
-    const parsed = new URL(path, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
-    if (!parsed.searchParams.has('orgId') && !parsed.searchParams.has('organizationId')) {
-      parsed.searchParams.set('orgId', orgId);
-    }
-    if (/^https?:\/\//i.test(path)) {
-      return parsed.toString();
-    }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    const separator = path.includes('?') ? '&' : '?';
-    return /(?:[?&](?:orgId|organizationId)=)/.test(path) ? path : `${path}${separator}orgId=${encodeURIComponent(orgId)}`;
-  }
+  return path;
 };
 
 const stripProductionOverrideHeaders = (init: RequestInit): RequestInit => {

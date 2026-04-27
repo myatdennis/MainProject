@@ -1,10 +1,14 @@
 import { test, expect, type Page } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
 import { getFrontendBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 const gotoAdminSurveys = async (page: Page) => {
   const base = getFrontendBaseUrl();
-  await page.goto(`${base}/admin/surveys`, { waitUntil: 'networkidle' });
+  await page.goto(`${base}/admin/surveys`);
+  await waitForAuthReady(page);
+  // Wait for a single reliable page anchor to avoid strict-mode violations
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"], h1, h2').first()).toBeVisible({ timeout: 10000 });
 };
 
 test.describe('Admin survey operations', () => {

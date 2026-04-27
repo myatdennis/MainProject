@@ -24,6 +24,26 @@ function waitForUrl(url, timeoutMs = 30000) {
   });
 }
 
+async function waitForServer(url, attempts = 20, intervalMs = 500) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.get(url, (res) => {
+          res.resume();
+          resolve(true);
+        });
+        req.on('error', () => reject(new Error('unreachable')));
+        req.end();
+      });
+      return;
+    } catch (err) {
+      // swallow and retry
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+  throw new Error(`Server not ready at ${url}`);
+}
+
 function spawnProc(cmd, args, opts = {}) {
   const child = spawn(cmd, args, { stdio: 'inherit', ...opts });
   child.on('exit', (code) => {
@@ -51,14 +71,14 @@ process.on('SIGTERM', cleanup);
 
 async function ensureApi() {
   try {
-    await waitForUrl(API_HEALTH_URL, 2000);
+    await waitForServer(API_HEALTH_URL, 20, 500);
     console.log('[e2e-dev] API already running on 8888');
     return;
   } catch {
     api = spawnProc('node', ['server/index.js'], {
       env: { ...process.env, NODE_ENV: 'test', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '8888' },
     });
-    await waitForUrl(API_HEALTH_URL, 30_000);
+    await waitForServer(API_HEALTH_URL, 60, 500);
     console.log('[e2e-dev] API ready on 8888');
   }
 }

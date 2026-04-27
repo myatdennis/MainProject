@@ -207,7 +207,7 @@ function App() {
  *  4. No other hooks exist in this component — there is nothing after the return.
  */
 const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
-  const { authInitializing, authStatus } = useSecureAuth();
+  const { authInitializing, authStatus, sessionStatus, orgResolutionStatus } = useSecureAuth();
   const location = useLocation();
 
   const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
@@ -217,12 +217,10 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
     location.pathname === '/lms/login' ||
     location.pathname.startsWith('/auth/') ||
     location.pathname.startsWith('/invite/');
-  // In DEV and E2E runs we allow a fail-open so tests and local dev don't
-  // deadlock waiting for a final session bootstrap. Tests set
-  // `window.__E2E_BYPASS = true` when they want the UI to render without
-  // waiting for bootstrap completion.
-  const bypassBootstrapGate = import.meta.env.DEV || (typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS));
-  const blocking = !bypassBootstrapGate && (authInitializing || authStatus === 'booting') && isProtectedSurface && !isPublicAuthPath;
+  // Block protected surfaces until the auth bootstrap reaches a stable state.
+  // This prevents any protected UI from rendering before auth/org resolution
+  // which was the root cause of numerous flaky E2E races.
+  const blocking = isProtectedSurface && !isPublicAuthPath && (authInitializing || sessionStatus === 'loading' || orgResolutionStatus === 'resolving');
 
   if (import.meta.env.DEV) {
     console.debug('[AUTH ROOT GATE]', {
@@ -259,6 +257,7 @@ export function AppContent() {
   const toastContext = useContext(ToastContext);
   const showCatalogToast = toastContext?.showToast;
   const courseInitKeyRef = useRef<string | null>(null);
+  const hasInitializedRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -310,8 +309,15 @@ export function AppContent() {
     if (courseInitKeyRef.current === targetKey) {
       return;
     }
+    if (hasInitializedRef.current[targetKey]) {
+      // Already initialized for this user+org+surface key.
+      return;
+    }
     let cancelled = false;
     const bootstrapCourseStore = async () => {
+      // Mark as initialized/in-flight immediately to prevent duplicate
+      // concurrent init runs for the same user+org+surface key.
+      hasInitializedRef.current[targetKey] = true;
       try {
         if (import.meta.env.DEV) {
           console.debug('[COURSE INIT CALLER]', {
@@ -326,6 +332,8 @@ export function AppContent() {
           courseInitKeyRef.current = targetKey;
         }
       } catch (error) {
+        // Clear the in-flight marker so a future attempt can retry.
+        hasInitializedRef.current[targetKey] = false;
         console.error('Failed to initialize course store:', error);
       }
     };
@@ -358,7 +366,11 @@ export function AppContent() {
     if (sessionStatus === 'authenticated' && orgResolutionStatus === 'ready') {
       try {
   console.info('[COURSE INIT TRIGGER]', { reason: 'auth_ready', userId: user?.id, activeOrgId });
-  void courseStore.init({ reason: 'auth_ready_retry', force: true, surface, userId: user?.id ?? null });
+  const targetKey = buildCourseInitTargetKey(user?.id, activeOrgId, surface);
+  if (!hasInitializedRef.current[targetKey]) {
+    void courseStore.init({ reason: 'auth_ready_retry', force: true, surface, userId: user?.id ?? null });
+    hasInitializedRef.current[targetKey] = true;
+  }
       } catch (e) {
         console.warn('[COURSE INIT TRIGGER] failed', e);
       }
@@ -393,16 +405,9 @@ export function AppContent() {
       showCatalogToast(message, eventType === 'assignment_scope_failed' ? 'error' : 'warning', 6000);
     };
     window.addEventListener('huddle:catalog-warning', handler as EventListener);
-    const orgRequired = (ev: Event) => {
-      const detail = (ev as CustomEvent<Record<string, unknown>>).detail || {};
-      const path = typeof detail.path === 'string' ? detail.path : '/';
-      showCatalogToast('Organization context required', 'error', 10000);
-      console.warn('[App] missing org context for request', path, detail.message ?? '');
-    };
-    window.addEventListener('huddle:org-required', orgRequired as EventListener);
+    // 'huddle:org-required' event was removed; rely on bridge snapshot readiness instead.
     return () => {
       window.removeEventListener('huddle:catalog-warning', handler as EventListener);
-      window.removeEventListener('huddle:org-required', orgRequired as EventListener);
     };
   }, [showCatalogToast]);
 

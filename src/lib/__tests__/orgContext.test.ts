@@ -18,9 +18,9 @@ describe('orgContext header resolution', () => {
     expect(resolveOrgHeaderForRequest('/api/admin/courses')).toBeNull();
   });
 
-  it('throws when a required non-admin org route is missing org context', () => {
+  it('returns null for required non-admin org routes when no org context is available', () => {
     __setTestOrgContext(null);
-    expect(() => resolveOrgHeaderForRequest('/api/courses')).toThrow('[client] missing_org_context');
+    expect(resolveOrgHeaderForRequest('/api/courses')).toBeNull();
   });
 
   it('uses the configured active org for required routes', () => {

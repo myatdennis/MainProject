@@ -198,6 +198,7 @@ export type OrgProfileDetails = {
 
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { resolveApiUrl } from '../config/apiBase';
+import { requireExplicitAdminOrgId } from '../utils/adminOrgScope';
 
 // Reduce TTL to make admin lists refresh quickly when backend state changes.
 // Short TTL avoids long stale windows while still deduping rapid repeated requests.
@@ -494,6 +495,9 @@ export const listOrgPage = async (
   params?: OrgListParams,
   options?: { forceRefresh?: boolean; preferredOrgId?: string | null },
 ): Promise<OrgListResponse> => {
+  // 🔒 MUST RUN BEFORE ANY OTHER LOGIC
+  // Call into adminOrgScope.requireExplicitAdminOrgId early so tests can mock its behavior.
+  requireExplicitAdminOrgId('admin', options?.preferredOrgId ?? null);
   const cacheKey = buildOrgListCacheKey(params);
   const cached = orgPageCache.get(cacheKey);
   if (!options?.forceRefresh && cached && Date.now() - cached.timestamp < ORG_LIST_CACHE_TTL_MS) {
@@ -547,7 +551,7 @@ export const listOrgPage = async (
       console.warn('[orgService] response_failed', {
         clientTraceId,
         route: '/api/admin/organizations',
-        requestedOrgId: explicitOrgId,
+        requestedOrgId: options?.preferredOrgId ?? null,
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -580,6 +584,8 @@ export const listOrgs = async (
 };
 
 export const getOrgProfileDetails = async (id: string): Promise<OrgProfileDetails | null> => {
+  // Guard early: ensure callers provided an explicit org id when required
+  requireExplicitAdminOrgId('admin', id);
   const cached = orgProfileCache.get(id);
   if (cached && Date.now() - cached.timestamp < ORG_LIST_CACHE_TTL_MS) {
     return cached.data;
@@ -632,6 +638,7 @@ export const createOrg = async (payload: CreateOrgPayload): Promise<Org> => {
 };
 
 export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> => {
+  requireExplicitAdminOrgId('admin', id);
   const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${id}`, {
     method: 'PUT',
     body: patch
@@ -642,6 +649,7 @@ export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> =
 };
 
 export const deleteOrg = async (id: string): Promise<void> => {
+  requireExplicitAdminOrgId('admin', id);
   await apiRequest(`/api/admin/organizations/${id}`, { method: 'DELETE' });
   // Invalidate org list cache so the deleted org can't reappear from stale cached list
   invalidateOrgListCache();
@@ -695,6 +703,7 @@ export const getOrgStats = async (id: string): Promise<any> => {
 };
 
 export const listOrgMembers = async (organizationId: string): Promise<OrgMember[]> => {
+  requireExplicitAdminOrgId('admin', organizationId);
   const json = await apiRequest<{ data: any[] }>(`/api/admin/organizations/${organizationId}/members`);
   return (json.data ?? []).map(mapMemberRecord);
 };

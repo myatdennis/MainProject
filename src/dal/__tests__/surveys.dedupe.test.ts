@@ -13,7 +13,7 @@ describe('survey assignment request dedupe', () => {
           assignment: {
             id: 'assignment-1',
             survey_id: 'survey-1',
-            user_id: 'user-123',
+            user_id: '11111111-1111-1111-1111-111111111111',
             assignment_type: 'survey',
             status: 'assigned',
           },

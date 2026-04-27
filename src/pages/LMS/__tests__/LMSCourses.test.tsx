@@ -18,7 +18,7 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('../../../hooks/useUserProfile', () => ({
   useUserProfile: () => ({
-    user: { id: 'user-123', email: 'user@example.com' },
+  user: { id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' },
   }),
 }));
 

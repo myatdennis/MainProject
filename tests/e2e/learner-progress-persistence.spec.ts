@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { getApiBaseUrl, getFrontendBaseUrl, waitForOk } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 import createE2ERequestContext from './helpers/requestContext';
 import apiHelpers from './helpers/api';
 
@@ -197,11 +198,13 @@ const loginAsLearner = async (page: Page) => {
     };
   }, { orgId: TEST_ORG_ID, userId: LEARNER_USER_ID, email: LEARNER_EMAIL, apiBase });
 
-  await page.goto(`${frontendBase}/client/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${frontendBase}/client/courses`);
+  await waitForAuthReady(page).catch(() => {});
 };
 
 const waitForAssignedCourseCard = async (page: Page, courseTitle: string) => {
-  await page.goto(`${frontendBase}/client/courses?debugProgress=1`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${frontendBase}/client/courses?debugProgress=1`);
+  await waitForAuthReady(page).catch(() => {});
   // Under E2E we record bootstrap lifecycle events to window.__HUDDLE_E2E_EVENTS.
   // Wait briefly for the client to complete bootstrap so the page renders deterministically.
   try {
@@ -424,7 +427,8 @@ test.describe('Learner progress persistence regression (isolated)', () => {
         .toBeGreaterThan(0);
 
       // 4-5) return to courses and assert non-zero percent on card.
-      await page.goto(`${frontendBase}/client/courses`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${frontendBase}/client/courses`);
+      await waitForAuthReady(page).catch(() => {});
       let percentBeforeRefresh = 0;
       for (let attempt = 0; attempt < 15; attempt += 1) {
         const postProgressCard = await waitForAssignedCourseCard(page, created.title);

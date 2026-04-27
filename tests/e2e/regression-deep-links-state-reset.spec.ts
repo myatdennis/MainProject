@@ -16,6 +16,7 @@
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
 import { getFrontendBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 // ── 1. Deep-link tests ──────────────────────────────────────────────────────
 
@@ -38,10 +39,11 @@ test.describe('Deep links render correctly on first load', () => {
       const env = await loginAsAdmin(page);
 
       // Navigate directly to the deep-link target — do NOT go via the dashboard
-      await page.goto(`${env.baseUrl}${route}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}${route}`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 20_000 });
 
       // Regression: the page must NOT redirect back to /login
-      await page.waitForTimeout(1_000); // allow any redirect to fire
       const finalUrl = page.url();
       expect(finalUrl, `Deep-link to ${route} should not redirect to login`).not.toContain('/login');
       expect(finalUrl).toContain(route);
@@ -61,9 +63,9 @@ test.describe('Logout → login cycle does not leave stale state', () => {
   test('second login after logout shows fresh data (no stale course/org state)', async ({ page }) => {
     // ── First session ──
     const env = await loginAsAdmin(page);
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
-    const coursesHeading = page.locator('h1, h2, h3').first();
-    await expect(coursesHeading).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1, h2, h3').first()).toBeVisible({ timeout: 20_000 });
 
     // Capture any visible course title text from the first session
     const firstSessionText = await page.locator('main, [role="main"]').textContent().catch(() => '');
@@ -82,12 +84,14 @@ test.describe('Logout → login cycle does not leave stale state', () => {
         sessionStorage.clear();
       });
       await page.context().clearCookies();
-      await page.goto(getFrontendBaseUrl() + '/admin/login', { waitUntil: 'domcontentloaded' });
+    await page.goto(getFrontendBaseUrl() + '/admin/login');
+    await waitForAuthReady(page).catch(() => {});
     }
 
     // ── Second login ──
     const env2 = await loginAsAdmin(page);
-    await page.goto(`${env2.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env2.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
 
     // The page must render content (not a perpetual loader)
     const coursesContent = page.locator('h1, h2, h3').first();
@@ -108,8 +112,9 @@ test.describe('Logout → login cycle does not leave stale state', () => {
     await page.context().clearCookies();
 
     // Attempt to access a protected route directly after "logout"
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2_000); // allow auth check + redirect
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 20_000 });
 
     // In E2E test mode the fake supabase client bypasses real auth, so we skip
     // the redirect assertion and just confirm the page does not crash.
@@ -141,7 +146,7 @@ test.describe('Slow network — app reaches usable state once responses arrive',
       await route.continue();
     });
 
-    await page.goto(`${env.baseUrl}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
 
     // 1 s delay + render time — allow 25 s for CI headroom
     const heading = page.getByRole('heading', { name: /track impact across/i });
@@ -156,7 +161,7 @@ test.describe('Slow network — app reaches usable state once responses arrive',
       await route.continue();
     });
 
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/courses`);
 
     // Something must render — either course content or an empty-state message
     const content = page.locator('h1, h2, h3, table, [role="table"], [data-test="empty-courses"]').first();
@@ -180,7 +185,8 @@ test.describe('Slow network — app reaches usable state once responses arrive',
     await expect(heading).toBeVisible({ timeout: 20_000 });
 
     // Navigate to courses — must render content, not a blank/frozen screen
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
     const content = page.locator('h1, h2, h3, table, [role="table"], [data-test="empty-courses"]').first();
     await expect(content).toBeVisible({ timeout: 20_000 });
 

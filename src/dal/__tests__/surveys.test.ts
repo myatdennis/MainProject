@@ -12,7 +12,10 @@ vi.mock('../../utils/orgHeaders', () => ({
 }));
 
 vi.mock('../../utils/adminOrgScope', () => ({
-  appendAdminOrgIdQuery: (path: string) => `${path}?orgId=org-1`,
+  // New org-scoping behavior: when admin/global context is used we no longer
+  // force an orgId query param here. Tests should assert based on the
+  // service behavior; for now return the path unchanged.
+  appendAdminOrgIdQuery: (path: string) => path,
 }));
 
 vi.mock('../../utils/assignmentStorage', () => ({
@@ -48,11 +51,7 @@ describe('surveys DAL', () => {
     const rows = await promise;
 
     expect(requestMock).toHaveBeenCalledTimes(2);
-    expect(requestMock).toHaveBeenNthCalledWith(
-      1,
-      '/api/client/surveys/assigned',
-      expect.objectContaining({ headers: { 'X-Org-Id': 'org-1' } }),
-    );
+    expect(requestMock).toHaveBeenNthCalledWith(1, '/api/client/surveys/assigned');
     expect(rows).toHaveLength(1);
     expect(rows[0].assignment.id).toBe('assignment-1');
   });
@@ -75,7 +74,7 @@ describe('surveys DAL', () => {
     await vi.advanceTimersByTimeAsync(1200);
     const rows = await promise;
 
-    expect(requestMock).toHaveBeenCalledTimes(3);
+  expect(requestMock).toHaveBeenCalledTimes(3);
     expect(rows).toHaveLength(1);
     expect(rows[0].assignment.id).toBe('assignment-3');
   });
@@ -143,7 +142,9 @@ describe('surveys DAL', () => {
 
     await listSurveys();
 
-    expect(requestMock).toHaveBeenCalledWith('/api/admin/surveys?orgId=org-1');
+    // orgId should no longer be appended by the client when running in
+    // platform/global mode; we expect the plain admin surveys path here.
+    expect(requestMock).toHaveBeenCalledWith('/api/admin/surveys');
   });
 
   it('does not coerce admin analytics request failures into an empty dataset', async () => {

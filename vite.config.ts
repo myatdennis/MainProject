@@ -110,7 +110,8 @@ export default async () => {
       },
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:3000',
+          // Allow tests / e2e to override the API proxy target (e.g. http://127.0.0.1:8888)
+          target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3000',
           changeOrigin: true,
           secure: false,
         },

@@ -61,7 +61,7 @@ vi.mock('../../../components/PerformanceComponents', () => ({
 vi.mock('../../../hooks/useUserProfile', () => ({
   useUserProfile: () => ({
     user: {
-      id: 'user-123',
+  id: '11111111-1111-1111-1111-111111111111',
       email: 'user@example.com',
     },
   }),
@@ -111,7 +111,7 @@ vi.mock('../../../lib/secureStorage', async () => {
   const actual = await vi.importActual<typeof import('../../../lib/secureStorage')>('../../../lib/secureStorage');
   return {
     ...actual,
-    getUserSession: () => ({ id: 'user-123' }),
+  getUserSession: () => ({ id: '11111111-1111-1111-1111-111111111111' }),
   };
 });
 
@@ -164,7 +164,7 @@ describe('ClientCourses', () => {
       {
         id: 'assignment-1',
         courseId: 'course-1',
-        userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
         status: 'in-progress',
         progress: 0,
       },
@@ -206,7 +206,7 @@ describe('ClientCourses', () => {
       {
         id: 'assignment-1',
         courseId: 'course-1',
-        userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
         status: 'completed',
         progress: 100,
       },
@@ -233,7 +233,7 @@ describe('ClientCourses', () => {
       {
         id: 'assignment-4',
         courseId: 'course-1',
-        userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
         status: 'assigned',
         progress: 0,
       },
@@ -276,7 +276,7 @@ describe('ClientCourses', () => {
       {
         id: 'assignment-5',
         courseId: 'legacy-course-id',
-        userId: 'user-123',
+    userId: '11111111-1111-1111-1111-111111111111',
         status: 'assigned',
         progress: 0,
       },
@@ -296,7 +296,7 @@ describe('ClientCourses', () => {
       {
         id: 'assignment-2',
         courseId: 'course-1',
-        userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
         status: 'assigned',
         progress: 0,
       },
@@ -309,14 +309,14 @@ describe('ClientCourses', () => {
 
   it('uses the authenticated session identity instead of a stale cached profile when loading assignments', async () => {
     getAssignmentsForUserMock.mockImplementation(async (userId?: string | null) => {
-      if (userId !== 'user-123') {
+  if (userId !== '11111111-1111-1111-1111-111111111111') {
         return [];
       }
       return [
         {
           id: 'assignment-3',
           courseId: 'course-1',
-          userId: 'user-123',
+          userId: '11111111-1111-1111-1111-111111111111',
           status: 'assigned',
           progress: 0,
         },
@@ -326,7 +326,7 @@ describe('ClientCourses', () => {
     secureAuthState.value = {
       ...secureAuthState.value,
       user: {
-        id: 'user-123',
+  id: '11111111-1111-1111-1111-111111111111',
         email: 'user@example.com',
       },
     } as any;
@@ -334,7 +334,7 @@ describe('ClientCourses', () => {
     renderCourses();
 
     expect(await screen.findByText('Course 1')).toBeInTheDocument();
-    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
+  expect(getAssignmentsForUserMock).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111');
   });
 
   it('does not start learner catalog loading before auth is ready', async () => {

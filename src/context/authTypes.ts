@@ -10,6 +10,7 @@ export interface LoginResult {
   errorType?: 'invalid_credentials' | 'network_error' | 'validation_error' | 'unknown_error' | 'supabase_auth_error';
   mfaRequired?: boolean;
   mfaEmail?: string;
+  user?: any;
 }
 
 export type RegisterField = 'email' | 'password' | 'confirmPassword' | 'firstName' | 'lastName' | 'organizationId';

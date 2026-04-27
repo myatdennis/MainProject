@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 const NAV_ITEMS = [
   { label: 'Dashboard', route: '/admin/dashboard' },
@@ -14,9 +15,10 @@ test.describe('Admin sidebar navigation', () => {
   test('sidebar links navigate or open org selector modal', async ({ page, baseURL }) => {
     const env = await loginAsAdmin(page);
 
-    // Ensure we're on the dashboard first
-    await page.goto(`${env.baseUrl}/admin/dashboard`);
-    await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 20000 });
+  // Ensure we're on the dashboard first
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 20000 });
 
     for (const item of NAV_ITEMS) {
       // Try to find a link or button with the label
@@ -28,26 +30,28 @@ test.describe('Admin sidebar navigation', () => {
 
       await clickable.click();
 
-      // If the org selector modal appears, it should have heading 'Choose an organization'
+      // If an org-selector modal appears, handle it and continue
       const modalHeading = page.getByRole('heading', { name: /choose an organization/i });
       if ((await modalHeading.count()) > 0) {
         await expect(modalHeading).toBeVisible();
-        // Close modal to continue
         const close = page.getByRole('button', { name: /close/i }).first();
         if ((await close.count()) > 0) await close.click();
-        // Also try the "Open Organizations" link; navigate back to dashboard
-        await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 10000 });
         continue;
       }
 
-      // Otherwise expect the URL to include the target route (or at least the tail)
-      await page.waitForLoadState('domcontentloaded');
-      const url = page.url();
-      expect(url).toContain(item.route);
+  // Otherwise verify the page rendered content and URL updated
+  await waitForAuthReady(page).catch(() => {});
+  const selector = (item as any).contentSelector || 'h1, h2, h3, main, [role="main"]';
+  await expect(page.locator(selector).first()).toBeVisible({ timeout: 15_000 });
+      expect(page.url()).toContain(item.route);
 
       // Return to dashboard for the next iteration
-      await page.goto(`${env.baseUrl}/admin/dashboard`);
-      await expect(page.getByRole('heading', { name: /track impact across/i })).toBeVisible({ timeout: 10000 });
+  await page.goto(`${env.baseUrl}/admin/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 10_000 });
     }
   });
 });

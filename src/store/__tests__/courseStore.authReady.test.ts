@@ -48,7 +48,7 @@ vi.mock('../../state/runtimeStatus', () => ({
 }));
 
 const secureStorageState = vi.hoisted(() => ({
-  session: { id: 'user-123', email: 'user@example.com' } as { id?: string; email?: string } | null,
+  session: { id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' } as { id?: string; email?: string } | null,
   accessToken: 'token-123' as string | null,
 }));
 
@@ -76,7 +76,7 @@ let resolverSnapshot = {
   activeOrgId: null as string | null,
   orgId: null as string | null,
   role: 'member',
-  userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
 };
 
 vi.mock('../courseStoreOrgBridge', () => ({
@@ -118,9 +118,9 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: null,
       orgId: null,
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
-    secureStorageState.session = { id: 'user-123', email: 'user@example.com' };
+  secureStorageState.session = { id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' };
     secureStorageState.accessToken = 'token-123';
     fetchPublishedCoursesMock.mockClear();
     fetchCourseMock.mockClear();
@@ -148,7 +148,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: 'org-999',
       orgId: 'org-999',
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     await initPromise;
@@ -180,7 +180,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: null,
       orgId: null,
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     await courseStore.init({ reason: 'test_no_org_selected' });
@@ -198,7 +198,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: null,
       orgId: null,
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     await courseStore.init({ reason: 'test_restore_org_selection' });
@@ -219,7 +219,7 @@ describe('courseStore bridge snapshot synchronization', () => {
         {
           id: 'assignment-1',
           courseId: 'course-1',
-          userId: 'user-123',
+          userId: '11111111-1111-1111-1111-111111111111',
           status: 'assigned',
           progress: 0,
         },
@@ -233,7 +233,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: 'org-restored',
       orgId: 'org-restored',
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     await courseStore.forceInit({ newOrgId: 'org-restored', flushCache: true });
@@ -253,7 +253,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: 'org-1',
       orgId: 'org-1',
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     await courseStore.init({ reason: 'test_missing_learner_token' });
@@ -285,7 +285,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: 'org-1',
       orgId: 'org-1',
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     const initPromise = courseStore.forceInit({ flushCache: true, reason: 'test_slow_runtime_probe' });
@@ -316,7 +316,7 @@ describe('courseStore bridge snapshot synchronization', () => {
         {
           id: 'assignment-1',
           courseId: 'course-42',
-          userId: 'user-123',
+          userId: '11111111-1111-1111-1111-111111111111',
           status: 'assigned',
           progress: 0,
         },
@@ -329,7 +329,7 @@ describe('courseStore bridge snapshot synchronization', () => {
       activeOrgId: 'org-1',
       orgId: 'org-1',
       role: 'member',
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
     };
 
     await courseStore.init({ reason: 'test_assignment_hydration_without_drafts' });

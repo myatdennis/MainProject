@@ -15,11 +15,7 @@ describe('surveyService.fetchAssignedSurveys', () => {
     errorSpy.mockClear();
   });
 
-  it('throws when orgId is missing', async () => {
-    await expect(fetchAssignedSurveys('' as any)).rejects.toThrow('orgId is required');
-  });
-
-  it('requests surveys with org filter and status', async () => {
+  it('requests surveys with status filter', async () => {
     apiClientMock.mockResolvedValueOnce({
       data: [
         {
@@ -30,9 +26,9 @@ describe('surveyService.fetchAssignedSurveys', () => {
       ],
     });
 
-    const surveys = await fetchAssignedSurveys('org-3', { status: 'published' });
+  const surveys = await fetchAssignedSurveys({ status: 'published' });
 
-    expect(apiClientMock).toHaveBeenCalledWith('/api/client/surveys?orgId=org-3&status=published', { noTransform: true });
+  expect(apiClientMock).toHaveBeenCalledWith('/api/client/surveys?status=published', { noTransform: true });
     expect(surveys).toHaveLength(1);
     expect(surveys[0]).toMatchObject({ id: 'survey-1', title: 'Pulse' });
   });
@@ -46,7 +42,7 @@ describe('surveyService.fetchAssignedSurveys', () => {
       ],
     });
 
-    const surveys = await fetchAssignedSurveys('org-3', { userId: 'user-7' });
+  const surveys = await fetchAssignedSurveys({ userId: 'user-7' });
 
     expect(surveys.map((s) => s.id)).toEqual(['s3']);
   });
@@ -55,7 +51,7 @@ describe('surveyService.fetchAssignedSurveys', () => {
     const err = new Error('network');
     apiClientMock.mockRejectedValueOnce(err);
 
-    const surveys = await fetchAssignedSurveys('org-9');
+  const surveys = await fetchAssignedSurveys();
     expect(surveys).toEqual([]);
     expect(errorSpy).toHaveBeenCalledWith('[surveyService.fetchAssignedSurveys] Failed to load surveys for org:', err);
   });

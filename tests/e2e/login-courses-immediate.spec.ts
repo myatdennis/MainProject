@@ -11,6 +11,7 @@
 
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 test.describe('Login → immediate course visibility (no-refresh regression)', () => {
   test.setTimeout(90_000);
@@ -18,8 +19,9 @@ test.describe('Login → immediate course visibility (no-refresh regression)', (
   test('admin course list is visible immediately after login — no refresh required', async ({ page }) => {
     const env = await loginAsAdmin(page);
 
-    // Navigate to the courses page in a single SPA transition
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
+  // Navigate to the courses page in a single SPA transition
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
 
     // The page must render course content (table, list, or empty-state) without
     // the user having to reload.  A loading spinner that never resolves is a
@@ -59,7 +61,8 @@ test.describe('Login → immediate course visibility (no-refresh regression)', (
     let navigationCount = 0;
     page.on('framenavigated', () => { navigationCount++; });
 
-    await page.goto(`${env.baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
 
     // Wait for the page to settle
     await page.waitForLoadState('networkidle').catch(() => { /* timeout ok */ });

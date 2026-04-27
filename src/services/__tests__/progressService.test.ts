@@ -69,7 +69,7 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
     const service = await importService();
 
     const result = await service.fetchLessonProgress({
-      userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
       courseId: 'course-1',
       lessonIds: ['lesson-1'],
     });
@@ -93,7 +93,7 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
   });
 
   it('returns snapshot rows when session matches and API succeeds', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+  mockGetUserSession.mockReturnValue({ id: '11111111-1111-1111-1111-111111111111' });
     const lessons = [
       {
         lesson_id: 'lesson-1',
@@ -117,7 +117,7 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
   });
 
   it('treats unauthorized errors as empty responses', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+  mockGetUserSession.mockReturnValue({ id: '11111111-1111-1111-1111-111111111111' });
     mockApiRequest.mockRejectedValue(new MockApiError(401));
 
     const service = await importService();
@@ -131,7 +131,7 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
   });
 
   it('treats rate limit errors as empty responses', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+  mockGetUserSession.mockReturnValue({ id: '11111111-1111-1111-1111-111111111111' });
     mockApiRequest.mockRejectedValue(new MockApiError(429));
 
     const service = await importService();

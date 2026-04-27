@@ -42,6 +42,10 @@ export function resolveCorsOriginDecision(origin) {
   if (allowedOrigins.includes(origin)) {
     return { allowed: true, reason: 'allowlist', resolvedOrigin: origin };
   }
+  // Allow Netlify preview origins during local development for convenience
+  if (process.env.NODE_ENV !== 'production' && /netlify\.app$/i.test(origin)) {
+    return { allowed: true, reason: 'netlify_preview', resolvedOrigin: origin };
+  }
   return { allowed: false, reason: 'not_allowlisted', resolvedOrigin: null };
 }
 

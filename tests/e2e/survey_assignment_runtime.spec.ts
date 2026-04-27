@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { getApiBaseUrl, getFrontendBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 const apiBase = getApiBaseUrl();
 const frontendBase = getFrontendBaseUrl();
@@ -147,7 +148,8 @@ const loginAsLearner = async (page: Page) => {
     (window as any).__E2E_USER_ROLE = 'learner';
     localStorage.setItem('huddle_lms_auth', 'true');
   });
-  await page.goto(`${frontendBase}/client/dashboard`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${frontendBase}/client/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
   await page.waitForURL('**/client/dashboard', { timeout: 30_000 });
 };
 
@@ -271,8 +273,9 @@ test.describe('Survey assignment runtime proof', () => {
 
       await loginAsLearner(page);
 
-      await page.goto(`${frontendBase}/client/surveys`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByRole('heading', { name: 'My Surveys' })).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${frontendBase}/client/surveys`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.getByRole('heading', { name: 'My Surveys' })).toBeVisible({ timeout: 20_000 });
 
       await expect
         .poll(async () => {

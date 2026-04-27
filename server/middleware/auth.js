@@ -1263,10 +1263,15 @@ export async function requireAdmin(req, res, next) {
     return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
-  console.log('[requireAdmin] context', { userId: req.user.userId, role: req.user.role, platformRole: req.user.platformRole, isPlatformAdmin: req.user.isPlatformAdmin });
+  const userId = typeof req.getUserId === 'function' ? req.getUserId() : (req.user?.userId || req.user?.id || null);
+  const role = typeof req.getUserRole === 'function' ? req.getUserRole() : (req.user?.role || req.user?.userRole || null);
+  console.log('[requireAdmin] context', { userId, role, platformRole: req.user?.platformRole, isPlatformAdmin: req.user?.isPlatformAdmin });
 
-  const userId = req.user.userId || req.user.id || null;
-  let isPlatformAdminRole = isPlatformAdmin(req.user);
+  if (!userId) {
+    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
+  }
+
+  let isPlatformAdminRole = isPlatformAdmin(req.user || {});
 
   if (isPlatformAdminRole) {
     console.info('[admin-auth] platform_admin_access_check', {

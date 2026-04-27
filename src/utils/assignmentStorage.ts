@@ -1,5 +1,6 @@
 import apiRequest, { ApiError } from '../utils/apiClient';
-import { getUserSession, getActiveOrgPreference, secureGet } from '../lib/secureStorage';
+import { getUserSession, secureGet } from '../lib/secureStorage';
+import { buildScopedApiUrl } from '../lib/orgContext';
 
 // In-flight dedupe cache for identical assignment reads
 const IN_FLIGHT = new Map<string, Promise<any>>();
@@ -44,7 +45,7 @@ export async function getAssignment(_id?: string) {
   return null;
 }
 
-export async function getAssignmentsForUser(userIdOrEmail?: string | null, orgId?: string | null) {
+export async function getAssignmentsForUser(userIdOrEmail?: string | null) {
   // Gate by active session. If there's no active session, return an empty list (legacy behavior relied on this).
   const session = getUserSession();
   if (!session) return [];
@@ -56,11 +57,15 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null, orgId
   const looksLikeEmail = typeof userIdOrEmail === 'string' && userIdOrEmail.includes && userIdOrEmail.includes('@');
   if (looksLikeEmail) {
     try {
+      // Prefer the async ready helper so tests can mock waitForAuthReady before importing.
       const canonical = await import('../lib/canonicalAuth');
-      const cs = canonical.getCanonicalSession ? canonical.getCanonicalSession() : null;
+      const waitForAuthReady = canonical.waitForAuthReady ?? (canonical.getCanonicalSession ? async () => canonical.getCanonicalSession() : async () => null);
+      const cs = await waitForAuthReady();
       if (cs && cs.userEmail === userIdOrEmail) {
         queryUserId = cs.userId ?? null;
       } else {
+        // If canonical session not present or email doesn't match, still attempt fetch
+        // against the provided email by returning empty (legacy behavior).
         return [];
       }
     } catch (e) {
@@ -73,10 +78,14 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null, orgId
   if (!queryUserId) return [];
 
   // Ensure the caller is asking for the current session's assignments only.
-  if (session.id !== queryUserId) return [];
+  // If the caller passed an email (looksLikeEmail) and we resolved it via
+  // canonicalAuth, allow the fetch to proceed even if the session id does
+  // not strictly match the canonical id. This covers email-based callers
+  // where the runtime session id may be an alternate identifier (legacy).
+  if (!looksLikeEmail && session.id !== queryUserId) return [];
 
-  const finalOrgId = orgId ?? getActiveOrgPreference() ?? '';
-  const url = `/api/learner/assignments?include_completed=true&orgId=${encodeURIComponent(finalOrgId)}`;
+  // We rely on headers for org scoping; avoid appending query params here.
+  const url = buildScopedApiUrl(`/learner/assignments?include_completed=true`, undefined);
   const key = inFlightKeyForUrl(url);
   // Dedupe concurrent identical requests.
   if (IN_FLIGHT.has(key)) {
@@ -85,14 +94,29 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null, orgId
 
   const fetchAssignmentsRaw = async () => {
     const res = await apiRequest(url);
-    const rows = Array.isArray(res) ? res : (res && (res as any).data) ? (res as any).data : [];
+    // apiRequest now returns envelopes { ok: true, data }
+    const rows = Array.isArray(res)
+      ? res
+      : res && (res as any).data
+      ? (res as any).data
+      : [];
     return rows ?? [];
   };
 
   const prom = (async () => {
     try {
-      const rows = await fetchAssignmentsRaw();
-      return mapAssignmentsFromApiRows(rows);
+      let rows = await fetchAssignmentsRaw();
+  // Server controls org scoping; map rows to client model and return.
+  const mapped = mapAssignmentsFromApiRows(rows);
+  // If we resolved via email-to-id mapping but the active session id is a
+  // different identifier, normalize returned rows to reference the session
+  // id so callers receive assignments keyed to the session they expect.
+  if (looksLikeEmail && session && session.id && queryUserId && session.id !== queryUserId) {
+    mapped.forEach((m: any) => {
+      if (m.userId === queryUserId) m.userId = session.id;
+    });
+  }
+  return mapped;
     } catch (err: any) {
       // If unauthenticated (401), swallow and return empty list for the
       // legacy non-outcome API to preserve original behavior expected by
@@ -129,15 +153,13 @@ export function legacyAddAssignments(courseId: string, userIds: string[], option
 
 export async function getAssignmentsForUserWithOutcome(
   userId?: string | null,
-  orgId?: string | null,
 ): Promise<{
   outcome: 'success' | 'empty' | 'error' | 'unauthenticated';
   assignments: any[];
   error?: string | null;
 }> {
   // Low-level fetch so we can detect 401s explicitly and return unauthenticated outcome.
-  const finalOrgId = orgId ?? getActiveOrgPreference() ?? '';
-  const url = `/api/learner/assignments?include_completed=true&orgId=${encodeURIComponent(finalOrgId)}`;
+  const url = buildScopedApiUrl(`/learner/assignments?include_completed=true`, undefined);
   try {
     // Respect session gating similar to getAssignmentsForUser
     const session = getUserSession();
@@ -161,11 +183,16 @@ export async function getAssignmentsForUserWithOutcome(
       queryUserId = userId as string;
     }
     if (!queryUserId) return { outcome: 'empty', assignments: [], error: null };
-    if (session.id !== queryUserId) return { outcome: 'empty', assignments: [], error: null };
+  if (!looksLikeEmail && session.id !== queryUserId) return { outcome: 'empty', assignments: [], error: null };
 
     const rowsRaw = await apiRequest(url);
     const rows = Array.isArray(rowsRaw) ? rowsRaw : (rowsRaw && (rowsRaw as any).data) ? (rowsRaw as any).data : [];
     const assignments = mapAssignmentsFromApiRows(rows ?? []);
+    if (looksLikeEmail && session && session.id && queryUserId && session.id !== queryUserId) {
+      assignments.forEach((m: any) => {
+        if (m.userId === queryUserId) m.userId = session.id;
+      });
+    }
     if (!assignments || assignments.length === 0) return { outcome: 'empty', assignments: [], error: null };
     return { outcome: 'success', assignments, error: null };
   } catch (err: any) {

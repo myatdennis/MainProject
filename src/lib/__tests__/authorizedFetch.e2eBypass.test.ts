@@ -19,12 +19,15 @@ vi.mock('../supabaseClient', () => ({
   getSupabase: mockGetSupabase,
 }));
 
-vi.mock('../orgContext', () => ({
-  ORG_HEADER_NAME: 'X-Org-Id',
-  LEGACY_ORG_HEADER_NAME: 'X-Organization-Id',
-  resolveOrgHeaderForRequest: mockResolveOrgHeaderForRequest,
-  pathRequiresOrgHeader: mockPathRequiresOrgHeader,
-}));
+vi.mock('../orgContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../orgContext')>();
+  return {
+    ...actual,
+    resolveOrgHeaderForRequest: mockResolveOrgHeaderForRequest,
+    pathRequiresOrgHeader: mockPathRequiresOrgHeader,
+    getGlobalActiveOrgIdForApi: () => 'ALL_ORGS',
+  };
+});
 
 const originalFetch = globalThis.fetch;
 const fetchSpy = vi.fn();

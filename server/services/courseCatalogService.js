@@ -784,7 +784,7 @@ export const createCourseCatalogService = ({
       };
     }
 
-    const sessionUserId = (req.user && (req.user.userId || req.user.id || req.user.sub)) || context.userId || null;
+  const sessionUserId = (typeof req.getUserId === 'function' ? req.getUserId() : (req.user && (req.user.userId || req.user.id || req.user.sub))) || context.userId || null;
     const normalizedSessionUserId = sessionUserId ? String(sessionUserId).trim().toLowerCase() : null;
 
     const resolveAssignmentCourseIds = async () => {

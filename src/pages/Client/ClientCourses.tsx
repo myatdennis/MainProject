@@ -134,11 +134,10 @@ const ClientCourses = () => {
       } catch (err) {
         console.warn('Failed to initialize course store:', err);
         const message = err instanceof Error ? err.message : 'Unable to load course catalog right now.';
-        // If the init was blocked due to missing org, courseStore emits a
-        // diagnostic and we surface a user-friendly UI state instead of
-        // leaving the screen spinning indefinitely.
-        if (String(message).includes('org_selection_required') || String(message).includes('missing_org_context')) {
-          if (mounted) setOrgSelectionRequired(true);
+        // If the init was blocked due to missing org, courseStore sets a
+        // diagnostic detail 'org_bootstrap_pending' on learnerCatalogState.
+        if (mounted && learnerCatalogState.detail === 'org_bootstrap_pending') {
+          setOrgSelectionRequired(true);
         }
         if (mounted) setCoursesError(message || 'Unable to load course catalog right now.');
       } finally {
@@ -158,16 +157,9 @@ const ClientCourses = () => {
         setOrgSelectionRequired(true);
       }
     };
-    const orgRequiredHandler = () => {
-      // apiClient dispatches this when a guarded API call was blocked due to
-      // unresolved org context. Surface the selection required UI.
-      setOrgSelectionRequired(true);
-    };
     window.addEventListener('huddle:catalog-warning', handler as EventListener);
-    window.addEventListener('huddle:org-required', orgRequiredHandler as EventListener);
     return () => {
       window.removeEventListener('huddle:catalog-warning', handler as EventListener);
-      window.removeEventListener('huddle:org-required', orgRequiredHandler as EventListener);
     };
   }, []);
 

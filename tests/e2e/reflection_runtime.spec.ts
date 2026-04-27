@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { getApiBaseUrl, getFrontendBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
+import { ensureE2EBypass } from './helpers/auth';
 
 const apiBase = getApiBaseUrl();
 const frontendBase = getFrontendBaseUrl();
@@ -31,8 +33,10 @@ const loginAsLearner = async (page: Page) => {
     (window as any).__E2E_USER_ROLE = 'learner';
     localStorage.setItem('huddle_lms_auth', 'true');
   });
-  await page.goto(`${frontendBase}/client/dashboard`, { waitUntil: 'domcontentloaded' });
-  await page.waitForURL('**/client/dashboard', { timeout: 30_000 });
+  await ensureE2EBypass(page, { role: 'learner' });
+  await page.goto(`${frontendBase}/client/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"]').first()).toBeVisible({ timeout: 30_000 });
 };
 
 const attachLearnerApiHeaders = async (page: Page) => {
@@ -209,7 +213,7 @@ const deleteCourse = async (request: any, courseId: string) => {
 };
 
 const openClientCourseCatalog = async (page: Page, courseTitle: string) => {
-  await page.goto(`${frontendBase}/client/courses`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${frontendBase}/client/courses`);
   await expect(page.getByText(courseTitle)).toBeVisible({ timeout: 20_000 });
 };
 
@@ -228,9 +232,9 @@ test.describe('Reflection runtime proof', () => {
       await loginAsLearner(page);
       await openClientCourseCatalog(page, `Reflection Runtime ${unique}`);
 
-      await page.goto(`${frontendBase}/client/courses/${courseSlug}/lessons/${reflectionLessonId}`, {
-        waitUntil: 'domcontentloaded',
-      });
+  await page.goto(`${frontendBase}/client/courses/${courseSlug}/lessons/${reflectionLessonId}`);
+  await waitForAuthReady(page).catch(() => {});
+      await expect(page.locator('main, [role="main"]').first()).toBeVisible({ timeout: 15_000 });
 
       await expect(page.getByRole('button', { name: /begin reflection/i })).toBeVisible({ timeout: 20_000 });
       await page.getByRole('button', { name: /begin reflection/i }).click();
@@ -245,8 +249,9 @@ test.describe('Reflection runtime proof', () => {
         }, { timeout: 15_000 })
         .toContain('I need to slow down and listen more carefully.');
 
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await expect(page.locator('textarea')).toHaveValue('I need to slow down and listen more carefully.', { timeout: 20_000 });
+  await page.reload();
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('textarea')).toHaveValue('I need to slow down and listen more carefully.', { timeout: 20_000 });
 
       const savedReflection = await fetchLearnerReflection(request, courseId, reflectionLessonId);
       expect(String(savedReflection?.responseText ?? '')).toContain('I need to slow down and listen more carefully.');
@@ -268,9 +273,9 @@ test.describe('Reflection runtime proof', () => {
       await loginAsLearner(page);
       await openClientCourseCatalog(page, `Reflection Runtime ${unique}`);
 
-      await page.goto(`${frontendBase}/client/courses/${courseSlug}/lessons/${reflectionLessonId}`, {
-        waitUntil: 'domcontentloaded',
-      });
+  await page.goto(`${frontendBase}/client/courses/${courseSlug}/lessons/${reflectionLessonId}`);
+  await waitForAuthReady(page).catch(() => {});
+      await expect(page.locator('main, [role="main"]').first()).toBeVisible({ timeout: 15_000 });
 
       await expect(page.getByRole('button', { name: /begin reflection/i })).toBeVisible({ timeout: 20_000 });
       await page.getByRole('button', { name: /begin reflection/i }).click();
@@ -298,9 +303,9 @@ test.describe('Reflection runtime proof', () => {
       expect(String(submittedReflection?.responseText ?? '')).toContain('I will pause before reacting.');
       expect(String(submittedReflection?.status ?? '')).toBe('submitted');
 
-      await page.goto(`${frontendBase}/client/courses/${courseSlug}/lessons/${reflectionLessonId}`, {
-        waitUntil: 'domcontentloaded',
-      });
+      await page.goto(`${frontendBase}/client/courses/${courseSlug}/lessons/${reflectionLessonId}`);
+      await (await import('./helpers/waitForAuthReady')).default(page);
+      await expect(page.locator('main, [role="main"]').first()).toBeVisible({ timeout: 15_000 });
       await expect(page.getByRole('heading', { name: 'Reflection Saved' })).toBeVisible({ timeout: 20_000 });
     } finally {
       await deleteCourse(request, courseId);

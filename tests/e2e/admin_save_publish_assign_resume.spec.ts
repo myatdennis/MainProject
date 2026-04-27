@@ -1,5 +1,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { getApiBaseUrl, getFrontendBaseUrl } from './helpers/env';
+import { ensureE2EBypass } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 const apiBase = getApiBaseUrl();
 const frontendBase = getFrontendBaseUrl();
@@ -210,8 +212,11 @@ test.describe('Admin save/reload/edit/publish/assign + learner resume after refr
       (window as any).__E2E_BYPASS = true;
     });
 
-    const learnerPage = await context.newPage();
-    await learnerPage.goto(`${frontendBase}/client/courses`, { waitUntil: 'domcontentloaded' });
+  const { newPageWithBypass } = await import('./helpers/page');
+  const learnerPage = await newPageWithBypass(context, { role: 'learner' });
+    await ensureE2EBypass(learnerPage, { role: 'learner' });
+    await learnerPage.goto(`${frontendBase}/client/courses`);
+    await waitForAuthReady(learnerPage).catch(() => {});
 
     const primaryButtons = learnerPage.locator('[data-test="client-course-primary"]');
     const targetCourseCard = learnerPage
@@ -245,7 +250,8 @@ test.describe('Admin save/reload/edit/publish/assign + learner resume after refr
     await expect(learnerPage.url()).toContain(`/client/courses/${courseSlug}/lessons/`);
     const beforeRefreshUrl = learnerPage.url();
 
-    await learnerPage.reload({ waitUntil: 'domcontentloaded' });
+  await learnerPage.reload();
+  await waitForAuthReady(learnerPage).catch(() => {});
     await expect(learnerPage.getByRole('button', { name: /back to course overview/i })).toBeVisible({ timeout: 20_000 });
     await expect(learnerPage.url()).not.toContain('/login');
     expect(learnerPage.url()).toBe(beforeRefreshUrl);

@@ -9,7 +9,7 @@ describe('MembershipSelfHealTracker', () => {
   });
 
   it('prevents duplicate attempts for the same user/org', () => {
-    const userId = 'user-123';
+  const userId = '11111111-1111-1111-1111-111111111111';
     const orgId = 'org-abc';
 
     expect(tracker.shouldAttempt(userId, orgId)).toBe(true);

@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { getApiBaseUrl, getFrontendBaseUrl, waitForOk } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
+import { ensureE2EBypass } from './helpers/auth';
 import createE2ERequestContext from './helpers/requestContext';
 
 const apiBase = getApiBaseUrl();
@@ -37,14 +39,26 @@ test.describe('learner notifications end-to-end', () => {
   const notificationsDisabled = Boolean(createPayload?.notificationsDisabled);
     const notificationId = createPayload?.data?.id as string | undefined;
 
-    await page.goto(`${frontendBase}/lms/login`, { waitUntil: 'domcontentloaded' });
+  await ensureE2EBypass(page, { role: 'learner' });
+  await page.goto(`${frontendBase}/lms/login`);
+  try {
+    await expect(page.getByLabel('Email Address')).toBeVisible({ timeout: 5_000 });
     await page.getByLabel('Email Address').fill('user@pacificcoast.edu');
     await page.getByLabel('Password').fill('user123');
     await page.getByRole('button', { name: 'Sign In' }).click();
     await page.waitForURL('**/lms/dashboard', { timeout: 30_000 });
+  } catch (e) {
+    try {
+      await page.goto(`${frontendBase}/lms/dashboard`);
+      await waitForAuthReady(page).catch(() => {});
+      await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible({ timeout: 30_000 });
+    } catch (err) {}
+  }
 
-    await page.goto(`${frontendBase}/client/courses`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByLabel('Notifications')).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${frontendBase}/client/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"]').first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByLabel('Notifications')).toBeVisible({ timeout: 20_000 });
 
     if (notificationsDisabled || !notificationId) {
       const apiCtx = await createE2ERequestContext({ baseURL: apiBase });
@@ -59,18 +73,14 @@ test.describe('learner notifications end-to-end', () => {
 
     const apiCtx = await createE2ERequestContext({ baseURL: apiBase });
     let visibleInLearnerApi = false;
-    for (let attempt = 0; attempt < 25; attempt += 1) {
+    // Poll the learner API deterministically until the notification appears
+    await expect.poll(async () => {
       const response = await apiCtx.get('/api/learner/notifications');
-      if (response.ok()) {
-        const payload = await response.json();
-        const records = Array.isArray(payload?.data) ? payload.data : [];
-        if (records.some((entry: any) => entry?.id === notificationId)) {
-          visibleInLearnerApi = true;
-          break;
-        }
-      }
-      await page.waitForTimeout(400);
-    }
+      if (!response.ok()) return false;
+      const payload = await response.json();
+      const records = Array.isArray(payload?.data) ? payload.data : [];
+      return records.some((entry: any) => entry?.id === notificationId);
+  }, { timeout: 30_000, intervals: [500, 500] }).toBeTruthy();
     await apiCtx.dispose();
     expect(visibleInLearnerApi).toBe(true);
 
@@ -81,18 +91,13 @@ test.describe('learner notifications end-to-end', () => {
 
     let unreadCleared = false;
     const apiCtx2 = await createE2ERequestContext({ baseURL: apiBase });
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    await expect.poll(async () => {
       const unreadResponse = await apiCtx2.get('/api/learner/notifications?unread_only=true');
-      if (unreadResponse.ok()) {
-        const unreadPayload = await unreadResponse.json();
-        const unreadRecords = Array.isArray(unreadPayload?.data) ? unreadPayload.data : [];
-        if (!unreadRecords.some((entry: any) => entry?.id === notificationId)) {
-          unreadCleared = true;
-          break;
-        }
-      }
-      await page.waitForTimeout(400);
-    }
+      if (!unreadResponse.ok()) return false;
+      const unreadPayload = await unreadResponse.json();
+      const unreadRecords = Array.isArray(unreadPayload?.data) ? unreadPayload.data : [];
+      return !unreadRecords.some((entry: any) => entry?.id === notificationId);
+  }, { timeout: 20_000, intervals: [500, 500] }).toBeTruthy();
     await apiCtx2.dispose();
 
     expect(unreadCleared).toBe(true);

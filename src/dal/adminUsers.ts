@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import { buildScopedApiUrl } from '../lib/orgContext';
 
 export interface AdminUserRecord {
   membershipId: string;
@@ -104,7 +105,7 @@ export const listUsersByOrg = async (orgId: string): Promise<AdminUserRecord[]> 
     throw new Error('orgId is required to load users');
   }
   const params = new URLSearchParams({ orgId });
-  const payload = await apiRequest<any[] | { data?: any[] }>(`/api/admin/users?${params.toString()}`);
+  const payload = await apiRequest<any[] | { data?: any[] }>(buildScopedApiUrl(`/admin/users${params.toString() ? `?${params.toString()}` : ''}`, orgId));
   return (unwrapApiData(payload) ?? [])
     .filter((row) =>
       Boolean(

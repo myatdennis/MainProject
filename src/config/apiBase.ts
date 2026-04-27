@@ -28,18 +28,39 @@ const getRuntimeApiBaseOverride = (): string | undefined => {
   return runtimeApiBaseOverride;
 };
 
-const stripSlashes = (value: string) => value.replace(/^\/+/, '').replace(/\/+$/, '');
+// Old granular normalizer removed in favor of a single canonical path normalizer
+// that ensures exactly one `/api` prefix for application API routes.
+const normalizePath = (input: string) => {
+  if (!input) return '/api';
+  let path = input;
+  // Ensure leading slash
+  if (!path.startsWith('/')) path = `/${path}`;
 
-const normalizeResourcePath = (input: string) => {
-  if (!input) return { normalizedPath: '', suffix: '' };
-  const match = input.match(/^[^?#]*/)?.[0] ?? '';
-  const suffix = input.slice(match.length);
-  const trimmed = match.replace(/^\/+/, '').replace(/\/+$/, '');
-  return { normalizedPath: trimmed ? `/${trimmed}` : '', suffix };
+  // If already starts with /api/, treat as normalized
+  if (path.startsWith('/api/')) return path;
+
+  // Otherwise prefix a single /api
+  return `/api${path}`;
 };
 
 const getEffectiveApiBase = (): string => {
-  return (getRuntimeApiBaseOverride() || CANONICAL_API_BASE).trim();
+  const override = getRuntimeApiBaseOverride();
+  const base = (override || CANONICAL_API_BASE).trim();
+  // If an override points at a Supabase Functions URL, treat it as invalid
+  // for our canonical API base and fall back to the non-functions canonical
+  // API base. This prevents routing auth/API calls through Supabase functions
+  // hosts.
+  try {
+    if (typeof base === 'string' && base.includes('supabase.co/functions/v1')) {
+      try {
+        console.warn('[apiBase] Ignoring Supabase functions URL as API base override and falling back to canonical API base');
+      } catch {}
+      return CANONICAL_API_BASE.trim();
+    }
+  } catch {
+    // ignore
+  }
+  return base;
 };
 
 export function getApiBaseUrl(): string {
@@ -61,35 +82,58 @@ export function getApiOrigin(): string {
 
 export const assertNoDoubleApi = (url: string) => {
   if (/\/api\/api(\/|$)/i.test(url)) {
-    if (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) {
-      throw new Error(`[apiBase] Refusing to issue request with double /api prefix: ${url}`);
-    }
-    console.error(`[apiBase] Detected double /api prefix: ${url}`);
+    // Always fail hard — double /api prefixes are a fatal routing bug.
+    // Throwing prevents requests from being issued and makes the failure
+    // easy to detect in both unit and E2E runs.
+    throw new Error('[FATAL] DOUBLE API PREFIX: ' + String(url));
   }
 };
 
 export function buildApiUrl(path: string): string {
+  // If no path is provided, return the API base (caller expects base URL)
   if (!path) return getApiBaseUrl();
+
+  // Handle absolute URLs first. Block supabase functions URLs early and
+  // rewrite them to the canonical API path. Allow other absolute URLs as-is.
   if (/^https?:\/\//i.test(path)) {
-    assertNoDoubleApi(path);
+    if (path.includes('supabase.co/functions/v1')) {
+      // Warn in runtime and map the functions path to our API path
+      // by taking the trailing segment after /functions/v1.
+      try {
+        console.warn('[apiBase] Blocking Supabase functions URL, falling back to API_BASE');
+      } catch {}
+      const cleanPath = path.split('/functions/v1')[1] || '';
+      // Recursively build using the extracted path (e.g. '/auth/login')
+      return buildApiUrl(cleanPath);
+    }
+
+    // Allow other absolute URLs to pass through untouched.
     return path;
   }
-  const base = getApiBaseUrl();
-  const { normalizedPath, suffix } = normalizeResourcePath(path || '');
-  try {
-    const parsedBase = new URL(base, typeof window !== 'undefined' ? window.location.origin : undefined);
-    const origin = `${parsedBase.protocol}//${parsedBase.host}`;
-    const basePath = parsedBase.pathname && parsedBase.pathname !== '/' ? `/${stripSlashes(parsedBase.pathname)}` : '';
-    const finalPath = normalizedPath || basePath || '';
-    const url = `${origin}${finalPath}${suffix}`;
-    assertNoDoubleApi(url);
-    return url;
-  } catch {
-    const cleanedBase = base.replace(/\/+$/, '');
-    const final = `${cleanedBase}${normalizedPath}${suffix}`;
-    assertNoDoubleApi(final);
-    return final;
+
+  // Normalized base (no trailing slash)
+  const base = getApiBaseUrl().replace(/\/$/, '');
+
+  // Normalize the incoming path to have exactly one `/api` prefix.
+  const normalizedPath = normalizePath(path);
+  const finalUrl = `${base}${normalizedPath}`;
+
+  // Normalization: collapse accidental /api/api occurrences into a single /api.
+  const cleaned = finalUrl.replace(/\/api\/api(\/|$)/i, '/api$1');
+
+  // If supabase functions somehow survived normalization, rewrite them to
+  // the canonical API path by stripping the functions/v1 segment.
+  if (cleaned.includes('supabase.co/functions/v1')) {
+    try {
+      console.warn('[apiBase] Rewriting Supabase functions URL to canonical API path');
+    } catch {}
+    const after = cleaned.split('/functions/v1')[1] || '';
+    // Rebuild using the canonical base and normalized path
+    const rebuilt = `${base}${normalizePath(after)}`;
+    return rebuilt.replace(/\/api\/api(\/|$)/i, '/api$1');
   }
+
+  return cleaned;
 }
 
 export const resolveApiUrl = buildApiUrl;

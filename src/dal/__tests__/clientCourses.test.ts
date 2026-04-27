@@ -47,10 +47,15 @@ describe('clientCourses DAL', () => {
 
   it('sends orgId filter for assigned catalog queries', async () => {
     apiClientMock.mockResolvedValueOnce({ data: [{ id: 'course-1', title: 'Inclusive Leadership' }] });
+    // Simulate an active org preference so DAL will append orgId when appropriate.
+  const secureStorage = await vi.importActual('../../lib/secureStorage');
+  // Use vi.spyOn to safely mock the getter
+  vi.spyOn(secureStorage as any, 'getActiveOrgPreference').mockReturnValue('org-9');
 
-    const courses = await fetchPublishedCourses({ assignedOnly: true, orgId: 'org-9' });
+    const courses = await fetchPublishedCourses({ assignedOnly: true });
 
-    expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses?orgId=org-9&assigned=true', { noTransform: true });
+  // orgId is no longer passed as a query param; org scoping is handled by headers/session.
+  expect(apiClientMock).toHaveBeenCalledWith('/api/client/courses?assigned=true', { noTransform: true });
     expect(courses).toEqual([{ id: 'course-1', title: 'Inclusive Leadership' }]);
     expect(mapCourseRecordMock).toHaveBeenCalledWith({ id: 'course-1', title: 'Inclusive Leadership' });
   });

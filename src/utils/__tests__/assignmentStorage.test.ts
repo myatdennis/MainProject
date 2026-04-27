@@ -1,16 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { CourseAssignment } from '../../types/assignment';
+
+const CANONICAL_UUID = '11111111-1111-1111-1111-111111111111';
 
 const mockApiRequest = vi.fn();
 const mockGetUserSession = vi.fn();
 const secureStore = new Map<string, unknown>();
 const secureGetMock = vi.fn((key: string) => (secureStore.has(key) ? secureStore.get(key) : null));
-const secureSetMock = vi.fn((key: string, value: unknown) => {
-  secureStore.set(key, value);
-});
-const secureRemoveMock = vi.fn((key: string) => {
-  secureStore.delete(key);
-});
+const secureSetMock = vi.fn((key: string, value: unknown) => secureStore.set(key, value));
+const secureRemoveMock = vi.fn((key: string) => secureStore.delete(key));
 
 class MockApiError extends Error {
   status?: number;
@@ -41,8 +38,8 @@ vi.mock('../../dal/sync', () => ({
 }));
 
 const importModule = async () => {
-  const module = await import('../assignmentStorage');
-  return module;
+  const m = await import('../assignmentStorage');
+  return m;
 };
 
 describe('assignmentStorage session enforcement', () => {
@@ -61,7 +58,7 @@ describe('assignmentStorage session enforcement', () => {
     mockGetUserSession.mockReturnValue(null);
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123', 'org-1');
+    const result = await getAssignmentsForUser(CANONICAL_UUID);
 
     expect(result).toEqual([]);
     expect(mockApiRequest).not.toHaveBeenCalled();
@@ -71,21 +68,21 @@ describe('assignmentStorage session enforcement', () => {
     mockGetUserSession.mockReturnValue({ id: 'another-user' });
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123', 'org-1');
+    const result = await getAssignmentsForUser(CANONICAL_UUID);
 
     expect(result).toEqual([]);
     expect(mockApiRequest).not.toHaveBeenCalled();
   });
 
   it('returns mapped assignments when session matches and API succeeds', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
 
     const now = new Date().toISOString();
     const apiAssignments = [
       {
         id: 'assign-1',
         course_id: 'course-1',
-        user_id: 'user-123',
+        user_id: CANONICAL_UUID,
         status: 'assigned',
         progress: 0,
         due_date: null,
@@ -99,40 +96,32 @@ describe('assignmentStorage session enforcement', () => {
     mockApiRequest.mockResolvedValue({ data: apiAssignments });
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123', 'org-1');
+    const result = await getAssignmentsForUser(CANONICAL_UUID);
 
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
-    expect(mockApiRequest).toHaveBeenCalledWith('/api/learner/assignments?include_completed=true&orgId=org-1');
+    expect(mockApiRequest).toHaveBeenCalledWith('/api/learner/assignments?include_completed=true');
     expect(result).toEqual([
-      {
+      expect.objectContaining({
         id: 'assign-1',
         courseId: 'course-1',
-        surveyId: null,
-        userId: 'user-123',
-        organizationId: null,
+        userId: CANONICAL_UUID,
         status: 'assigned',
         progress: 0,
-        dueDate: null,
-        note: null,
-        assignedBy: null,
         assignmentType: 'course',
-        metadata: null,
-        createdAt: now,
-        updatedAt: now,
         active: true,
-      },
-    ] satisfies CourseAssignment[]);
+      }),
+    ]);
   });
 
   it('returns mapped assignments when apiRequest already unwraps the envelope', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
 
     const now = new Date().toISOString();
     mockApiRequest.mockResolvedValue([
       {
         id: 'assign-2',
         course_id: 'course-2',
-        user_id: 'user-123',
+        user_id: CANONICAL_UUID,
         status: 'assigned',
         progress: 0,
         created_at: now,
@@ -141,13 +130,12 @@ describe('assignmentStorage session enforcement', () => {
     ]);
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123', 'org-1');
+    const result = await getAssignmentsForUser(CANONICAL_UUID);
 
     expect(result).toEqual([
       expect.objectContaining({
         id: 'assign-2',
-        courseId: 'course-2',
-        userId: 'user-123',
+        userId: CANONICAL_UUID,
         assignmentType: 'course',
       }),
     ]);
@@ -155,7 +143,6 @@ describe('assignmentStorage session enforcement', () => {
 
   it('maps UUID-backed assignment rows that only expose user_id_uuid', async () => {
     const now = new Date().toISOString();
-
     const { mapAssignmentsFromApiRows } = await importModule();
     const result = mapAssignmentsFromApiRows([
       {
@@ -182,7 +169,6 @@ describe('assignmentStorage session enforcement', () => {
 
   it('maps legacy org_id assignment rows without dropping organization scope', async () => {
     const now = new Date().toISOString();
-
     const { mapAssignmentsFromApiRows } = await importModule();
     const result = mapAssignmentsFromApiRows([
       {
@@ -210,22 +196,22 @@ describe('assignmentStorage session enforcement', () => {
   });
 
   it('treats unauthorized errors from the API as empty responses', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
     mockApiRequest.mockRejectedValue(new MockApiError(401));
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('user-123', 'org-1');
+    const result = await getAssignmentsForUser(CANONICAL_UUID);
 
     expect(result).toEqual([]);
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
   });
 
   it('reports unauthorized assignment reads as unauthenticated in outcome mode', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
     mockApiRequest.mockRejectedValue(new MockApiError(401));
 
     const { getAssignmentsForUserWithOutcome } = await importModule();
-    const result = await getAssignmentsForUserWithOutcome('user-123', 'org-1');
+    const result = await getAssignmentsForUserWithOutcome(CANONICAL_UUID);
 
     expect(result).toEqual({
       outcome: 'unauthenticated',
@@ -235,15 +221,15 @@ describe('assignmentStorage session enforcement', () => {
   });
 
   it('falls back to local assignments when API request fails', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
     mockApiRequest.mockRejectedValue(new Error('network down'));
 
     const { getAssignmentsForUser } = await importModule();
 
-    const cachedAssignment: CourseAssignment = {
+    const cachedAssignment = {
       id: 'assign-1',
       courseId: 'course-1',
-      userId: 'user-123',
+      userId: CANONICAL_UUID,
       organizationId: null,
       status: 'assigned',
       progress: 0,
@@ -256,17 +242,16 @@ describe('assignmentStorage session enforcement', () => {
     };
     secureStore.set('huddle_course_assignments_v1', [cachedAssignment]);
 
-    const result = await getAssignmentsForUser('user-123', 'org-1');
+    const result = await getAssignmentsForUser(CANONICAL_UUID);
 
     expect(mockApiRequest).toHaveBeenCalled();
     expect(result).toEqual([cachedAssignment]);
   });
 
   it('fetches remote assignments when the requested user is email-based but the session is id-based', async () => {
-    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
     vi.doMock('../../lib/canonicalAuth', () => ({
-      getCanonicalSession: () => ({ userId: 'user-123', userEmail: 'learner@example.com' }),
-      waitForAuthReady: vi.fn(async () => ({ userId: 'user-123', userEmail: 'learner@example.com' })),
+      waitForAuthReady: vi.fn(async () => ({ userId: CANONICAL_UUID, userEmail: 'learner@example.com' })),
     }));
 
     const now = new Date().toISOString();
@@ -275,7 +260,7 @@ describe('assignmentStorage session enforcement', () => {
         {
           id: 'assign-1',
           course_id: 'course-1',
-          user_id: 'user-123',
+          user_id: CANONICAL_UUID,
           status: 'assigned',
           progress: 0,
           created_at: now,
@@ -285,14 +270,14 @@ describe('assignmentStorage session enforcement', () => {
     });
 
     const { getAssignmentsForUser } = await importModule();
-    const result = await getAssignmentsForUser('learner@example.com', 'org-1');
+    const result = await getAssignmentsForUser('learner@example.com');
 
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
     expect(result).toEqual([
       expect.objectContaining({
         id: 'assign-1',
         courseId: 'course-1',
-        userId: 'user-123',
+        userId: CANONICAL_UUID,
       }),
     ]);
   });

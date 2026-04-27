@@ -28,6 +28,7 @@ import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel'
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
 import { useSecureAuth } from '../../context/SecureAuthContext';
+import { GLOBAL_ORG_ID } from '../../constants/org';
 import orgService, { type Org, OrgProfileDetails } from '../../dal/orgs';
 import { ApiError } from '../../utils/apiClient';
 import { getCrmSummary, sendBroadcastNotification, type CrmSummary } from '../../dal/crm';
@@ -104,7 +105,7 @@ const AdminOrgWorkspace = () => {
     user?.platformRole ??
     '',
   ).toLowerCase() === 'platform_admin';
-  const activeOrgScopeId = activeOrgId === 'ALL_ORGS' ? null : activeOrgId;
+  const activeOrgScopeId = activeOrgId === GLOBAL_ORG_ID ? null : activeOrgId;
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');

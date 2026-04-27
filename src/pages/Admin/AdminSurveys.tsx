@@ -33,6 +33,7 @@ import {
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
 import { useSecureAuth } from '../../context/SecureAuthContext';
+import { GLOBAL_ORG_ID } from '../../constants/org';
 import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
 import SurveyAssignmentModal from '../../components/Survey/SurveyAssignmentModal';
@@ -69,7 +70,7 @@ const AdminSurveys = () => {
   useNavTrace('AdminSurveys');
   const { showToast } = useToast();
   const { activeOrgId } = useSecureAuth();
-  const activeOrgScopeId = activeOrgId === 'ALL_ORGS' ? null : activeOrgId;
+  const activeOrgScopeId = activeOrgId === GLOBAL_ORG_ID ? null : activeOrgId;
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');

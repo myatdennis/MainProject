@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import waitForAuthReady from './helpers/waitForAuthReady';
 import { loginAsAdmin } from './helpers/auth';
 import { provisionUser } from './helpers/api';
 import createE2ERequestContext from './helpers/requestContext';
@@ -17,7 +18,7 @@ test.describe('Add User → Users page visibility', () => {
     const TEST_ORG = 'demo-sandbox-org';
     // Use a dedicated API request context pre-populated with E2E headers. This avoids
     // coupling the polling to the browser page's lifecycle and reduces flakiness.
-    const apiCtx = await createE2ERequestContext({ baseURL: env.apiBaseUrl || 'http://127.0.0.1:8888' });
+  const apiCtx = await createE2ERequestContext({ baseURL: env.apiBaseUrl || 'http://127.0.0.1:8888', role: 'admin' });
     const waitForUserInApi = async (emailToFind: string, timeout = 15_000) => {
       const start = Date.now();
       while (Date.now() - start < timeout) {
@@ -39,7 +40,9 @@ test.describe('Add User → Users page visibility', () => {
     expect(found).toBeTruthy();
 
     // Still navigate to the UI and try to surface the user via the search input
-    await page.goto(`${env.baseUrl}/admin/users`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/users`);
+  await waitForAuthReady(page);
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible();
     const searchInput = page.locator('input[placeholder="Search users..."]');
     await searchInput.waitFor({ state: 'visible', timeout: 15_000 });
     await searchInput.fill(email);
@@ -84,7 +87,9 @@ test.describe('Add User → Users page visibility', () => {
 
     // Still navigate to the UI and try to surface the user via the search input. The UI
     // expectation is best-effort (caught) because client-side debounce/pagination can be flaky.
-    await page.goto(`${env.baseUrl}/admin/users`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${env.baseUrl}/admin/users`);
+  await waitForAuthReady(page);
+  await expect(page.locator('main, [role="main"], [data-test="dashboard-root"]').first()).toBeVisible();
     const searchInput = page.locator('input[placeholder="Search users..."]');
     await searchInput.waitFor({ state: 'visible', timeout: 15_000 });
     await searchInput.fill(email);

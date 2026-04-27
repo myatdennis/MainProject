@@ -34,7 +34,8 @@ describe('orgService request dedupe', () => {
       resolveApiUrl: (path: string) => `http://localhost${path}`,
     }));
     vi.doMock('../../utils/adminOrgScope', () => ({
-      appendAdminOrgIdQuery: (path: string) => `${path}${path.includes('?') ? '&' : '?'}orgId=org-1`,
+      // Tests expect client not to append ?orgId; keep append function as a no-op
+      appendAdminOrgIdQuery: (path: string) => path,
       requireExplicitAdminOrgId: () => 'org-1',
     }));
 
@@ -46,7 +47,7 @@ describe('orgService request dedupe', () => {
     ]);
 
     expect(apiRequestMock).toHaveBeenCalledTimes(1);
-    expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/organizations?page=1&pageSize=25&orgId=org-1');
+  expect(apiRequestMock).toHaveBeenCalledWith('/api/admin/organizations?page=1&pageSize=25');
     expect(first.data).toHaveLength(1);
     expect(second.data[0]?.id).toBe('org-1');
   });

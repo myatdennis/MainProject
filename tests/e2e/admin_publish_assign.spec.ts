@@ -1,6 +1,8 @@
 import { test, expect, Page, BrowserContext } from '@playwright/test';
 import { createAndPublishCourse, assignCourseToAll } from './helpers/api';
 import { getFrontendBaseUrl, getApiBaseUrl, waitForOk } from './helpers/env';
+import { ensureE2EBypass } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 // Smoke test: create + publish + assign a course via API, then verify the learner portal
 // renders correctly (auth bypass works, no redirect to /login).
@@ -31,12 +33,15 @@ test.describe('Admin publish & assign -> Learner sees assignment and plays', () 
     await assignCourseToAll(courseId);
 
     // ── Learner portal ──────────────────────────────────────────────────────
-    const learner = await context.newPage();
-    learner.on('console', (msg) => console.log('[LEARNER]', msg.type(), msg.text()));
-    learner.on('pageerror', (err) => console.log('[LEARNER ERROR]', err.message));
+  const { newPageWithBypass } = await import('./helpers/page');
+  const learner = await newPageWithBypass(context, { role: 'learner' });
+  await ensureE2EBypass(learner, { role: 'learner' });
+  learner.on('console', (msg) => console.log('[LEARNER]', msg.type(), msg.text()));
+  learner.on('pageerror', (err) => console.log('[LEARNER ERROR]', err.message));
 
     // Navigate to the client courses page.
-    await learner.goto(`${base}/client/courses`, { waitUntil: 'domcontentloaded' });
+  await learner.goto(`${base}/client/courses`);
+  await waitForAuthReady(learner).catch(() => {});
 
     // Log bypass state right after DOMContentLoaded (before React async bootstrap finishes)
     const earlyState = await learner.evaluate(() => ({
@@ -46,7 +51,8 @@ test.describe('Admin publish & assign -> Learner sees assignment and plays', () 
     console.log('[E2E] early bypass state:', JSON.stringify(earlyState));
 
     // Wait for React auth bootstrap to complete and any redirects to settle.
-    await learner.waitForTimeout(5000);
+  // Wait for learner page to finish bootstrap and show content
+  await learner.waitForURL('**/client/courses', { timeout: 15_000 }).catch(() => {});
 
     // PRIMARY assertion: auth bypass must prevent redirect to /login.
     const learnerUrl = learner.url();
@@ -64,7 +70,8 @@ test.describe('Admin publish & assign -> Learner sees assignment and plays', () 
         '[data-test="client-course-primary"], [data-test="course-card"], [data-test="client-course-card"], a[href*="/courses/"]'
       ).first();
       await firstCard.click();
-      await learner.waitForTimeout(2000);
+  // Wait for navigation or player to appear
+  await learner.waitForURL(/\/lessons\//, { timeout: 10_000 }).catch(() => {});
 
       const playerCount = await learner.locator('video, iframe, [data-test="video-player"]').count();
       if (playerCount === 0) {

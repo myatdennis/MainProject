@@ -1125,11 +1125,21 @@ export class CourseService {
       params.set('assigned', 'true');
     }
 
-    const path = params.toString() ? `/api/client/courses?${params.toString()}` : '/api/client/courses';
-
+    const relativePath = params.toString() ? `/client/courses?${params.toString()}` : '/client/courses';
     try {
-      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(path, { noTransform: true });
-      return (json.data || []).map(mapCourseRecord);
+      const activeOrgId = (await import('../lib/orgContext')).getGlobalActiveOrgIdForApi();
+      const buildScoped = (await import('../lib/orgContext')).buildScopedApiUrl;
+      const url = buildScoped(relativePath, activeOrgId ?? undefined);
+      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(url, { noTransform: true });
+      let courses = (json.data || []).map(mapCourseRecord);
+      if (activeOrgId && activeOrgId !== (await import('../constants/org')).GLOBAL_ORG_ID) {
+        courses = courses.filter((course) => {
+          const orgIds = (course as any).organizationIds || (course as any).organization_id || (course as any).org_id || [];
+          if (Array.isArray(orgIds) && orgIds.length > 0) return orgIds.includes(activeOrgId);
+          return true;
+        });
+      }
+      return courses;
     } catch (error) {
       console.error('Error loading published courses:', error);
       return [];

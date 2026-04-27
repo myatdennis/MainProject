@@ -3,6 +3,8 @@ import { slugify } from '../utils/courseNormalization';
 import apiRequest from '../utils/apiClient';
 import { getUserSession } from '../lib/secureStorage';
 import { mapCourseRecord, type SupabaseCourseRecord } from '../services/courseService';
+import { getGlobalActiveOrgIdForApi, buildScopedApiUrl } from '../lib/orgContext';
+import { GLOBAL_ORG_ID } from '../constants/org';
 
 export interface FetchPublishedCoursesOptions {
   assignedOnly?: boolean;
@@ -47,10 +49,24 @@ export async function fetchPublishedCourses(
     return [];
   }
 
-  const path = params.toString() ? `/api/client/courses?${params.toString()}` : '/api/client/courses';
+  const relativePath = params.toString() ? `/client/courses?${params.toString()}` : '/client/courses';
   try {
-    const json = await apiRequest<SupabaseCourseRecord[] | { data?: SupabaseCourseRecord[] }>(path, { noTransform: true });
-    return (unwrapApiData(json) || []).map(mapCourseRecord);
+    const activeOrgId = getGlobalActiveOrgIdForApi();
+    const url = buildScopedApiUrl(relativePath, activeOrgId ?? undefined);
+    const json = await apiRequest<SupabaseCourseRecord[] | { data?: SupabaseCourseRecord[] }>(url, { noTransform: true });
+    let courses = (unwrapApiData(json) || []).map(mapCourseRecord);
+
+    if (activeOrgId && activeOrgId !== GLOBAL_ORG_ID) {
+      courses = courses.filter((course) => {
+        const orgIds = (course as any).organizationIds || (course as any).organization_ids || [];
+        if (Array.isArray(orgIds) && orgIds.length > 0) {
+          return orgIds.includes(activeOrgId);
+        }
+        return true;
+      });
+    }
+
+    return courses;
   } catch (error) {
     console.error('[clientCourses.fetchPublishedCourses] Failed to fetch catalog:', error);
     return [];
@@ -72,10 +88,8 @@ export async function fetchCourse(
   const queryParam = includeDrafts ? '?includeDrafts=true' : '';
 
   try {
-    const json = await apiRequest<SupabaseCourseRecord | null | { data?: SupabaseCourseRecord | null }>(
-      `/api/client/courses/${normalizedIdentifier}${queryParam}`,
-      { noTransform: true }
-    );
+    const url = buildScopedApiUrl(`/client/courses/${normalizedIdentifier}${queryParam}`, getGlobalActiveOrgIdForApi() ?? undefined);
+    const json = await apiRequest<SupabaseCourseRecord | null | { data?: SupabaseCourseRecord | null }>(url, { noTransform: true });
 
     const primaryRecord = unwrapApiData(json);
     if (primaryRecord) {
@@ -84,10 +98,8 @@ export async function fetchCourse(
 
     const slugCandidate = slugify(normalizedIdentifier);
     if (slugCandidate && slugCandidate !== normalizedIdentifier) {
-      const slugJson = await apiRequest<SupabaseCourseRecord | null | { data?: SupabaseCourseRecord | null }>(
-        `/api/client/courses/${slugCandidate}${queryParam}`,
-        { noTransform: true }
-      );
+      const slugUrl = buildScopedApiUrl(`/client/courses/${slugCandidate}${queryParam}`, getGlobalActiveOrgIdForApi() ?? undefined);
+      const slugJson = await apiRequest<SupabaseCourseRecord | null | { data?: SupabaseCourseRecord | null }>(slugUrl, { noTransform: true });
       const slugRecord = unwrapApiData(slugJson);
       if (slugRecord) {
         return mapCourseRecord(slugRecord);

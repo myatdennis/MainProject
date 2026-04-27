@@ -38,6 +38,7 @@ import ActionsMenu from '../../components/ui/ActionsMenu';
 import { listOrgs, onOrgListInvalidated } from '../../dal/orgs';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { getAuthState } from '../../store/authStore';
+import { GLOBAL_ORG_ID } from '../../constants/org';
 import Loading from '../../components/ui/Loading';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
@@ -73,7 +74,7 @@ const AdminUsers = () => {
     authSnap?.user?.platformRole ??
     '',
   ).toLowerCase() === 'platform_admin';
-  const activeOrgScopeId = activeOrgId === 'ALL_ORGS' ? null : activeOrgId;
+  const activeOrgScopeId = activeOrgId === GLOBAL_ORG_ID ? null : activeOrgId;
   const { routeKey } = useRouteChangeReset();
 
   // Reset transient UI state (filters, selections) whenever the user navigates

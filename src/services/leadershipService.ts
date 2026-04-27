@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import { buildScopedApiUrl } from '../lib/orgContext';
 
 export interface LeadershipHealthRecord {
   orgId: string;
@@ -48,8 +49,8 @@ const basePath = '/api/admin/analytics/leadership';
 
 export const leadershipService = {
   async fetchHealth(orgId?: string): Promise<LeadershipHealthRecord[]> {
-    const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
-    const json = await apiRequest<ApiListResponse<LeadershipHealthRecord>>(`${basePath}/health${query}`);
+    const url = buildScopedApiUrl(`${basePath}/health`, orgId);
+    const json = await apiRequest<ApiListResponse<LeadershipHealthRecord>>(url);
     return json.data ?? [];
   },
 

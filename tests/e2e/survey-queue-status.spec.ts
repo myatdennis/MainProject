@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
 import { getFrontendBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 test.describe('Survey queue status offline/online transitions', () => {
   test.setTimeout(120_000);
@@ -9,9 +10,10 @@ test.describe('Survey queue status offline/online transitions', () => {
     const { baseUrl } = await loginAsAdmin(page);
     const base = baseUrl ?? getFrontendBaseUrl();
 
-    await page.goto(`${base}/admin/course-builder/new`, { waitUntil: 'domcontentloaded' });
-    const previewStatus = page.locator('[data-testid="survey-preview-queue-status"]');
-    await expect(previewStatus).toBeVisible({ timeout: 30_000 });
+  await page.goto(`${base}/admin/course-builder/new`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('[data-testid="survey-preview-queue-status"]')).toBeVisible({ timeout: 30_000 });
+  const previewStatus = page.locator('[data-testid="survey-preview-queue-status"]');
 
     const assertOfflineCopy = async (locator: ReturnType<Page['locator']>, timeout = 5_000) => {
       await expect(locator).toContainText(/offline mode/i, { timeout });

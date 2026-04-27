@@ -6,6 +6,7 @@ import { CourseService, CourseValidationError } from '../services/courseService'
 import type { IdempotentAction } from '../utils/idempotency';
 import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
 import { publishRequestBodySchema } from '../contracts/courseWriteContract';
+import { buildScopedApiUrl } from '../lib/orgContext';
 
 export { CourseValidationError };
 
@@ -118,13 +119,15 @@ export async function fetchCourseAssignments(
   if (!organizationId) {
     throw new CourseValidationError('fetchCourseAssignments', ['organizationId is required']);
   }
-  const params = new URLSearchParams({ orgId: organizationId });
+  const params = new URLSearchParams({});
+  params.set('orgId', organizationId);
   if (options.activeOnly === false) {
     params.set('active', 'false');
   }
   try {
+    const basePath = `/api/admin/courses/${courseId}/assignments`;
     const response = await apiRequest<any[] | { data?: any[] }>(
-      `/api/admin/courses/${courseId}/assignments?${params.toString()}`,
+      buildScopedApiUrl(basePath + (params.toString() ? `?${params.toString()}` : ''), organizationId),
       { skipAdminGateCheck: true },
     );
     const rows = unwrapApiData<any[]>(response) ?? [];

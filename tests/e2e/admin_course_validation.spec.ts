@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { loginAsAdmin } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 test.describe('Admin course modal validation', () => {
   test.setTimeout(90_000);
@@ -7,8 +8,9 @@ test.describe('Admin course modal validation', () => {
   test('prevents saving a course without a title', async ({ page }: { page: Page }) => {
     const { baseUrl } = await loginAsAdmin(page);
 
-    await page.goto(`${baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('[data-test="admin-new-course"]', { timeout: 20_000 });
+  await page.goto(`${baseUrl}/admin/courses`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('[data-test="admin-new-course"]')).toBeVisible({ timeout: 20_000 });
 
     // Stub window.alert so we can capture validation copy without relying on browser dialogs
     await page.evaluate(() => {

@@ -21,6 +21,7 @@ import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
+import { GLOBAL_ORG_ID } from '../constants/org';
 import { writeBridgeSnapshot, clearBridgeSnapshot } from '../store/courseStoreOrgBridge';
 import { courseStore } from '../store/courseStore';
 // admin access snapshot helper intentionally unused in some builds
@@ -167,6 +168,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         window.dispatchEvent(new CustomEvent('huddle:admin_ready', { detail: { userId: user?.id, orgId: activeOrgId } }));
       }
       lastAdminAllowedRef.current = true;
+      try {
+        if (typeof window !== 'undefined') (window as any).AUTH_READY = true;
+      } catch (e) {
+        // ignore
+      }
     } else if (!isAdmin && lastAdminAllowedRef.current) {
       if (import.meta.env?.DEV) {
         console.debug('[AUTH][ADMIN_GATE] Admin store de-initialized', {
@@ -177,9 +183,30 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
       lastAdminAllowedRef.current = false;
+      try {
+        if (typeof window !== 'undefined') (window as any).AUTH_READY = false;
+      } catch (e) {}
     }
     // No return value (no cleanup needed)
   }, [user, activeOrgId, membershipStatus]);
+
+  // Ensure a single, idempotent write of window.AUTH_READY and window.AUTH_STATE
+  const writeWindowAuthState = (status: string, userObj: any | null) => {
+    try {
+      if (typeof window === 'undefined') return;
+      const w = window as any;
+      // Only write once per bootstrap completion cycle to avoid flapping
+      w.__AUTH_STATE_WRITTEN = w.__AUTH_STATE_WRITTEN || {};
+      const key = String(Date.now());
+      // Always set AUTH_READY to true when called for ready/degraded
+      w.AUTH_READY = status === 'ready' || status === 'degraded' ? true : !!w.AUTH_READY;
+      w.AUTH_STATE = { status, user: userObj || null };
+      // Track that we wrote an auth state at least once
+      w.__AUTH_STATE_WRITTEN[key] = true;
+    } catch (e) {
+      // swallow any window write errors
+    }
+  };
 
   // Hoist authInitializing and setAuthInitializing to top-level scope
   const [authInitializing, setAuthInitializing] = useState(true);
@@ -498,11 +525,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return null;
       };
 
-      const resolvedOrgId = resolveActiveOrg(session);
+  const resolvedOrgId = resolveActiveOrg(session);
 
-      setGlobalActiveOrgIdForApi(resolvedOrgId ?? null);
-      setActiveOrgIdState(resolvedOrgId ?? null);
-      setActiveOrgPreference(resolvedOrgId ?? null);
+  // Persist the resolved org verbatim. This ensures the special sentinel
+  // 'ALL_ORGS' is stored as-is (not converted to null) so other modules
+  // and the API layer can make deterministic decisions.
+  setGlobalActiveOrgIdForApi(resolvedOrgId);
+  setActiveOrgIdState(resolvedOrgId);
+  setActiveOrgPreference(resolvedOrgId);
       console.log('[ORG BOOTSTRAP]', {
         memberships: resolvedMemberships,
         activeOrgId: session.activeOrgId ?? null,
@@ -1421,7 +1451,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           String(user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? '').toLowerCase() === 'platform_admin'
         ) {
           console.warn('Platform admin — no org required');
-          resolvedOrg = 'ALL_ORGS';
+          resolvedOrg = GLOBAL_ORG_ID;
           lastActiveOrgSourceRef.current = 'platform_admin';
         } else {
           resolvedOrg = null;
@@ -1475,6 +1505,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           } catch (_) { void 0; }
           console.info('[AUTH BOOTSTRAP] ready', { userId: user?.id ?? null, orgId: resolvedOrg });
           e2eLog('bootstrap_ready', { userId: user?.id ?? null, orgId: resolvedOrg, membershipStatus: finalMembershipStatus });
+          // Write deterministic window auth state for E2E and Playwright
+          writeWindowAuthState('ready', user ?? null);
         } else {
           setAuthBootstrapState('degraded');
           setAuthStatus('authenticated', 'bootstrap:degraded');
@@ -1487,6 +1519,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           } catch (_) { void 0; }
           console.warn('[AUTH BOOTSTRAP] degraded', { userId: user?.id ?? null, orgId: resolvedOrg });
           e2eLog('bootstrap_degraded', { userId: user?.id ?? null, orgId: resolvedOrg, membershipStatus: finalMembershipStatus });
+          // Mark auth ready but degraded for E2E visibility
+          writeWindowAuthState('degraded', user ?? null);
         }
       } catch (err) {
         console.error('[AUTH BOOTSTRAP] unexpected error', err);
@@ -1622,9 +1656,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const setActiveOrganization = useCallback(
     async (orgId: string | null) => {
+      // Allow explicit ALL_ORGS sentinel for platform admins; otherwise
+      // validate membership/access before persisting.
+      const isAllOrgs = orgId === 'ALL_ORGS';
       const hasMembership = Boolean(orgId && memberships.some((membership) => membership.orgId === orgId));
       const hasOrgAccess = Boolean(orgId && organizationIds.includes(orgId));
-      const normalized = orgId && (hasMembership || hasOrgAccess) ? orgId : null;
+      const normalized = isAllOrgs ? 'ALL_ORGS' : orgId && (hasMembership || hasOrgAccess) ? orgId : null;
       setActiveOrgPreference(normalized);
       setGlobalActiveOrgIdForApi(normalized);
       setActiveOrgIdState(normalized);

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { getFrontendBaseUrl } from './helpers/env';
 import { loginAsAdmin } from './helpers/auth';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 test.describe('Courses import UI', () => {
   test.setTimeout(120_000);
@@ -9,8 +10,9 @@ test.describe('Courses import UI', () => {
     const { baseUrl } = await loginAsAdmin(page);
     const base = baseUrl ?? getFrontendBaseUrl();
 
-    await page.goto(`${base}/admin/courses/import`);
-    await expect(page.locator('h1:text("Import Courses")')).toBeVisible();
+  await page.goto(`${base}/admin/courses/import`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('h1:text("Import Courses")')).toBeVisible({ timeout: 20_000 });
 
     // Prepare a tiny JSON file in-memory
     const title = `E2E Import Course ${Date.now()}`;

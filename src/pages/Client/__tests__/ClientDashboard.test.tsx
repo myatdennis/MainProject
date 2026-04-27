@@ -55,7 +55,7 @@ vi.mock('../../../hooks/useRoutePrefetch', () => ({
 vi.mock('../../../hooks/useUserProfile', () => ({
   useUserProfile: () => ({
     user: {
-      id: 'user-123',
+  id: '11111111-1111-1111-1111-111111111111',
       email: 'user@example.com',
     },
   }),
@@ -148,7 +148,7 @@ describe('ClientDashboard', () => {
     expect(await screen.findByRole('heading', { name: /No assignments yet/i })).toBeInTheDocument();
 
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123', 'org-1');
+  expect(getAssignmentsForUserMock).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111', 'org-1');
   });
 
   it('does not start assignment loading before learner auth is ready', async () => {
@@ -196,7 +196,7 @@ describe('ClientDashboard', () => {
       {
         id: 'assignment-1',
         courseId: 'course-1',
-        userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
         status: 'in-progress',
         progress: 99,
       },
@@ -240,7 +240,7 @@ describe('ClientDashboard', () => {
       {
         id: 'assignment-2',
         courseId: 'course-2',
-        userId: 'user-123',
+  userId: '11111111-1111-1111-1111-111111111111',
         status: 'in-progress',
         progress: 0,
       },

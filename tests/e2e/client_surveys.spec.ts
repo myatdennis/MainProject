@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { getFrontendBaseUrl, getApiBaseUrl } from './helpers/env';
+import waitForAuthReady from './helpers/waitForAuthReady';
 
 const TEST_ORG_ID = 'demo-sandbox-org';
 
@@ -9,8 +10,9 @@ const loginAsLearner = async (page: Page) => {
     (window as any).__E2E_BYPASS = true;
     localStorage.setItem('huddle_lms_auth', 'true');
   });
-  await page.goto(`${base}/client/dashboard`, { waitUntil: 'domcontentloaded' });
-  await page.waitForURL('**/client/dashboard', { timeout: 30_000 });
+  await page.goto(`${base}/client/dashboard`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.locator('main, [role="main"]').first()).toBeVisible({ timeout: 30_000 });
 };
 
 test.describe('Client survey entry points', () => {
@@ -20,10 +22,12 @@ test.describe('Client survey entry points', () => {
     const base = getFrontendBaseUrl();
     await loginAsLearner(page);
 
-    await page.goto(`${base}/client/surveys`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: 'My Surveys' })).toBeVisible({ timeout: 20_000 });
+  await page.goto(`${base}/client/surveys`);
+  await waitForAuthReady(page).catch(() => {});
+  await expect(page.getByRole('heading', { name: 'My Surveys' })).toBeVisible({ timeout: 20_000 });
 
-  await page.goto(`${base}/client/dashboard`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${base}/client/dashboard`);
+    await waitForAuthReady(page).catch(() => {});
     await expect(page).toHaveURL(/\/client\/dashboard/);
     await expect(page.getByRole('button', { name: /Go to full learning hub/i })).toBeVisible({ timeout: 20_000 });
   });
