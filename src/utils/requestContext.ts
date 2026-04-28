@@ -47,6 +47,28 @@ const resolveSupabaseSessionSnapshot = async (): Promise<SupabaseSessionSnapshot
       };
       return supabaseSessionSnapshot;
     }
+    // As a best-effort, attempt to read the Supabase client session directly
+    // (some environments provide an in-browser supabase client). This helps
+    // ensure the token we attach is the same one managed by Supabase.
+    try {
+      const { getSupabase } = await import('../lib/supabaseClient');
+      const supabase = getSupabase();
+      if (supabase && typeof supabase.auth?.getSession === 'function') {
+        const { data } = await supabase.auth.getSession();
+        const token = data?.session?.access_token ?? null;
+        const userId = data?.session?.user?.id ?? null;
+        if (token) {
+          supabaseSessionSnapshot = {
+            token,
+            userId,
+            expiresAt: now() + 60 * 1000,
+          };
+          return supabaseSessionSnapshot;
+        }
+      }
+    } catch (e) {
+      // ignore and fall back to canonical/session retry below
+    }
     const ready = await waitForAuthReady(2000).catch(() => null);
     if (ready && ready.accessToken) {
       supabaseSessionSnapshot = {

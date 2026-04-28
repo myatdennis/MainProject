@@ -40,7 +40,9 @@ export const createTeamHuddleRouter = ({
     if (!context) return;
     const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
     const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId: orgScope.orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId: orgScope.orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    }
     if (!isPlatformAdmin && (orgScope.requiresExplicitSelection || !orgScope.orgId)) {
       return sendError(res, 400, 'org_required', 'Select an organization to view Team Huddle posts.');
     }

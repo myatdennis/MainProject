@@ -1072,6 +1072,12 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   const userPayload = buildUserPayload(supabaseUser, memberships, { membershipStatus });
   const membershipMap = membershipsTrusted ? buildMembershipMap(memberships) : new Map();
   let activeOrgId = membershipsTrusted ? determineActiveOrgId(req, memberships) : null;
+  // If we couldn't resolve an active org from memberships but the user is a
+  // platform admin, allow a graceful bypass: prefer an explicit requested
+  // org (cookie/header/query/body). For platform admins we expose a platform
+  // wide scope marker instead of forcing a concrete activeOrgId so callers
+  // can opt-in to platform-wide behaviour.
+  let platformScope = null;
   if (!activeOrgId && isPlatformAdmin(userPayload)) {
     const requestedOrg = getRequestedOrgId(req);
     if (requestedOrg) {
@@ -1080,6 +1086,18 @@ export async function buildAuthContext(req, { optional = false } = {}) {
         userId: supabaseUser?.id ?? null,
         requestedOrg,
         activeOrgId,
+        reason: 'requested_org_used',
+      });
+    } else {
+      // Do NOT set a concrete activeOrgId for platform admins. Instead expose
+      // a scope marker so downstream handlers can choose whether to enforce
+      // organization scoping or operate across all orgs.
+      platformScope = 'ALL_ORGS';
+      activeOrgId = null;
+      authLog('info', 'resolved_org_for_platform_admin', {
+        userId: supabaseUser?.id ?? null,
+        activeOrgScope: platformScope,
+        reason: 'platform_admin_global_fallback',
       });
     }
   }
@@ -1114,6 +1132,8 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     }
   }
 
+  // Include `scope` for platform-wide admins so handlers can make explicit
+  // decisions about operating across all organizations.
   return {
     user: userPayload,
     membershipsMap: membershipMap,
@@ -1122,6 +1142,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     membershipStatus,
     membershipCount: effectiveMembershipCount,
     membershipDegraded,
+    scope: platformScope,
   };
 }
 
@@ -1265,7 +1286,9 @@ export async function requireAdmin(req, res, next) {
 
   const userId = typeof req.getUserId === 'function' ? req.getUserId() : (req.user?.userId || req.user?.id || null);
   const role = typeof req.getUserRole === 'function' ? req.getUserRole() : (req.user?.role || req.user?.userRole || null);
-  console.log('[requireAdmin] context', { userId, role, platformRole: req.user?.platformRole, isPlatformAdmin: req.user?.isPlatformAdmin });
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[requireAdmin] context', { userId, role, platformRole: req.user?.platformRole, isPlatformAdmin: req.user?.isPlatformAdmin });
+  }
 
   if (!userId) {
     return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
@@ -1619,7 +1642,9 @@ export function securityHeaders(req, res, next) {
 export function logAuthRequest(req, res, next) {
   // Avoid logging PII (emails) and auth surface traffic in production.
   if (req.user && process.env.NODE_ENV !== 'production') {
-    console.log(`[AUTH] ${req.method} ${req.path} - User: ${req.user.email} (${req.user.role})`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[AUTH] ${req.method} ${req.path} - User: ${req.user.email} (${req.user.role})`);
+    }
   }
   next();
 }

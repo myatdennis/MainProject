@@ -160,7 +160,9 @@ export const createCourseAssignmentsService = ({
     }
 
     const isPlatformAdmin = isPlatformAdminFor({ req, context: null });
-    console.log('[ADMIN ENDPOINT]', { path: req?.path, isPlatformAdmin, orgId: finalOrganizationId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ADMIN ENDPOINT]', { path: req?.path, isPlatformAdmin, orgId: finalOrganizationId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    }
     if (!finalOrganizationId) {
       try {
         const headerOrgStrict = req.headers['x-org-id'] || req.headers['x-organization-id'];

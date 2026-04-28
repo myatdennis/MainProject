@@ -140,7 +140,9 @@ export const createDocumentsService = ({
     }
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-  console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId: resolvedRequestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId: resolvedRequestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+  }
     const adminOrgIds = Array.isArray(context.memberships)
       ? context.memberships
           .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)

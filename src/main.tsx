@@ -46,32 +46,36 @@ devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL
 devConsole.log('⚙️ React version detected:', React?.version || 'unknown');
 // Extra runtime debug to help Netlify/Railway build-time visibility
 // (prints the whole import.meta.env so operators can confirm injected VITE_ keys)
-console.log('ENV DEBUG', {
-  supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
-  hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
-  mode: import.meta.env.MODE,
-  all: import.meta.env,
-});
-// Final build-time verification log (temporary): shows whether the anon key
-// was present when the bundle was created. Remove this after verification.
-console.log('FINAL ENV CHECK', {
-  url: import.meta.env.VITE_SUPABASE_URL ?? null,
-  hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
-});
+if (import.meta.env.DEV) {
+  console.log('ENV DEBUG', {
+    supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+    hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
+    mode: import.meta.env.MODE,
+    all: import.meta.env,
+  });
+  // Final build-time verification log (temporary): shows whether the anon key
+  // was present when the bundle was created. Remove this after verification.
+  console.log('FINAL ENV CHECK', {
+    url: import.meta.env.VITE_SUPABASE_URL ?? null,
+    hasKey: !!import.meta.env.VITE_SUPABASE_ANON_KEY,
+  });
+}
 if (import.meta.env.DEV) {
   console.info('[BUILD_VERSION]', typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'unknown');
 }
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
 // Frontend runtime env check — print public values (safe to log)
-try {
-  // eslint-disable-next-line no-console
-  console.log('[ENV CHECK][FRONTEND]', {
-    apiBase: import.meta.env.VITE_API_BASE_URL ?? null,
-    supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? null,
-  });
-} catch (e) {
-  // ignore
-}
+  try {
+    // eslint-disable-next-line no-console
+    if (import.meta.env.DEV) {
+      console.log('[ENV CHECK][FRONTEND]', {
+        apiBase: import.meta.env.VITE_API_BASE_URL ?? null,
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? null,
+      });
+    }
+  } catch (e) {
+    // ignore
+  }
 // Defensive guard: if a developer accidentally set VITE_API_BASE_URL to the
 // Supabase Functions host (e.g. https://<proj>.supabase.co/functions/v1) then
 // client requests like /api/auth/login will resolve to the functions URL and
@@ -443,5 +447,7 @@ if (serviceWorkerEnabled) {
   });
 }
 
-console.log('[API BASE]', import.meta.env.VITE_API_BASE_URL);
-console.log('[COOKIES]', document.cookie);
+if (import.meta.env.DEV) {
+  console.log('[API BASE]', import.meta.env.VITE_API_BASE_URL);
+  console.log('[COOKIES]', document.cookie);
+}

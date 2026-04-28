@@ -313,6 +313,25 @@ export default async function authorizedFetch(
           // ignore timeout/fail
         }
       }
+      // Diagnostic: surface whether we found a usable auth token for this request
+      try {
+          // keep this log lightweight and safe for CI/dev
+          // eslint-disable-next-line no-console
+          if (import.meta.env?.DEV) {
+            console.log('AUTH TOKEN', token ? 'present' : 'missing');
+          }
+        } catch (e) {
+          // ignore logging failures
+        }
+
+      // If auth is required for this request but we couldn't resolve a token,
+      // do not call out to the API (prevents 401s that bypass client-side
+      // handling). Signal the caller via NotAuthenticatedError so higher-level
+      // logic can trigger login flow / redirect.
+      if (!token) {
+        throw new NotAuthenticatedError('No Supabase session/access_token available');
+      }
+
       if (token) {
         headers.set('Authorization', `Bearer ${token}`);
       }
@@ -369,8 +388,10 @@ export default async function authorizedFetch(
         if (token) headers.set('Authorization', `Bearer ${token}`);
       }
       if (isAuthEndpoint(targetUrl)) {
-        console.log('[AUTH REQUEST]', targetUrl);
-        console.log('[COOKIES]', readCookieSnapshot());
+        if (import.meta.env?.DEV) {
+          console.log('[AUTH REQUEST]', targetUrl);
+          console.log('[COOKIES]', readCookieSnapshot());
+        }
       }
       const native = getNativeFetch();
       // In test runs prefer the global fetch so test spies/mocks observe calls.
@@ -382,8 +403,10 @@ export default async function authorizedFetch(
         signal: controller.signal,
       } as any);
       if (isAuthEndpoint(targetUrl)) {
-        console.log('[AUTH RESPONSE]', response.status);
-        console.log('[COOKIES]', readCookieSnapshot());
+        if (import.meta.env?.DEV) {
+          console.log('[AUTH RESPONSE]', response.status);
+          console.log('[COOKIES]', readCookieSnapshot());
+        }
       }
       console.info('[request_success]', { requestId, url: extractPathname(url), status: response.status, attempt });
     } catch (error: any) {

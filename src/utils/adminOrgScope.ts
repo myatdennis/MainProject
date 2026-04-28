@@ -10,6 +10,18 @@ export const requireExplicitAdminOrgId = (surface: string, preferredOrgId?: stri
     return orgId;
   }
 
+  // If running in a browser, allow a global override for platform admins so
+  // that admin UIs do not require an explicit org selection. SecureAuthContext
+  // will set `window.__IS_PLATFORM_ADMIN__ = true` when appropriate.
+  try {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    const globalFlag = typeof window !== 'undefined' ? (window.__IS_PLATFORM_ADMIN__ as boolean) : false;
+    if (globalFlag) return null as any;
+  } catch (e) {
+    // ignore
+  }
+
   const error = new Error(`Organization context is required for ${surface}.`);
   (error as Error & { code?: string }).code = 'org_id_required';
   throw error;

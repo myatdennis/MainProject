@@ -5,10 +5,10 @@ const firstRow = (result) => {
 
 export const createWorkspaceRepository = ({ supabase }) => {
   const listStrategicPlans = async (orgId) =>
-    supabase.from('org_workspace_strategic_plans').select('*').eq('org_id', orgId).order('created_at', { ascending: false });
+    (orgId ? supabase.from('org_workspace_strategic_plans').select('*').eq('org_id', orgId).order('created_at', { ascending: false }) : { data: [] });
 
   const getStrategicPlan = async (orgId, id) =>
-    supabase.from('org_workspace_strategic_plans').select('*').eq('org_id', orgId).eq('id', id).maybeSingle();
+    (orgId ? supabase.from('org_workspace_strategic_plans').select('*').eq('org_id', orgId).eq('id', id).maybeSingle() : { data: null });
 
   const createStrategicPlan = async (orgId, payload) =>
     supabase
@@ -22,15 +22,17 @@ export const createWorkspaceRepository = ({ supabase }) => {
       .select('*');
 
   const deleteStrategicPlan = async (orgId, id) =>
-    supabase.from('org_workspace_strategic_plans').delete().eq('org_id', orgId).eq('id', id);
+    (orgId ? supabase.from('org_workspace_strategic_plans').delete().eq('org_id', orgId).eq('id', id) : { data: null });
 
   const listSessionNotes = async (orgId) =>
-    supabase
-      .from('org_workspace_session_notes')
-      .select('*')
-      .eq('org_id', orgId)
-      .order('note_date', { ascending: false })
-      .order('created_at', { ascending: false });
+    orgId
+      ? supabase
+          .from('org_workspace_session_notes')
+          .select('*')
+          .eq('org_id', orgId)
+          .order('note_date', { ascending: false })
+          .order('created_at', { ascending: false })
+      : { data: [] };
 
   const createSessionNote = async (orgId, payload) =>
     supabase
@@ -47,10 +49,10 @@ export const createWorkspaceRepository = ({ supabase }) => {
       .select('*');
 
   const listActionItems = async (orgId) =>
-    supabase.from('org_workspace_action_items').select('*').eq('org_id', orgId);
+    (orgId ? supabase.from('org_workspace_action_items').select('*').eq('org_id', orgId) : { data: [] });
 
   const getActionItem = async (orgId, id) =>
-    supabase.from('org_workspace_action_items').select('*').eq('org_id', orgId).eq('id', id).maybeSingle();
+    (orgId ? supabase.from('org_workspace_action_items').select('*').eq('org_id', orgId).eq('id', id).maybeSingle() : { data: null });
 
   const createActionItem = async (orgId, payload) =>
     supabase
@@ -64,7 +66,7 @@ export const createWorkspaceRepository = ({ supabase }) => {
         status: payload.status,
         metadata: payload.metadata,
       })
-      .select('*');
+  .select('*');
 
   const updateActionItem = async (orgId, id, payload) => {
     const updatePayload = {};
@@ -84,11 +86,11 @@ export const createWorkspaceRepository = ({ supabase }) => {
     if (Object.keys(updatePayload).length === 0) {
       return getActionItem(orgId, id);
     }
-    return supabase.from('org_workspace_action_items').update(updatePayload).eq('org_id', orgId).eq('id', id).select('*');
+  return orgId ? supabase.from('org_workspace_action_items').update(updatePayload).eq('org_id', orgId).eq('id', id).select('*') : null;
   };
 
   const deleteActionItem = async (orgId, id) =>
-    supabase.from('org_workspace_action_items').delete().eq('org_id', orgId).eq('id', id);
+    (orgId ? supabase.from('org_workspace_action_items').delete().eq('org_id', orgId).eq('id', id) : { data: null });
 
   const getWorkspaceBundle = async (orgId) => {
     const [plans, notes, items] = await Promise.all([

@@ -11,7 +11,9 @@ router.post('/:orgId/memberships/accept', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-  console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+  }
   const context = requireUserContext(req, res);
   if (!context) return;
 

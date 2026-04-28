@@ -221,7 +221,9 @@ router.get('/:orgId/recommendations', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.params.orgId)
     const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    }
     if (!isPlatformAdmin && !orgId) {
       return next(createHttpError(400, 'org_id_required', 'Organization id is required.'))
     }
@@ -245,7 +247,9 @@ router.post('/:orgId/recommendations', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.params.orgId)
     const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    }
     if (!isPlatformAdmin && !orgId) {
       return next(createHttpError(400, 'org_id_required', 'Organization id is required.'))
     }

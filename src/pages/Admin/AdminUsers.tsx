@@ -541,7 +541,7 @@ const AdminUsers = () => {
             body.organizationId = organizationId;
           }
 
-          if (body.organizationId == null) {
+          if (body.organizationId == null && !isPlatformAdmin) {
             console.warn('Skipping API call — no org selected (confirmDeleteUser)');
             // org call skipped during hardening: no-op
             throw new Error('Organization context is required');
