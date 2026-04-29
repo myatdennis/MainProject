@@ -40,6 +40,44 @@ const configuredSupabaseUrl = process.env.SUPABASE_URL;
 const configuredSupabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const configuredSupabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
+// -----------------------
+// Startup environment validation
+// -----------------------
+const requiredEnv = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+const missing = requiredEnv.filter((k) => !process.env[k]);
+if (missing.length > 0) {
+  console.error('[ENV ERROR] Missing required Supabase env vars:', missing);
+  // Fail fast — do not continue running with invalid configuration
+  process.exit(1);
+}
+
+function isValidSupabaseKey(key) {
+  return typeof key === 'string' && key.startsWith('eyJ');
+}
+
+if (!isValidSupabaseKey(process.env.SUPABASE_SERVICE_ROLE_KEY)) {
+  console.error('[ENV ERROR] Invalid SUPABASE_SERVICE_ROLE_KEY format');
+  process.exit(1);
+}
+
+if (!isValidSupabaseKey(process.env.SUPABASE_ANON_KEY)) {
+  console.error('[ENV ERROR] Invalid SUPABASE_ANON_KEY format');
+  process.exit(1);
+}
+
+// Safe diagnostics (no secrets)
+let urlHostSafe = null;
+try {
+  urlHostSafe = configuredSupabaseUrl ? new URL(configuredSupabaseUrl).host : null;
+} catch {
+  urlHostSafe = null;
+}
+console.log('[SUPABASE CONFIG]', {
+  urlHost: urlHostSafe,
+  hasServiceKey: !!configuredSupabaseServiceKey,
+  hasAnonKey: !!configuredSupabaseAnonKey,
+});
+
 let cachedAdminClient = null;
 let cachedAdminSignature = null;
 let cachedUserClient = null;
@@ -62,7 +100,14 @@ export function getSupabaseAdminClient() {
       if (!key) {
         console.error('[SUPABASE ADMIN CLIENT] missing service role key');
       }
-      cachedAdminClient = createClient(url, key);
+      // Create a non-persistent admin client — server should not persist
+      // sessions or auto-refresh tokens using the service role key.
+      cachedAdminClient = createClient(url, key, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      });
       console.info('[SUPABASE ADMIN CLIENT] created');
     } catch (err) {
       console.error('[SUPABASE ADMIN CLIENT] creation failed', err?.message || err);
@@ -190,18 +235,16 @@ export function isSupabaseAuthConfigured() {
   try {
     const client = getSupabaseAdminClient();
     if (!client) throw new Error("Supabase client is not configured.");
-
-    const { error } = await client
-      .from('organizations')
-      .select('id')
-      .limit(1);
+    const { data, error } = await client.from('organizations').select('id').limit(1);
     if (error) {
-      console.warn("⚠️ Supabase connection warning:", error.message);
-      return;
+      console.error('[SUPABASE ERROR] Failed to connect:', error.message || error);
+      // Fail fast for invalid credentials or network errors that prevent DB access
+      process.exit(1);
     }
 
-    console.log("✅ Supabase connected");
+    console.log('[SUPABASE] connection verified');
   } catch (err) {
-    console.warn("⚠️ Supabase connection warning:", err?.message || err);
+    console.error('[SUPABASE ERROR] Failed to initialize Supabase client:', err?.message || err);
+    process.exit(1);
   }
 })();

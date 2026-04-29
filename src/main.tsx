@@ -6,8 +6,9 @@ import queryClient from './lib/queryClient';
 import App from './App';
 import './index.css';
 import serviceWorkerManager from './utils/ServiceWorkerManager';
-import { SecureAuthProvider } from './context/SecureAuthContext';
+import { SecureAuthProvider, useSecureAuth } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
+import Loading from './components/ui/Loading';
 import { ensureRuntimeStatusPolling } from './state/runtimeStatus';
 import {
   migrateFromLocalStorage,
@@ -290,6 +291,16 @@ class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNod
 
 const rootElement = document.getElementById('root');
 
+function AuthRootGuard({ children }: { children: React.ReactNode }) {
+  // Block rendering until the auth subsystem indicates readiness so no API
+  // requests fire before auth is available.
+  const { authReady, authInitializing } = useSecureAuth();
+  if (!authReady || authInitializing) {
+    return <Loading />;
+  }
+  return <>{children}</>;
+}
+
 // ── Phase 5: Frontend environment guard ────────────────────────────────────
 // Detect missing or placeholder Supabase env vars at boot time so
 // misconfigured deployments fail loudly instead of silently showing blank
@@ -314,11 +325,13 @@ if (!rootElement) {
           <AppErrorBoundary surface="admin">
             <SecureAuthErrorBoundary>
               <SecureAuthProvider>
-                <ToastProvider>
-                  <HelmetProvider>
-                    <App />
-                  </HelmetProvider>
-                </ToastProvider>
+                <AuthRootGuard>
+                  <ToastProvider>
+                    <HelmetProvider>
+                      <App />
+                    </HelmetProvider>
+                  </ToastProvider>
+                </AuthRootGuard>
               </SecureAuthProvider>
             </SecureAuthErrorBoundary>
           </AppErrorBoundary>
