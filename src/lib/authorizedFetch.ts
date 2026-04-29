@@ -398,7 +398,8 @@ export default async function authorizedFetch(
       const fetchImpl = (isTest ? (globalThis as any).fetch : undefined) ?? native ?? fetch;
       response = await fetchImpl(targetUrl, {
         ...init,
-        credentials: init.credentials ?? 'include',
+        // Ensure credentials are always included so cookies are sent for auth
+        credentials: 'include',
         headers,
         signal: controller.signal,
       } as any);
