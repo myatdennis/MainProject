@@ -1055,16 +1055,21 @@ console.log('[CORS]', process.env.CORS_ALLOWED_ORIGINS);
 
 const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
-const inferredCookieDomain = process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain || '(request hostname derived)';
+const isProd = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+// Only honor explicit COOKIE_DOMAIN in production. In development we must
+// keep cookies host-only so browsers running on localhost will accept them.
+const inferredCookieDomain = isProd
+  ? (process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain || '(request hostname derived)')
+  : (cookiePolicySnapshot.domain || '(host-only)');
 const cookieSameSite = cookiePolicySnapshot.sameSite;
 const cookieSecure = cookiePolicySnapshot.secure;
 
-// Log cookie configuration at runtime
+// Log cookie configuration at runtime (do not leak secrets)
 console.log('[COOKIE CONFIG]', {
-  domain: process.env.COOKIE_DOMAIN,
-  secure: process.env.NODE_ENV === 'production',
+  domain: isProd ? process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain : null,
+  secure: cookieSecure,
   httpOnly: true,
-  sameSite: 'Strict'
+  sameSite: cookieSameSite,
 });
 
 // Confirm Supabase JWT secret status at startup using the same value the

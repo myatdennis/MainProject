@@ -21,8 +21,9 @@ const CSRF_DISABLED = String(process.env.E2E_TEST_MODE || process.env.NODE_ENV =
   process.env.NODE_ENV === 'test';
 
 
-const getCsrfCookieOptions = (req, overrides = {}) =>
-  getCookieOptions(req, { httpOnly: false, ...overrides });
+import { getPublicCookieOptions } from '../utils/authCookies.js';
+
+const getCsrfCookieOptions = (req, overrides = {}) => getPublicCookieOptions(req, { ...overrides });
 
 // Store for CSRF tokens (in production, use Redis or similar)
 const tokenStore = new Map();

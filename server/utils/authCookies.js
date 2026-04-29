@@ -5,7 +5,6 @@ const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_t
 const ACTIVE_ORG_COOKIE = process.env.ACTIVE_ORG_COOKIE_NAME || 'active_org';
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-const productionCookieDomain = (process.env.COOKIE_DOMAIN || '').trim() || '.the-huddle.co';
 
 // Shared helper to get request host for cookie logic
 function getRequestHost(req) {
@@ -29,57 +28,106 @@ function getRequestHost(req) {
 // Auth cookies must be host-only in local development. Browsers reject
 // `.the-huddle.co` cookies on localhost, which makes login appear to succeed
 // while the subsequent session bootstrap is unauthenticated.
-function resolveCookieDomain(_req) {
-  return isProduction ? productionCookieDomain : undefined;
+function sanitizeOverrides(overrides = {}) {
+  // Strip ALL unsafe overrides
+  const { httpOnly, secure, sameSite, domain, ...safeOverrides } = overrides || {};
+  return safeOverrides;
 }
-function resolveCookieSameSite(_req) {
-  return isProduction ? 'none' : 'lax';
-}
-function resolveCookieSecure(_req) {
-  return isProduction;
-}
-export function getCookieOptions(req, { httpOnly = true, name } = {}) {
-  const domain = resolveCookieDomain(req);
-  const opts = {
-    httpOnly,
-    secure: resolveCookieSecure(req),
-    sameSite: resolveCookieSameSite(req),
-    path: '/',
-  };
-  if (domain) opts.domain = domain;
-  if (process.env.DEBUG_COOKIES === 'true') {
-    console.log('[COOKIE]', {
-      req_host: req.headers && req.headers.host,
-      x_forwarded_host: req.headers && req.headers['x-forwarded-host'],
-      req_hostname: req.hostname,
-      computed_host: getRequestHost(req),
-      computed_domain: opts.domain,
-      sameSite: opts.sameSite,
-      secure: opts.secure,
-      name: name || undefined,
-    });
+
+export function getCookieOptions(...args) {
+  // Backwards-compatible: callers may pass (req, overrides) or the new
+  // signature getCookieOptions(overrides = {}). We detect the shapes and
+  // normalize to an overrides object.
+  let overrides = {};
+  if (args.length === 1) {
+    overrides = args[0] || {};
+    // If the single arg looks like an Express request (has headers or hostname),
+    // treat it as no overrides.
+    if (overrides && (overrides.headers || overrides.hostname)) {
+      overrides = {};
+    }
+  } else if (args.length >= 2) {
+    overrides = args[1] || {};
   }
-  return opts;
+
+  const isProd = isProduction;
+
+  const baseOptions = {
+    httpOnly: true, // ALWAYS TRUE
+    path: '/',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    domain: isProd ? process.env.COOKIE_DOMAIN : undefined,
+  };
+
+  const safeOverrides = sanitizeOverrides(overrides);
+
+  const finalOptions = {
+    ...baseOptions,
+    ...safeOverrides,
+  };
+
+  // Temporary debug to verify runtime cookie policy in local dev
+  console.log('[COOKIE FINAL]', finalOptions);
+
+  return finalOptions;
+}
+
+/**
+ * Public cookie options builder — used for non-auth cookies that client JS
+ * must read (for example CSRF double-submit tokens). This still enforces
+ * security-related attributes (secure, sameSite, domain) based on environment
+ * but allows httpOnly to be false so scripts can read the cookie value.
+ */
+export function getPublicCookieOptions(...args) {
+  // Normalize args similar to getCookieOptions
+  let overrides = {};
+  if (args.length === 1) {
+    overrides = args[0] || {};
+    if (overrides && (overrides.headers || overrides.hostname)) {
+      overrides = {};
+    }
+  } else if (args.length >= 2) {
+    overrides = args[1] || {};
+  }
+
+  const isProd = isProduction;
+  const baseOptions = {
+    httpOnly: false, // intentionally readable by client-side JS
+    path: '/',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    domain: isProd ? process.env.COOKIE_DOMAIN : undefined,
+  };
+
+  const finalOptions = {
+    ...baseOptions,
+    ...sanitizeOverrides(overrides),
+  };
+
+  console.log('[COOKIE FINAL]', finalOptions);
+  return finalOptions;
 }
 
 export const describeCookiePolicy = () => ({
   production: isProduction,
   secure: isProduction,
   sameSite: isProduction ? 'none' : 'lax',
-  domain: isProduction ? productionCookieDomain : null,
+  domain: isProduction ? process.env.COOKIE_DOMAIN : null,
   path: '/',
 });
 
 const applyCookie = (req, res, name, value, maxAgeSeconds, overrides = {}) => {
   const request = req || res.req || null;
-  const baseOptions = getCookieOptions(request || undefined, { httpOnly: overrides.httpOnly ?? true, name });
+  const baseOptions = getCookieOptions(request || undefined, { name });
   const normalizedMaxAgeMs =
     typeof maxAgeSeconds === 'number' && Number.isFinite(maxAgeSeconds) && maxAgeSeconds <= 0
       ? 0
       : Math.max(1000, Math.trunc(maxAgeSeconds * 1000));
+
   const merged = {
     ...baseOptions,
-    ...overrides,
+    ...sanitizeOverrides(overrides),
     maxAge: normalizedMaxAgeMs,
   };
   if (normalizedMaxAgeMs === 0) {
