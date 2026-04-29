@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-27T20:31:53.058Z",
+        "published_at": "2026-04-29T15:27:07.766Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -156,9 +156,9 @@
   "documents": [],
   "surveys": [
     [
-      "e2e-survey-1777321913056",
+      "e2e-survey-1777476427765",
       {
-        "id": "e2e-survey-1777321913056",
+        "id": "e2e-survey-1777476427765",
         "title": "Demo Survey",
         "organization_id": "demo-sandbox-org",
         "organizationId": "demo-sandbox-org"

@@ -143,7 +143,9 @@ export const createReflectionsService = ({
 
   const resolveReflectionLessonContext = async ({ req, res, orgId, courseId, lessonId }) => {
     const isPlatformAdmin = isPlatformAdminFor({ req, context: null });
-    console.log('[ADMIN ENDPOINT]', { path: req?.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ADMIN ENDPOINT]', { path: req?.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    }
     if (!lessonId) return { status: 400, payload: { error: 'validation_failed', message: 'lessonId is required.' } };
     if (isDemoOrTestMode) {
       let fallbackMatch = null;

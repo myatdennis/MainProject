@@ -125,6 +125,10 @@ export const createAdminUserManagementRouter = (deps) => {
     }
 
     if (!ensureSupabase(res)) return;
+    try {
+      console.info('[ADMIN USERS QUERY]', { isPlatformAdmin, orgId: orgId ?? null, applyingFilter: !isPlatformAdmin && !!orgId });
+    } catch (e) {/* noop */}
+
     if (!isPlatformAdmin && !orgId) {
       return sendError(res, 400, 'org_id_required', 'orgId query parameter or X-Org-Id header is required.');
     }

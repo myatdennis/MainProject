@@ -62,8 +62,19 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     organizationIds,
     logout,
   } = useSecureAuth();
+  // Pull authReady from context so we can block rendering until Supabase reports
+  // session state. Previously RequireAuth used a fallback that defaulted to true
+  // which allowed early requests to fire before authReady — show a Loading
+  // placeholder until auth is settled.
+  const { authReady } = useSecureAuth();
   const orgReady = orgResolutionStatus === 'ready' || orgResolutionStatus === 'degraded';
-  const authReady = (useSecureAuth() as any).authReady ?? true;
+
+  // Global guard: do not render children until auth subsystem indicates readiness.
+  if (!authReady || authInitializing) {
+    // Keep a simple full-screen loading experience to avoid any API calls from
+    // page components being dispatched before the auth token is available.
+    return <Loading />;
+  }
   const location = useLocation();
   const params = useParams<Record<string, string | undefined>>();
   // Once authentication succeeds once, this ref stays true for the lifetime of

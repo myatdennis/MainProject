@@ -69,7 +69,9 @@ export const createAdminSurveysService = ({
       context.activeOrganizationId,
     );
     const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-    console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
+    }
     if (!isPlatformAdmin && !requestedOrgId) {
       return {
         status: 400,
@@ -110,9 +112,10 @@ export const createAdminSurveysService = ({
 
     const ids = (data || []).map((survey) => survey.id).filter(Boolean);
     const assignmentMap = await fetchSurveyAssignmentsMap(ids);
-    const shaped = (data || [])
+      const shaped = (data || [])
       .map((survey) => applyAssignmentToSurvey({ ...survey }, assignmentMap.get(survey.id)))
       .filter((survey) => {
+        if (isPlatformAdmin) return true;
         const orgIds = coerceIdArray(
           survey?.assignedTo?.organizationIds ??
           survey?.assigned_to?.organization_ids ??
@@ -127,6 +130,11 @@ export const createAdminSurveysService = ({
       requestedOrgId,
       rowCount: shaped.length,
     });
+    try {
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[SURVEY QUERY]', { isPlatformAdmin, requestedOrgId, applyingFilter: !isPlatformAdmin && !!requestedOrgId });
+      }
+    } catch (e) {/* noop */}
     return { status: 200, data: shaped };
   };
 

@@ -320,6 +320,42 @@ const mapLocalClaimsToSupabaseClaims = (claims = {}) => {
 };
 
 export default async function supabaseJwtMiddleware(req, res, next) {
+  try {
+    console.info('[supabaseJwt][ENTER] path=', req.path || req.originalUrl || null, 'x-e2e-bypass=', req.headers?.['x-e2e-bypass'] || null, 'hasReqUser=', Boolean(req.user));
+  } catch (_) {}
+  // If the test harness explicitly requests an E2E bypass via header/cookie/query,
+  // synthesize a deterministic platform-admin user for local/test runs so that
+  // downstream middleware (authenticate/requireAdmin) sees an authenticated admin.
+  try {
+    const rawBypass = String(req.headers?.['x-e2e-bypass'] || req.cookies?.['x-e2e-bypass'] || req.query?.['x-e2e-bypass'] || '').trim().toLowerCase();
+    const roleHeader = String(req.headers?.['x-user-role'] || '').trim().toLowerCase();
+    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    if (!isProd && (rawBypass.length > 0 || roleHeader.length > 0)) {
+      req.user = req.user || {};
+      req.user.id = req.user.id || '00000000-0000-0000-0000-000000000001';
+      req.user.email = req.user.email || 'mya+e2e@the-huddle.co';
+      req.user.role = req.user.role || 'admin';
+      req.user.platformRole = req.user.platformRole || (roleHeader === 'platform_admin' ? 'platform_admin' : 'platform_admin');
+      req.user.isPlatformAdmin = true;
+      req.e2eSynthesized = true;
+      jwtLog('info', 'e2e_bypass_synthesized', { path: req.path || null, xE2EBypass: rawBypass, roleHeader });
+      return next();
+    }
+    jwtLog('info', 'debug_request_state', { path: req.path || req.originalUrl || null, xE2EBypass: rawBypass, hasReqUser: Boolean(req.user) });
+  } catch (err) {
+    // ignore
+  }
+
+  // If an upstream middleware (e.g. global E2E bypass) already set req.user,
+  // skip JWT validation entirely so tests can synthesize an authenticated session.
+  try {
+    if (req.user) {
+      jwtLog('info', 'skip_jwt_validation_user_present', { userId: req.user?.id ?? null });
+      return next();
+    }
+  } catch (e) {
+    // ignore and continue to normal validation flow
+  }
   const path = req.path || req.originalUrl || '';
   if (shouldBypass(req)) {
     if (!isProduction) {
@@ -348,7 +384,22 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     // synthesize a safe E2E session if needed.
     try {
       req.authBypassed = true;
-      req.user = req.user || { id: '00000000-0000-0000-0000-000000000001', role: 'admin' };
+      // Do not overwrite an existing req.user (e.g., set by global E2E bypass)
+      if (!req.user) {
+        req.user = { id: '00000000-0000-0000-0000-000000000001', role: 'admin' };
+      }
+
+      // If the test harness indicates platform_admin via header, mark it here so
+      // downstream requireAdmin checks will recognize the synthetic admin.
+      const roleHeader = String(req?.headers?.['x-user-role'] || '').trim().toLowerCase();
+      const bypassHeader = String(req?.headers?.['x-e2e-bypass'] || '').trim();
+      if (roleHeader === 'platform_admin' || bypassHeader === '1') {
+        req.user.platformRole = 'platform_admin';
+        req.user.isPlatformAdmin = true;
+        // make role consistent as well
+        req.user.role = req.user.role || 'admin';
+      }
+
       req.userId = req.userId || req.user?.userId || req.user?.id || null;
     } catch (e) {
       // ignore
@@ -372,6 +423,7 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     syncUserProfileFlags(supabaseUser);
     req.supabaseJwtUser = supabaseUser;
     req.supabaseJwtToken = token;
+    // Respect any existing req.user (e.g., from global E2E bypass).
     if (!req.user) {
       req.user = supabaseUser;
     }
@@ -403,6 +455,7 @@ export default async function supabaseJwtMiddleware(req, res, next) {
         syncUserProfileFlags(supabaseUser);
         req.supabaseJwtUser = supabaseUser;
         req.supabaseJwtToken = token;
+        // Do not overwrite an existing req.user set by upstream middleware
         if (!req.user) {
           req.user = supabaseUser;
         }

@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import { getUserSession } from '../lib/secureStorage';
 import type { OrgProfileMessage } from './orgService';
 
 export type MessageChannel = 'email' | 'in_app';
@@ -20,8 +21,10 @@ const unwrapApiData = <T,>(payload: T | { data?: T } | null | undefined): T | nu
   return (payload ?? null) as T | null;
 };
 
-export const sendOrganizationMessage = async (organizationId: string, payload: SendMessagePayload) => {
-  if (!organizationId) {
+export const sendOrganizationMessage = async (organizationId: string | null, payload: SendMessagePayload) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!organizationId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (sendOrganizationMessage)');
     throw new Error('Organization context is required');
   }
@@ -36,14 +39,16 @@ export const sendOrganizationMessage = async (organizationId: string, payload: S
   return unwrapApiData(response);
 };
 
-export const listOrganizationMessages = async (organizationId: string) => {
-  if (!organizationId) {
+export const listOrganizationMessages = async (organizationId: string | null) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!organizationId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (listOrganizationMessages)');
     return [];
   }
 
   const response = await apiRequest<AdminMessageRecord[] | { data?: AdminMessageRecord[] }>(
-    `/api/admin/organizations/${organizationId}/messages`,
+    `/api/admin/organizations/${organizationId ?? ''}/messages`,
   );
   return unwrapApiData(response) ?? [];
 };

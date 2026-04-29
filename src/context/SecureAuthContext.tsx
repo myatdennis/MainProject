@@ -106,7 +106,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // Use console.log so Playwright captures it under [browser:log]
       // include timestamp and minimal context
       // eslint-disable-next-line no-console
-      console.log(`[E2E][AUTH] ${tag}`, payload ?? {});
+      if (E2E_ENABLED && import.meta.env.DEV) {
+        console.log(`[E2E][AUTH] ${tag}`, payload ?? {});
+      }
       try {
         if (typeof window !== 'undefined') {
           const w = window as any;
@@ -516,7 +518,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // Debug: surface auth readiness and session presence when session applied
       try {
         // eslint-disable-next-line no-console
-        console.log('AUTH STATE', { authReady: authReadyRef.current, hasSession: !!session });
+        if (import.meta.env.DEV) {
+          console.log('AUTH STATE', { authReady: authReadyRef.current, hasSession: !!session });
+        }
       } catch (e) {
         // ignore
       }
@@ -548,15 +552,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   setGlobalActiveOrgIdForApi(resolvedOrgId);
   setActiveOrgIdState(resolvedOrgId);
   setActiveOrgPreference(resolvedOrgId);
-      console.log('[ORG BOOTSTRAP]', {
-        memberships: resolvedMemberships,
-        activeOrgId: session.activeOrgId ?? null,
-      });
-      console.log('[ORG RESOLVED]', {
-        orgId: session.activeOrgId ?? null,
-        memberships: resolvedMemberships,
-        role: session.appMetadata?.platform_role ?? session.appMetadata?.platformRole ?? session.platformRole ?? null,
-      });
+      if (import.meta.env.DEV) {
+        console.log('[ORG BOOTSTRAP]', {
+          memberships: resolvedMemberships,
+          activeOrgId: session.activeOrgId ?? null,
+        });
+        console.log('[ORG RESOLVED]', {
+          orgId: session.activeOrgId ?? null,
+          memberships: resolvedMemberships,
+          role: session.appMetadata?.platform_role ?? session.appMetadata?.platformRole ?? session.platformRole ?? null,
+        });
+      }
       const authState = computeAuthState(session, surface);
       setIsAuthenticated(authState);
       setSurfaceAuthStatus({
@@ -576,7 +582,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   // Debug visibility: make role resolution explicit in console during login/session restoration
   // eslint-disable-next-line no-console
-  console.log('ROLE CHECK:', { platformRole, role, isAdmin });
+  if (import.meta.env.DEV) {
+    console.log('ROLE CHECK:', { platformRole, role, isAdmin });
+  }
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = resolvedState.activeOrgSource;
       clearMembershipRetryBackoff();
@@ -1270,10 +1278,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         if (!authReadyRef.current) {
           setAuthReady(true);
           // eslint-disable-next-line no-console
-          console.log('AUTH STATE', { authReady: true, hasSession: !!session });
+          if (import.meta.env.DEV) {
+            console.log('AUTH STATE', { authReady: true, hasSession: !!session });
+          }
         } else {
           // eslint-disable-next-line no-console
-          console.log('AUTH STATE CHANGE', { event, hasSession: !!session });
+          if (import.meta.env.DEV) {
+            console.log('AUTH STATE CHANGE', { event, hasSession: !!session });
+          }
         }
 
         // If we had deferred a bootstrap error because auth wasn't ready,
@@ -1428,7 +1440,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                           sessionExists = Boolean(session);
                           // Debug log for presence
                           // eslint-disable-next-line no-console
-                          console.log('AUTH STATE (bootstrap timeout check)', { authReady: authReadyRef.current, hasSession: !!session });
+                          if (import.meta.env.DEV) {
+                            console.log('AUTH STATE (bootstrap timeout check)', { authReady: authReadyRef.current, hasSession: !!session });
+                          }
                         } catch (e) {
                           // ignore getSession errors and treat as no session for now
                         }
@@ -1589,15 +1603,40 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   setActiveOrgIdState(resolvedOrg);
   setActiveOrgPreference(resolvedOrg);
   setGlobalActiveOrgIdForApi(resolvedOrg);
-  console.log('[ORG BOOTSTRAP]', {
-    memberships: currentMemberships,
-    activeOrgId: resolvedOrg,
-  });
-  console.log('[ORG RESOLVED]', {
-    orgId: resolvedOrg,
-    memberships: currentMemberships,
-    role: user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? null,
-  });
+  // Diagnostic log required by debugging task: include full memberships
+  // and resolved org, role, and platform admin flag.
+  try {
+    if (import.meta.env.DEV) {
+      console.log('[ORG RESOLUTION]', {
+        memberships: currentMemberships,
+        activeOrgId: resolvedOrg,
+        role: user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? null,
+        isPlatformAdmin: Boolean(
+          user?.isPlatformAdmin ||
+          String(user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? '').toLowerCase() === 'platform_admin'
+        ),
+      });
+    }
+  } catch (e) {
+    // ignore logging failures
+  }
+  try {
+    // Export a browser-global for legacy/non-hooked service code that performs
+    // early org checks. This is a pragmatic bridge until all callsites accept
+    // an explicit isPlatformAdmin flag.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      window.__IS_PLATFORM_ADMIN__ = Boolean(
+        user?.isPlatformAdmin ||
+        String(user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? '').toLowerCase() === 'platform_admin'
+      );
+    }
+  } catch (e) {
+    /* noop */
+  }
   e2eLog('resolved_org', { resolvedOrg, lastActiveOrgSource: lastActiveOrgSourceRef.current });
 
         // STEP 6: Write a single bridge snapshot reflecting final membership/org

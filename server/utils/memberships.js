@@ -444,6 +444,15 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
         }),
       );
     }
+    // Debug: attach full raw rows to diagnostics in non-production to help
+    // debug missing/empty memberships during development.
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        console.info(`${logPrefix} membership_view_raw_rows`, { userId: normalizedUserId, rawRows: data });
+      } catch (e) {
+        // ignore logging failures
+      }
+    }
 
     const normalizedRows = data.map((row) => mapMembershipRecord(row));
     const filtered = filterActiveMemberships(normalizedRows);

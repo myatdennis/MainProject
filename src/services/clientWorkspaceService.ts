@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import { getUserSession } from '../lib/secureStorage';
 
 // Workspace APIs use mixed casing on the wire. We disable auto-transforms here
 // to preserve expected request/response shapes and rely on explicit mappers.
@@ -84,8 +85,10 @@ const mapActionItem = (record: any): ActionItem => ({
   updatedAt: record.updatedAt ?? record.updated_at
 });
 
-export const getWorkspace = async (orgId: string): Promise<OrgWorkspace> => {
-  if (!orgId) {
+export const getWorkspace = async (orgId: string | null): Promise<OrgWorkspace> => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (getWorkspace)');
     throw new Error('Organization context is required');
   }
@@ -103,12 +106,14 @@ export const getWorkspace = async (orgId: string): Promise<OrgWorkspace> => {
 };
 
 export const addStrategicPlanVersion = async (
-  orgId: string,
+  orgId: string | null,
   content: string,
   createdBy = 'Huddle Co.',
   metadata: Record<string, any> = {}
 ): Promise<StrategicPlanVersion> => {
-  if (!orgId) {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (addStrategicPlanVersion)');
     throw new Error('Organization context is required');
   }
@@ -121,8 +126,10 @@ export const addStrategicPlanVersion = async (
   return mapStrategicPlan(json.data);
 };
 
-export const listStrategicPlans = async (orgId: string): Promise<StrategicPlanVersion[]> => {
-  if (!orgId) {
+export const listStrategicPlans = async (orgId: string | null): Promise<StrategicPlanVersion[]> => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (listStrategicPlans)');
     return [];
   }
@@ -131,8 +138,10 @@ export const listStrategicPlans = async (orgId: string): Promise<StrategicPlanVe
   return (json.data ?? []).map(mapStrategicPlan);
 };
 
-export const deleteStrategicPlanVersion = async (orgId: string, versionId: string) => {
-  if (!orgId) {
+export const deleteStrategicPlanVersion = async (orgId: string | null, versionId: string) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (deleteStrategicPlanVersion)');
     return;
   }
@@ -144,8 +153,10 @@ export const deleteStrategicPlanVersion = async (orgId: string, versionId: strin
   });
 };
 
-export const getStrategicPlanVersion = async (orgId: string, versionId: string) => {
-  if (!orgId) {
+export const getStrategicPlanVersion = async (orgId: string | null, versionId: string) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (getStrategicPlanVersion)');
     return null;
   }
@@ -155,11 +166,13 @@ export const getStrategicPlanVersion = async (orgId: string, versionId: string) 
 };
 
 export const addSessionNote = async (
-  orgId: string,
+  orgId: string | null,
   note: Omit<SessionNote, 'id' | 'createdBy' | 'orgId'>,
   createdBy = 'Huddle Co.'
 ) => {
-  if (!orgId) {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (addSessionNote)');
     throw new Error('Organization context is required');
   }
@@ -181,8 +194,10 @@ export const addSessionNote = async (
   return mapSessionNote(json.data);
 };
 
-export const listSessionNotes = async (orgId: string) => {
-  if (!orgId) {
+export const listSessionNotes = async (orgId: string | null) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (listSessionNotes)');
     return [];
   }
@@ -191,8 +206,10 @@ export const listSessionNotes = async (orgId: string) => {
   return (json.data ?? []).map(mapSessionNote);
 };
 
-export const addActionItem = async (orgId: string, item: Omit<ActionItem, 'id' | 'orgId'>) => {
-  if (!orgId) {
+export const addActionItem = async (orgId: string | null, item: Omit<ActionItem, 'id' | 'orgId'>) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (addActionItem)');
     throw new Error('Organization context is required');
   }
@@ -214,8 +231,10 @@ export const addActionItem = async (orgId: string, item: Omit<ActionItem, 'id' |
   return mapActionItem(json.data);
 };
 
-export const updateActionItem = async (orgId: string, item: ActionItem) => {
-  if (!orgId) {
+export const updateActionItem = async (orgId: string | null, item: ActionItem) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (updateActionItem)');
     throw new Error('Organization context is required');
   }
@@ -237,8 +256,10 @@ export const updateActionItem = async (orgId: string, item: ActionItem) => {
   return mapActionItem(json.data);
 };
 
-export const listActionItems = async (orgId: string) => {
-  if (!orgId) {
+export const listActionItems = async (orgId: string | null) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (listActionItems)');
     return [];
   }
@@ -247,8 +268,10 @@ export const listActionItems = async (orgId: string) => {
   return (json.data ?? []).map(mapActionItem);
 };
 
-export const checkWorkspaceAccess = async (orgId: string) => {
-  if (!orgId) {
+export const checkWorkspaceAccess = async (orgId: string | null) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (checkWorkspaceAccess)');
     return null;
   }

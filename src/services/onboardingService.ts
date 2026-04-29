@@ -1,5 +1,6 @@
 import apiRequest from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { getUserSession } from '../lib/secureStorage';
 
 export interface OwnerInput {
   userId?: string;
@@ -44,81 +45,95 @@ export const createOnboardingOrg = async (payload: OnboardingOrgPayload): Promis
   });
 };
 
-export const listOnboardingInvites = async (orgId: string) => {
-  if (!orgId) {
+export const listOnboardingInvites = async (orgId: string | null) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (listOnboardingInvites)');
     return { data: [] } as any;
   }
 
-  return apiRequest<{ data: any[] }>(`/api/admin/onboarding/${orgId}/invites`);
+  return apiRequest<{ data: any[] }>(`/api/admin/onboarding/${orgId ?? ''}/invites`);
 };
 
-export const createOnboardingInvite = async (orgId: string, payload: InviteInput & { sendEmail?: boolean }) => {
-  if (!orgId) {
+export const createOnboardingInvite = async (orgId: string | null, payload: InviteInput & { sendEmail?: boolean }) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (createOnboardingInvite)');
     throw new Error('Organization context is required');
   }
 
-  return apiRequest<{ data: any; duplicate?: boolean }>(`/api/admin/onboarding/${orgId}/invites`, {
+  return apiRequest<{ data: any; duplicate?: boolean }>(`/api/admin/onboarding/${orgId ?? ''}/invites`, {
     method: 'POST',
     body: payload,
   });
 };
 
-export const bulkOnboardingInvites = async (orgId: string, invites: InviteInput[]) => {
-  if (!orgId) {
+export const bulkOnboardingInvites = async (orgId: string | null, invites: InviteInput[]) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (bulkOnboardingInvites)');
     return { results: [] } as any;
   }
 
-  return apiRequest<{ results: Array<Record<string, any>> }>(`/api/admin/onboarding/${orgId}/invites/bulk`, {
+  return apiRequest<{ results: Array<Record<string, any>> }>(`/api/admin/onboarding/${orgId ?? ''}/invites/bulk`, {
     method: 'POST',
     body: { invites },
   });
 };
 
-export const resendOnboardingInvite = async (orgId: string, inviteId: string) => {
-  if (!orgId) {
+export const resendOnboardingInvite = async (orgId: string | null, inviteId: string) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (resendOnboardingInvite)');
     return { data: null } as any;
   }
 
-  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId}/invites/${inviteId}/resend`, {
+  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId ?? ''}/invites/${inviteId}/resend`, {
     method: 'POST',
   });
 };
 
-export const revokeOnboardingInvite = async (orgId: string, inviteId: string) => {
-  if (!orgId) {
+export const revokeOnboardingInvite = async (orgId: string | null, inviteId: string) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (revokeOnboardingInvite)');
     return { data: null } as any;
   }
 
-  return apiRequest(`/api/admin/onboarding/${orgId}/invites/${inviteId}`, {
+  return apiRequest(`/api/admin/onboarding/${orgId ?? ''}/invites/${inviteId}`, {
     method: 'DELETE',
     expectedStatus: [200, 202, 204],
     rawResponse: true,
   });
 };
 
-export const getOnboardingProgress = async (orgId: string) => {
-  if (!orgId) {
+export const getOnboardingProgress = async (orgId: string | null) => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (getOnboardingProgress)');
     return { data: null } as any;
   }
 
-  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId}/progress`, {
+  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId ?? ''}/progress`, {
     headers: buildSessionAuditHeaders(),
   });
 };
 
-export const updateOnboardingStep = async (orgId: string, step: string, status: 'pending' | 'in_progress' | 'completed' | 'blocked') => {
-  if (!orgId) {
+export const updateOnboardingStep = async (orgId: string | null, step: string, status: 'pending' | 'in_progress' | 'completed' | 'blocked') => {
+  const session = getUserSession();
+  const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+  if (!orgId && !isPlatformAdmin) {
     console.warn('Skipping API call — no org selected (updateOnboardingStep)');
     throw new Error('Organization context is required');
   }
 
-  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId}/steps/${step}`, {
+  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId ?? ''}/steps/${step}`, {
     method: 'PATCH',
     body: { status },
   });

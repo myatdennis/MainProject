@@ -1,5 +1,6 @@
 import apiRequest from '../utils/apiClient';
 import { buildScopedApiUrl } from '../lib/orgContext';
+import { getUserSession } from '../lib/secureStorage';
 
 export interface LeadershipHealthRecord {
   orgId: string;
@@ -50,7 +51,9 @@ const basePath = '/api/admin/analytics/leadership';
 export const leadershipService = {
   async fetchHealth(orgId?: string): Promise<LeadershipHealthRecord[]> {
     const url = buildScopedApiUrl(`${basePath}/health`, orgId);
-    if (!orgId) {
+    const session = getUserSession();
+    const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+    if (!orgId && !isPlatformAdmin) {
       console.warn('Skipping API call — no org selected (leadershipService.fetchHealth)');
       return [];
     }
@@ -59,18 +62,22 @@ export const leadershipService = {
     return json.data ?? [];
   },
 
-  async fetchRecommendations(orgId: string): Promise<LeadershipRecommendation[]> {
-    if (!orgId) {
+  async fetchRecommendations(orgId?: string | null): Promise<LeadershipRecommendation[]> {
+    const session = getUserSession();
+    const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+    if (!orgId && !isPlatformAdmin) {
       console.warn('Skipping API call — no org selected (leadershipService.fetchRecommendations)');
       return [];
     }
 
-    const json = await apiRequest<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId}/recommendations`);
+    const json = await apiRequest<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId ?? ''}/recommendations`);
     return json.data ?? [];
   },
 
   async generateRecommendations(orgId: string, payload?: { limit?: number; instructions?: string }) {
-    if (!orgId) {
+    const session = getUserSession();
+    const isPlatformAdmin = Boolean(session && (session.isPlatformAdmin || String(session.platformRole || '').toLowerCase() === 'platform_admin'));
+    if (!orgId && !isPlatformAdmin) {
       console.warn('Skipping API call — no org selected (leadershipService.generateRecommendations)');
       throw new Error('Organization context is required');
     }
