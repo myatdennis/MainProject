@@ -418,6 +418,10 @@ async function resolveCourseIdentifierToUuid(identifier) {
   }
 }
 
+// Note: server startup is handled later in this file (server.listen with
+// port checks). We intentionally avoid importing a separate bootstrap here
+// to prevent multiple listeners being started.
+
 function assertUuid(value) {
   if (!isUuid(value)) {
     throw new Error(`Invalid UUID: ${String(value)}`);
@@ -1285,7 +1289,34 @@ function savePersistedData(data) {
   }
 }
 
-const app = express();
+// The express `app` has been moved to `server/app.js` as part of a safe
+// modular refactor. Import the app factory here and instantiate it early
+// with a minimal deps bag (logger) so remaining bootstrap wiring can run.
+import createApp from './app.js';
+
+// Create an early express app instance so any top-level `app.use` / `app.get`
+// calls in this file (leftover from previous layout) have a concrete app to
+// attach to. We'll pass this instance into `createApp(deps, app)` later so
+// the factory can mount routers/middleware onto the same app object.
+let app = express();
+
+// Ensure the guarded E2E bypass middleware is installed on the early app as well
+// so top-level mounts (like /api/admin/me) still honor the E2E guard when
+// the early app is used prior to the full createApp invocation.
+try {
+  // Import lazily to avoid circular imports during startup sequencing
+  const { e2eBypass } = await import('./middleware/e2eBypass.js');
+  app.use(e2eBypass);
+} catch (e) {
+  // non-fatal: if dynamic import fails, continue without the early bypass
+  console.warn('[startup] failed to attach early e2eBypass middleware', e?.message || e);
+}
+
+// Global E2E bypass middleware installed on the early app instance so it
+// runs before any prior top-level mounts in this file. This ensures that a
+// test harness can short-circuit auth for routes that were mounted earlier
+// during the bootstrap phase.
+// ...existing code...
 
 // -- Diagnostic helpers --------------------------------------------------
 // Wrap a promise and reject if it doesn't settle within `ms` milliseconds.
@@ -1439,23 +1470,10 @@ app.use((req, res, next) => {
       req.organizationId = orgHeader || 'demo-sandbox-org';
     }
 
-    // If explicit E2E bypass is present, synthesize a deterministic user
-    // early so route handlers and auth checks don't access undefined props.
-    if (headerBypass.length > 0) {
-      const role = roleHeader ? String(roleHeader).toLowerCase() : 'admin';
-      const demoUserId = role === 'admin' ? '00000000-0000-0000-0000-000000000001' : '00000000-0000-0000-0000-000000000002';
-      req.user = req.user || {
-        id: demoUserId,
-        userId: demoUserId,
-        email: role === 'admin' ? (process.env.DEMO_ADMIN_EMAIL || 'mya@the-huddle.co') : (process.env.DEMO_USER_EMAIL || 'user@pacificcoast.edu'),
-        role: role === 'admin' ? 'admin' : 'learner',
-        platformRole: role === 'admin' ? 'platform_admin' : null,
-        isPlatformAdmin: role === 'admin',
-        organizationId: req.organizationId,
-        memberships: req.user?.memberships || [],
-      };
-      req.e2eSynthesized = true;
-    }
+    // Note: E2E bypass user synthesis is handled centrally in server/app.js
+    // via an explicit global middleware. Do not synthesize req.user here to
+    // avoid conflicting behavior across environments. We keep organization
+    // id resolution and request logging only.
 
     const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
     const cookieBypassPresent = cookieHeader.includes('x-e2e-bypass=');
@@ -1477,6 +1495,12 @@ app.use((req, res, next) => {
       },
       resolvedOrg: req.organizationId || null,
     });
+    // DEBUG: surface whether an upstream middleware already set req.user
+    try {
+      console.info('[GLOBAL-ENTRY] req.user_present=', Boolean(req.user), 'userId=', req.user?.id || req.user?.userId || null);
+    } catch (err) {
+      // ignore
+    }
     // Dev convenience: allow a known demo admin email to act as an admin
     // without requiring the full E2E bypass header. This aids local dev and
     // Playwright-driven flows where the frontend may already be authenticated
@@ -2874,94 +2898,16 @@ app.use('/api', (req, res, next) => {
   }
   return next();
 });
-// E2E/demo deterministic injection middleware
-// When E2E_TEST_MODE is enabled and the test harness sends an explicit
-// X-E2E-Bypass or X-User-Role header, synthesize a minimal, deterministic
-// user/org context early in the pipeline so downstream middleware and
-// routes (org resolution, requireOrgAccess, admin routes) always see a
-// stable membership snapshot. This is intentionally narrow and guarded
-// by E2E_TEST_MODE and non-production checks.
-app.use('/api', (req, res, next) => {
-  try {
-    const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' || typeof isTestMode !== 'undefined' && isTestMode;
-    if (!e2eEnabled || String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
-      return next();
-    }
-
-  const headerBypass = String(req.headers?.['x-e2e-bypass'] || req.headers?.['x-E2E-Bypass'] || '').trim();
-  const roleHeader = String(req.headers?.['x-user-role'] || req.headers?.['x-User-Role'] || '').trim().toLowerCase();
-  const authorizationHeader = String(req.headers?.authorization || '');
-
-  // Synthesize demo context when:
-  // - explicit E2E header / role header is present, OR
-  // - we're running in a test environment (NODE_ENV=test) and the
-  //   request does not include an Authorization header (typical browser
-  //   fetch from Playwright contexts). This makes browser-driven API
-  //   calls deterministic under test while preserving safety in non-test
-  //   environments.
-  const runningAsTest = String(process.env.NODE_ENV || '').toLowerCase() === 'test';
-  const shouldSynthesize = Boolean(headerBypass) || Boolean(roleHeader) || (runningAsTest && !authorizationHeader);
-  if (!shouldSynthesize) return next();
-
-    // Determine role and stable demo ids
-  // If tests request admin surfaces (admin API paths or admin UI referer)
-  // and no explicit role header is present, treat the request as admin so
-  // UI-driven admin flows work under E2E test mode.
-  const refererHeader = String(req.get && req.get('referer') || '');
-  const isAdminPath = typeof req.path === 'string' && req.path.startsWith('/api/admin');
-  const wantsAdmin = roleHeader === 'admin' || isAdminPath || (refererHeader && refererHeader.includes('/admin'));
-    const demoUserId = wantsAdmin ? '00000000-0000-0000-0000-000000000001' : '00000000-0000-0000-0000-000000000002';
-    const demoEmail = wantsAdmin ? (process.env.DEMO_ADMIN_EMAIL || 'mya@the-huddle.co') : (process.env.DEMO_USER_EMAIL || 'user@pacificcoast.edu');
-    const rawOrgHeader = String(req.headers?.['x-org-id'] || req.headers?.['x-organization-id'] || req.headers?.['x-organizationid'] || '').trim();
-    const demoOrgId = rawOrgHeader || process.env.E2E_SANDBOX_ORG_ID || process.env.DEMO_SANDBOX_ORG_ID || 'demo-sandbox-org';
-
-    // Build a minimal user payload compatible with auth middleware expectations
-    const payload = {
-      id: demoUserId,
-      userId: demoUserId,
-      email: String(demoEmail || '').toLowerCase(),
-      role: wantsAdmin ? 'admin' : 'learner',
-      platformRole: wantsAdmin ? 'platform_admin' : null,
-      isPlatformAdmin: wantsAdmin === true,
-      organizationId: demoOrgId,
-      organizationIds: demoOrgId ? [demoOrgId] : [],
-      memberships: demoOrgId
-        ? [
-            {
-              orgId: demoOrgId,
-              role: wantsAdmin ? 'owner' : 'member',
-              status: 'active',
-              organizationName: 'Demo Sandbox Organization',
-              organizationStatus: 'active',
-            },
-          ]
-        : [],
-    };
-
-    // Attach deterministic context for downstream handlers
-    req.user = req.user || payload;
-    req.userId = req.userId || payload.userId || payload.id;
-    req.orgMemberships = req.orgMemberships || new Map();
-    if (payload.organizationId) {
-      req.orgMemberships.set(payload.organizationId, {
-        orgId: payload.organizationId,
-        role: payload.memberships[0].role,
-        status: 'active',
-        organizationName: payload.memberships[0].organizationName,
-      });
-    }
-    req.activeOrgId = req.activeOrgId || payload.organizationId || null;
-    req.userPermissions = req.userPermissions || new Set(Array.isArray(req.user?.permissions) ? req.user.permissions : []);
-    req.membershipStatus = req.membershipStatus || 'ready';
-    req.membershipCount = req.membershipCount || (payload.organizationId ? 1 : 0);
-    // Mark that we synthesized the context so other middleware can opt-in if needed
-    req.e2eSynthesized = true;
-  } catch (e) {
-    // Non-fatal: don't block requests if synthesis fails.
-    console.warn('[e2e.synth] failed to synthesize demo context', e?.message || e);
-  }
-  return next();
-});
+// NOTE: E2E/demo injection middleware was removed in favor of a single
+// global bypass middleware in `server/app.js` to avoid duplicate/conflicting
+// logic. See server/app.js for the global E2E bypass implementation.
+// The following middleware has been removed:
+// app.use('/api', (req, res, next) => {
+//   // Middleware logic here...
+// });
+  // Previously E2E/demo synthesis logic was here; it was removed to centralize
+  // E2E bypass behavior into server/app.js to avoid conflicting injections.
+  // The per-request logging above remains but no longer mutates req.user.
 app.use('/api', (req, res, next) => {
   // Allow an explicit dev-tools key from loopback to bypass auth for dev-only
   // diagnostics endpoints. This is intentionally narrow and requires both
@@ -3012,33 +2958,34 @@ app.use('/api', (req, res, next) => {
   return next();
 });
 
-// Inject required helpers/services for analyticsRouter
-app.use((req, res, next) => {
-  req.app.locals.supabase = supabase;
-  req.app.locals.ensureSupabase = ensureSupabase;
-  req.app.locals.e2eStore = e2eStore;
-  req.app.locals.persistE2EStore = typeof persistE2EStore !== 'undefined' ? persistE2EStore : async () => {};
-  req.app.locals.isDemoOrTestMode = isDemoOrTestMode;
-  req.app.locals.scrubAnalyticsPayload = typeof scrubAnalyticsPayload !== 'undefined' ? scrubAnalyticsPayload : (p) => p || {};
-  req.app.locals.normalizeOrgIdValue = typeof normalizeOrgIdValue !== 'undefined' ? normalizeOrgIdValue : (v) => v;
-  req.app.locals.getRequestContext = typeof getRequestContext !== 'undefined' ? getRequestContext : (r) => ({});
-  req.app.locals.getHeaderOrgId = typeof getHeaderOrgId !== 'undefined' ? getHeaderOrgId : () => null;
-  req.app.locals.getActiveOrgFromRequest = typeof getActiveOrgFromRequest !== 'undefined' ? getActiveOrgFromRequest : () => null;
-  req.app.locals.isUuid = typeof isUuid !== 'undefined' ? isUuid : (v) => typeof v === 'string';
-  req.app.locals.isAnalyticsClientEventDuplicate = typeof isAnalyticsClientEventDuplicate !== 'undefined' ? isAnalyticsClientEventDuplicate : () => false;
-  req.app.locals.firstRow = typeof firstRow !== 'undefined' ? firstRow : (r) => r && r[0];
-  req.app.locals.normalizeColumnIdentifier = typeof normalizeColumnIdentifier !== 'undefined' ? normalizeColumnIdentifier : (c) => c;
-  req.app.locals.extractMissingColumnName = typeof extractMissingColumnName !== 'undefined' ? extractMissingColumnName : () => null;
-  req.app.locals.resolveAnalyticsOrgId = typeof resolveAnalyticsOrgId !== 'undefined' ? resolveAnalyticsOrgId : (..._args) => null;
-  req.app.locals.analyticsOrgWarning = typeof analyticsOrgWarning !== 'undefined' ? analyticsOrgWarning : (..._args) => {};
-  req.app.locals.logger = typeof logger !== 'undefined' ? logger : console;
-  req.app.locals.processGamificationEvent = typeof processGamificationEvent !== 'undefined' ? processGamificationEvent : null;
-  req.app.locals.upsertOrgEngagementMetrics = typeof upsertOrgEngagementMetrics !== 'undefined' ? upsertOrgEngagementMetrics : null;
-  req.app.locals.sql = typeof sql !== 'undefined' ? sql : null;
-  req.app.locals.summarizeEventsAsJourneys = typeof summarizeEventsAsJourneys !== 'undefined' ? summarizeEventsAsJourneys : null;
-  req.app.locals.logStructuredError = typeof logStructuredError !== 'undefined' ? logStructuredError : (..._args) => {};
-  next();
-});
+// Populate app-level runtime dependencies with safe defaults so importing
+// `server/app.js` cannot accidentally reference variables that are still in
+// the temporal dead zone during module initialization. These will be
+// replaced with real implementations later in startup once the relevant
+// functions/clients are constructed.
+app.locals.supabase = null;
+app.locals.ensureSupabase = null; // assigned later after ensureSupabase is declared
+app.locals.e2eStore = null;
+app.locals.persistE2EStore = async () => {};
+app.locals.isDemoOrTestMode = false;
+app.locals.scrubAnalyticsPayload = (p) => p || {};
+app.locals.normalizeOrgIdValue = (v) => v;
+app.locals.getRequestContext = (r) => ({});
+app.locals.getHeaderOrgId = () => null;
+app.locals.getActiveOrgFromRequest = () => null;
+app.locals.isUuid = (v) => typeof v === 'string';
+app.locals.isAnalyticsClientEventDuplicate = () => false;
+app.locals.firstRow = (r) => r && r[0];
+app.locals.normalizeColumnIdentifier = (c) => c;
+app.locals.extractMissingColumnName = () => null;
+app.locals.resolveAnalyticsOrgId = (..._args) => null;
+app.locals.analyticsOrgWarning = (..._args) => {};
+app.locals.logger = console;
+app.locals.processGamificationEvent = null;
+app.locals.upsertOrgEngagementMetrics = null;
+app.locals.sql = null;
+app.locals.summarizeEventsAsJourneys = null;
+app.locals.logStructuredError = (..._args) => {};
 
 // Public analytics endpoints (ingest, listing, journeys)
 app.use('/api/analytics', analyticsRouter);
@@ -3752,7 +3699,18 @@ const notificationService = createNotificationService({
   },
   logger,
 });
+app.locals.mediaService = mediaService;
 app.locals.notificationService = notificationService;
+
+// NOTE: The full `deps` object (and app creation) is intentionally
+// constructed later in this file after all helper functions and services
+// (including `ensureSupabase` and the E2E/demo store initialization) have
+// been defined. This prevents TDZ/import-order issues where route factories
+// capture partially-initialized services.
+
+// The Express app is imported from `server/app.js`. Keep backward-compatible
+// population of `app.locals` later in the bootstrap after the app is imported
+// and any runtime dependencies are available.
 
 const INVITE_REMINDER_JOB = 'invites.reminder';
 const INVITE_REMINDER_LOOKBACK_HOURS = Number(
@@ -7447,6 +7405,60 @@ const ensureSupabase = (res) => {
   logger.debug('[ensureSupabase] Supabase is initialized');
   return true;
 };
+
+// Now that ensureSupabase is defined, populate app.locals.ensureSupabase
+// so lazy routers and services can use it safely.
+try {
+  if (typeof app !== 'undefined' && app && app.locals) {
+    app.locals.ensureSupabase = ensureSupabase;
+  }
+} catch (e) {
+  // non-fatal: if app isn't available at this point, the startup-time
+  // population earlier will be used or later reassignments will occur.
+}
+
+// Build the deterministic deps object and create the app once all helper
+// functions and runtime services (including `ensureSupabase` and the E2E
+// store) have been defined. This ensures route factories receive a
+// fully-initialized deps bag at mount-time and prevents TDZ/import-order
+// issues.
+const deps = {
+  logger,
+  supabase,
+  sql,
+  ensureSupabase,
+  mediaService,
+  notificationService,
+  notificationDispatcher,
+  e2eStore,
+  persistE2EStore,
+  respondWithHealthPayload,
+};
+
+// Create the express app with full deps. Reuse the early `app` so mounts
+// applied earlier in this file remain attached to the same instance.
+app = createApp(deps, app);
+
+// Backward compatibility: expose deps on app.locals for routers that still
+// read req.app.locals. This will be removed after migrating routers.
+app.locals = Object.assign({}, deps);
+
+// DEBUG: dump middleware stack to verify E2E bypass ordering
+try {
+  const stack = (app && app._router && app._router.stack) || [];
+  const layers = stack
+    .filter(Boolean)
+    .map((layer) => {
+      return {
+        name: layer.name || (layer.handle && layer.handle.name) || '<anonymous>',
+        path: layer.regexp ? String(layer.regexp) : null,
+        route: layer.route ? Object.keys(layer.route.methods || {}).join(',') : null,
+      };
+    });
+  console.info('[MIDDLEWARE STACK]', layers.slice(0, 60));
+} catch (e) {
+  console.warn('[MIDDLEWARE DUMP FAILED]', e?.message || e);
+}
 
 const shouldUseAssignmentWriteFallback = () =>
   isFallbackMode && ALLOW_NON_PERSISTENT_ASSIGNMENTS;

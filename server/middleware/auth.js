@@ -933,7 +933,8 @@ export const validateAccessToken = (req, res, next) => {
       return res.status(401).json({ error: 'Invalid or expired access token.' });
     }
 
-    req.user = decoded;
+    // Do not overwrite an existing req.user (e.g., from global E2E bypass)
+    if (!req.user) req.user = decoded;
     next();
   } catch (error) {
     console.error('[TOKEN VALIDATION ERROR]', error);
@@ -1160,6 +1161,17 @@ export async function authenticate(req, res, next) {
         // swallow
       }
     }
+    // If an upstream/global middleware has already populated `req.user` (for
+    // example the global E2E bypass middleware), do not overwrite it — just
+    // continue. This ensures the global bypass runs first and is honored.
+    if (req.user) {
+      console.log('[AUTH SKIPPED - E2E USER]');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[authenticate] req.user already present, skipping token logic', { userId: req.user?.userId || req.user?.id || null });
+      }
+      return next();
+    }
+
     if (req?.authBypassed) {
       return next();
     }
@@ -1170,19 +1182,9 @@ export async function authenticate(req, res, next) {
       String(req?.headers?.['x-e2e-bypass'] || req?.cookies?.['x-e2e-bypass'] || req?.cookies?.['e2e_bypass'] || req?.query?.['e2e_bypass'] || '').trim().length > 0 ||
       String(req?.headers?.['x-user-role'] || '').trim().length > 0,
     );
-    if (!token && (isTestMode || String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true') && explicitE2EHeader) {
-      const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
-      req.user = demo.user;
-      req.userId = demo.user?.userId ?? demo.user?.id ?? null;
-      req.orgMemberships = demo.membershipMap;
-      req.activeOrgId = demo.activeOrgId;
-      req.membershipDiagnostics = null;
-      req.membershipStatus = 'ready';
-      req.membershipCount = Array.isArray(demo.memberships) ? demo.memberships.length : 1;
-      req.membershipDegraded = false;
-      req.userPermissions = new Set(Array.isArray(demo.user?.permissions) ? demo.user.permissions : []);
-      return next();
-    }
+    // Do not synthesize demo users here. Global E2E bypass middleware in
+    // server/app.js is responsible for injecting a deterministic req.user
+    // when the test harness requests it.
     authLog('info', 'authenticate_start', {
       path: req.originalUrl || req.url,
       method: req.method,
@@ -1209,7 +1211,8 @@ export async function authenticate(req, res, next) {
       });
     }
 
-    req.user = context.user ?? null;
+  // Respect any upstream-synthesized user (E2E bypass middleware)
+  if (!req.user) req.user = context.user ?? null;
     req.userId = context.user?.userId ?? context.user?.id ?? null;
     req.orgMemberships = context.membershipsMap;
     req.activeOrgId = context.activeOrgId;
@@ -1242,22 +1245,6 @@ export async function authenticate(req, res, next) {
     }
 
     if (error.message === 'missing_token') {
-      const explicitBypassSignal =
-        String(req?.headers?.['x-e2e-bypass'] || '').trim().toLowerCase() === 'true' ||
-        String(req?.headers?.['x-user-role'] || '').trim().length > 0;
-      if (!isProduction && explicitBypassSignal) {
-        const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
-        req.user = demo.user;
-        req.userId = demo.user?.userId ?? demo.user?.id ?? null;
-        req.orgMemberships = demo.membershipMap;
-        req.activeOrgId = demo.activeOrgId;
-        req.membershipDiagnostics = null;
-        req.membershipStatus = 'ready';
-        req.membershipCount = Array.isArray(demo.memberships) ? demo.memberships.length : 1;
-        req.membershipDegraded = false;
-        req.userPermissions = new Set(Array.isArray(demo.user?.permissions) ? demo.user.permissions : []);
-        return next();
-      }
       return res.status(401).json({
         error: 'Authentication required',
         message: 'No bearer token provided in the Authorization header',
@@ -1294,32 +1281,12 @@ export async function requireAdmin(req, res, next) {
     return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
-  let isPlatformAdminRole = isPlatformAdmin(req.user || {});
+  // Normalized check that honors either an explicit platform flag or explicit platformRole
+  const isAdmin =
+    req.user?.isPlatformAdmin === true ||
+    String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
 
-  if (isPlatformAdminRole) {
-    console.info('[admin-auth] platform_admin_access_check', {
-      userId,
-      email: req.user.email || null,
-      platformRole: req.user.platformRole || null,
-      resolvedRole: req.user.role || null,
-      reason: 'platform_admin_granted',
-    });
-  }
-
-  if (!isPlatformAdminRole && userId) {
-    const profileFlags = await fetchUserProfileRole(userId);
-    if (profileFlags.isAdmin || profileFlags.role === 'platform_admin') {
-      isPlatformAdminRole = true;
-      console.info('[admin-auth] platform_admin_access_check', {
-        userId,
-        profileRole: profileFlags.role,
-        profileIsAdmin: profileFlags.isAdmin,
-        reason: 'platform_admin_via_profile',
-      });
-    }
-  }
-
-  if (!isPlatformAdminRole) {
+  if (!isAdmin) {
     console.warn('[admin-auth] deny_reason', {
       userId,
       email: req.user.email || null,
@@ -1331,6 +1298,7 @@ export async function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'Forbidden', message: 'Platform admin access required' });
   }
 
+  // Ensure the user object marks platform admin for downstream checks
   req.user.isPlatformAdmin = true;
   req.user.platformRole = 'platform_admin';
   return next();
@@ -1450,31 +1418,7 @@ export async function requirePlatformAdmin(req, res, next) {
 
 export async function requireOrgAdmin(req, res, next) {
   if (!req.user) {
-    // Allow a strict E2E header bypass when running in test/E2E mode.
-    // Some admin routes use `requireOrgAdmin` (not `requireAdminAccess`) and
-    // must be reachable by test harnesses. Guard this so it only activates in
-    // non-production test runs and when an explicit bypass header is present.
-    const explicitBypass = String(req?.headers?.['x-e2e-bypass'] || req?.headers?.['x-E2E-Bypass'] || '').trim().toLowerCase();
-    const hasUserRole = String(req?.headers?.['x-user-role'] || req?.headers?.['x-User-Role'] || '').trim().length > 0;
-    const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' || isTestMode;
-    if (!isProduction && e2eEnabled && (explicitBypass === 'true' || hasUserRole)) {
-      try {
-        const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
-        req.user = demo.user;
-        req.userId = demo.user?.userId ?? demo.user?.id ?? null;
-        req.orgMemberships = demo.membershipMap;
-        req.activeOrgId = demo.activeOrgId;
-        req.membershipStatus = 'ready';
-        req.membershipCount = Array.isArray(demo.memberships) ? demo.memberships.length : 1;
-        req.membershipDegraded = false;
-      } catch (e) {
-        // If anything goes wrong, fall through to the normal unauthorized response.
-      }
-    }
-
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
-    }
+    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
   if (isPlatformAdmin(req.user)) {
