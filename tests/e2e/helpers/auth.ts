@@ -111,7 +111,7 @@ export const loginAsAdmin = async (
       (window as any).__E2E_ACTIVE_ORG_ID = injected.orgId;
 
       const originalFetch = window.fetch.bind(window);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       (window as any).fetch = async (input: RequestInfo, init?: RequestInit) => {
         try {
           const urlString = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
@@ -139,7 +139,7 @@ export const loginAsAdmin = async (
         'x-org-id': activeOrgId,
       };
       const patchMethod = (name: string) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const reqAny: any = (page.request as any);
         const orig = reqAny[name]?.bind(reqAny);
         if (typeof orig !== 'function') return;
@@ -161,7 +161,7 @@ export const loginAsAdmin = async (
     } catch (e) {
       // Non-fatal: tests can still proceed; we just won't auto-inject headers
       // into page.request calls in that environment.
-      // eslint-disable-next-line no-console
+       
       console.warn('[E2E] failed to patch page.request methods for E2E headers', e);
     }
   }
@@ -179,7 +179,7 @@ export const loginAsAdmin = async (
 
   // E2E runtime env check: log the frontend and API base the test is using
   try {
-    // eslint-disable-next-line no-console
+     
     console.log('[ENV CHECK][E2E]', {
       baseUrl,
       apiBaseUrl,
@@ -258,7 +258,7 @@ export async function ensureE2EBypass(page: Page, { role = 'learner', orgId = 'd
       }
 
       const originalFetch = window.fetch.bind(window);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       (window as any).fetch = async (input: RequestInfo, init?: RequestInit) => {
         try {
           init = init || {};
@@ -275,7 +275,7 @@ export async function ensureE2EBypass(page: Page, { role = 'learner', orgId = 'd
     }, { role, orgId });
   } catch (e) {
     // Non-fatal: best effort to inject bypass. Tests should still proceed.
-    // eslint-disable-next-line no-console
+     
     console.warn('[E2E] ensureE2EBypass failed to add init script', e);
   }
 
@@ -289,7 +289,7 @@ export async function ensureE2EBypass(page: Page, { role = 'learner', orgId = 'd
       'x-org-id': orgId,
     };
     const patchMethod = (name: string) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const reqAny: any = (page.request as any);
       const orig = reqAny[name]?.bind(reqAny);
       if (typeof orig !== 'function') return;
@@ -309,7 +309,7 @@ export async function ensureE2EBypass(page: Page, { role = 'learner', orgId = 'd
     };
     ['get', 'post', 'put', 'delete', 'patch', 'head'].forEach(patchMethod);
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.warn('[E2E] failed to patch page.request methods for E2E headers', e);
   }
 }

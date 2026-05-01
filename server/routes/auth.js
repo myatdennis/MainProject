@@ -23,7 +23,7 @@ import {
   mapMembershipRows,
   buildAuthContext,
 } from '../middleware/auth.js';
-import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
+import { supabaseAuthClient, getActiveSupabaseClient, requireSupabaseAdminClient } from '../lib/supabaseClient.js';
 import { getUserMemberships } from '../utils/memberships.js';
 import { verifySupabaseToken } from '../middleware/supabaseJwt.js';
 
@@ -650,7 +650,8 @@ router.post('/register', authLimiter, async (req, res) => {
     }
 
     // Check user_profiles for existing account — this project stores user data in user_profiles
-    const { data: existingUsers } = await supabase
+    const adminCheck = requireSupabaseAdminClient();
+    const { data: existingUsers } = await adminCheck
       .from('user_profiles')
       .select('id')
       .eq('email', normalizedEmail)
@@ -669,7 +670,8 @@ router.post('/register', authLimiter, async (req, res) => {
 
     let createdAuthUserId = null;
     try {
-      const { data: authData, error: createAuthError } = await supabase.auth.admin.createUser({
+      const admin = requireSupabaseAdminClient();
+      const { data: authData, error: createAuthError } = await admin.auth.admin.createUser({
         email: normalizedEmail,
         password,
         email_confirm: true,
@@ -707,7 +709,8 @@ router.post('/register', authLimiter, async (req, res) => {
 
     try {
       // Persist profile to user_profiles (single source of truth for profile data)
-      const { data: newUser, error: createError } = await supabase
+      const adminPersist = requireSupabaseAdminClient();
+      const { data: newUser, error: createError } = await adminPersist
         .from('user_profiles')
         .insert({
           id: createdAuthUserId,
@@ -725,7 +728,8 @@ router.post('/register', authLimiter, async (req, res) => {
 
       if (createError || !newUser) {
         console.error('User creation error:', createError);
-        await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
+        const adminDel = requireSupabaseAdminClient();
+        await adminDel.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
         return res.status(500).json({
           code: 'REGISTRATION_FAILED',
           error: 'registration_failed',
@@ -1011,7 +1015,7 @@ router.post('/forgot-password', async (req, res) => {
     return sendError(res, 400, 'email_required', 'Email required');
   }
 
-  if (isDemoModeExplicit || !supabase) {
+    if (isDemoModeExplicit) {
     return sendOk(res, {
       success: true,
       message: 'Password reset email sent (demo mode - not actually sent)',
@@ -1019,7 +1023,7 @@ router.post('/forgot-password', async (req, res) => {
   }
 
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const { error } = await supabaseAuthClient.auth.resetPasswordForEmail(email);
     if (error) {
       return sendError(res, 400, 'password_reset_failed', error.message || 'Password reset failed');
     }
@@ -1035,6 +1039,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 router.post('/self-heal-membership', async (req, res) => {
+  const supabase = getActiveSupabaseClient(req);
   if (!supabase) {
     return res.status(503).json({
       code: 'SUPABASE_UNAVAILABLE',

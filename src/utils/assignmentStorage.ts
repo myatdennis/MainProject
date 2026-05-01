@@ -105,7 +105,7 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null) {
 
   const prom = (async () => {
     try {
-      let rows = await fetchAssignmentsRaw();
+      const rows = await fetchAssignmentsRaw();
   // Server controls org scoping; map rows to client model and return.
   const mapped = mapAssignmentsFromApiRows(rows);
   // If we resolved via email-to-id mapping but the active session id is a

@@ -1,5 +1,5 @@
 import { authenticate } from './authenticate.js';
-import supabase from '../lib/supabaseClient.js';
+import { getSupabaseAdminClient } from '../lib/supabaseClient.js';
 import { isDemoMode, isProduction, isTestMode, isDevMode } from '../config/runtimeFlags.js';
 import {
   isAllowlistedAdminEmail,
@@ -15,14 +15,15 @@ const FALLBACK_SUPERUSER = {
 };
 
 const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
-  if (!supabase) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
     return { entry: null, error: new Error('SUPABASE_NOT_CONFIGURED') };
   }
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : null;
   if (!userId && !normalizedEmail) {
     return { entry: null, error: null };
   }
-  let query = supabase
+  let query = admin
     .from('admin_users')
     .select('user_id,email,is_active')
     .eq('is_active', true)
@@ -262,7 +263,8 @@ const ensureAdminAccess = async (req, res) => {
   }
 
   // 3) user_profiles is_admin check
-  if (!supabase) {
+  const admin2 = getSupabaseAdminClient();
+  if (!admin2) {
     console.error('[requireAdminAccess] supabase_not_configured', {
       requestId: req.requestId ?? null,
       userId: user.id,
@@ -276,7 +278,7 @@ const ensureAdminAccess = async (req, res) => {
     return false;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await admin2
     .from('user_profiles')
     .select('is_admin, role')
     .eq('id', user.id)

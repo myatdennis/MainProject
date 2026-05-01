@@ -58,7 +58,7 @@ describe('Auth middleware helpers', () => {
   });
 
   it('requirePlatformAdmin calls next for platform admin', async () => {
-    const req = { user: { isPlatformAdmin: true } };
+    const req = { user: { id: 'platform-admin', userId: 'platform-admin', isPlatformAdmin: true } };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
     const next = vi.fn();
 
@@ -68,7 +68,7 @@ describe('Auth middleware helpers', () => {
   });
 
   it('requirePlatformAdmin denies non-platform admin', async () => {
-    const req = { user: { role: 'admin' } };
+    const req = { user: { id: 'org-admin', userId: 'org-admin', role: 'admin' } };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
     const next = vi.fn();
 
@@ -123,7 +123,7 @@ describe('Auth middleware helpers', () => {
 
   it('ensureAdminAccess rejects if role is not platform admin and not allowlisted', async () => {
     const { ensureAdminAccess } = await import('../../server/middleware/requireAdminAccess.js');
-  const req = { supabaseJwtUser: { id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' }, requestId: 'rid' };
+  const req = { user: { id: '11111111-1111-1111-1111-111111111111', email: 'user@example.com' }, requestId: 'rid' };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
 
     const result = await ensureAdminAccess(req, res);
@@ -133,7 +133,7 @@ describe('Auth middleware helpers', () => {
 
   it('ensureAdminAccess grants access to allowlisted admin email', async () => {
     const { ensureAdminAccess } = await import('../../server/middleware/requireAdminAccess.js');
-    const req = { supabaseJwtUser: { id: 'user-allowlist', email: 'mya@the-huddle.co' }, requestId: 'rid' } as any;
+    const req = { user: { id: 'user-allowlist', email: 'mya@the-huddle.co' }, requestId: 'rid' } as any;
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
 
     const result = await ensureAdminAccess(req, res);

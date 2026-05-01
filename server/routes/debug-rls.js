@@ -1,5 +1,5 @@
 import express from 'express';
-import supabase from '../lib/supabaseClient.js';
+import { getActiveSupabaseClient } from '../lib/supabaseClient.js';
 const router = express.Router();
 
 // GET /api/debug/rls-claims
@@ -10,6 +10,8 @@ router.get('/rls-claims', async (req, res) => {
     const results = {};
     // Try RPC first (some deployments include a helper RPC)
     try {
+      const supabase = getActiveSupabaseClient();
+      if (!supabase) throw new Error('Supabase client unavailable');
       const { data: rpcData, error: rpcErr } = await supabase.rpc('get_platform_role_claims');
       results.rpc = rpcErr ? { error: rpcErr.message } : rpcData;
     } catch (err) {
@@ -18,6 +20,8 @@ router.get('/rls-claims', async (req, res) => {
 
     // Try a count from organizations (this will be subject to RLS)
     try {
+      const supabase = getActiveSupabaseClient();
+      if (!supabase) throw new Error('Supabase client unavailable');
       const { data: orgs, error: orgErr, count } = await supabase.from('organizations').select('id', { count: 'exact' }).limit(1);
       if (orgErr) results.organizations = { error: orgErr.message };
       else results.organizations = { rowSample: orgs, count };

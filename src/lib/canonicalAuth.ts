@@ -41,7 +41,7 @@ export function setCanonicalSession(next: Partial<SessionSnapshot>) {
       l(getCanonicalSession());
     } catch (e) {
       // swallow listener errors
-      // eslint-disable-next-line no-console
+       
       console.warn('[canonicalAuth] listener error', e);
     }
   }
@@ -60,7 +60,7 @@ export function clearCanonicalSession() {
     try {
       l(getCanonicalSession());
     } catch (e) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[canonicalAuth] listener error', e);
     }
   }

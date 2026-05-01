@@ -106,7 +106,7 @@ export async function safeInsert(table, rows = [], { logger = console, requestId
               logger.warn('safe_insert_verify_attempt_error', { requestId, table, attempt, message: e?.message || String(e) });
             }
             const delay = backoffs[Math.min(attempt - 1, backoffs.length - 1)];
-            // eslint-disable-next-line no-await-in-loop
+             
             await new Promise((r) => setTimeout(r, delay));
           }
 
@@ -220,11 +220,11 @@ export async function safeUpsert(table, payload, { logger = console, requestId =
           let ok = false;
           while (Date.now() - start < verifyTimeoutMs) {
             try {
-              // eslint-disable-next-line no-await-in-loop
+               
               ok = await verifyFn();
               if (ok) break;
             } catch (e) {}
-            // eslint-disable-next-line no-await-in-loop
+             
             await new Promise((r) => setTimeout(r, intervalMs));
           }
           if (!ok) {

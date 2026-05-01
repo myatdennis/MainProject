@@ -20,7 +20,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
-import { createClient } from '@supabase/supabase-js';
 import { safeInsert, safeUpsert, safeDelete } from './lib/safeWrites.js';
 
 const readEnvFlag = (value) => ['true', '1', 'yes', 'y', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -57,9 +56,6 @@ const COOKIE_DOMAIN = '.the-huddle.co';
 // ...existing code...
 // Removed frontend-only variables
 
-// --- Startup Supabase connection test ---
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-
 // AUTH SYSTEM RULE:
 // ONLY authenticate + e2eBypass may set req.user
 // req.user is the single source of truth
@@ -67,7 +63,11 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 (async () => {
   try {
-    const supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const supabase = getSupabaseAdminClient();
+    if (!supabase) {
+      console.warn('[startup] Supabase connection warning: admin client unavailable');
+      return;
+    }
     const { error } = await supabase
       .from('organizations')
       .select('id')
@@ -1604,6 +1604,8 @@ app.use((req, res, next) => {
 // proxy exported from that module.
 import {
   createSupabaseClientForToken,
+  getSupabaseAdminClient,
+  getSupabaseUserClient,
   requestAsyncLocalStorage as asyncLocalStorage,
   setRequestSupabaseClient,
 } from './lib/supabaseClient.js';
@@ -1712,70 +1714,7 @@ app.get('/api/admin/me', ...withAuth((req, res) => {
 // Admin courses guard: add early logging and a timeout guard to ensure
 // stalled handlers cannot hang E2E runs. This middleware intentionally
 // responds with a 503 if downstream handlers do not finish in time.
-app.use('/api/admin/courses', (req, res, next) => {
-  try {
-    if (req.method && req.method.toUpperCase() === 'POST') {
-      console.log('[ADMIN COURSES REQUEST]', {
-        path: req.path,
-        method: req.method,
-        requestId: req.requestId ?? null,
-        bodyPreview: (() => {
-          try { return JSON.parse(JSON.stringify(req.body)).length ? '[body]' : '[body]'; } catch { return '[unserializable]'; }
-        })(),
-        user: req.user?.userId || req.user?.id || null,
-        orgId: req.headers['x-org-id'] || req.body?.organizationId || req.body?.orgId || null,
-      });
-      const startStack = new Error().stack;
-      const timeoutId = setTimeout(() => {
-        try {
-          if (!res.headersSent) {
-            console.error('[TIMEOUT WARNING] admin courses handler slow', { path: req.path, requestId: req.requestId ?? null, startStack });
-            res.status(503).json({ error: 'handler_timeout', message: 'Admin course handler timed out' });
-          } else {
-            console.error('[TIMEOUT WARNING] admin courses handler slow but headers already sent', { path: req.path, requestId: req.requestId ?? null, startStack });
-          }
-        } catch (e) {
-          console.error('[TIMEOUT WARNING] failed to send timeout response', e?.message || e);
-        }
-      }, 2000);
-      res.once('finish', () => clearTimeout(timeoutId));
-    }
-    // Wrap res.json for this mount so we can trace where org_id_required
-    // responses originate from. This avoids blind searching across many
-    // files and surfaces the stack for quick debugging in E2E runs.
-    try {
-      const _origJson = res.json && res.json.bind(res);
-      if (_origJson) {
-        res.json = function (body) {
-          try {
-            const code = body && (body.code || (body.error && body.error.code));
-            if (String(code) === 'org_id_required' || (body && body.error && typeof body.error.message === 'string' && body.error.message.includes('orgId query parameter')) ) {
-              try {
-                console.error('[ORG_ID_REQUIRED TRACER] detected', {
-                  path: req.originalUrl || req.url || null,
-                  method: req.method || null,
-                  requestId: req.requestId || null,
-                  userId: req.user?.id || req.user?.userId || null,
-                  stack: new Error().stack,
-                });
-              } catch (e) {
-                // noop
-              }
-            }
-          } catch (e) {
-            // noop
-          }
-          return _origJson(body);
-        };
-      }
-    } catch (e) {
-      // noop
-    }
-  } catch (e) {
-    logger.warn('[admin_courses_middleware] failed', { error: e?.message || e });
-  }
-  return next();
-});
+// admin courses routes moved to server/routes/admin/adminCourses.js
 app.use('/api', (req, _res, next) => {
   const token =
     String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() ||
@@ -2108,45 +2047,7 @@ log('info', 'http_cors_policy', {
   allowedHeaders: corsAllowedHeadersLocal,
 });
 
-app.get('/api/admin/courses/health/upsert-course-rpc', authenticate, requireAdmin, async (_req, res) => {
-  const supabaseUrl = process.env.SUPABASE_URL || null;
-  const projectRef = getSupabaseProjectRef(supabaseUrl);
-  let rpcExists = null;
-  let rpcError = null;
-
-  if (!databaseConnectionInfo.connectionStringDefined) {
-    rpcError = 'database_url_not_configured';
-  } else {
-    try {
-      const rows = await sql`
-        select exists (
-          select 1
-          from pg_proc p
-          join pg_namespace n on n.oid = p.pronamespace
-          where n.nspname = 'public'
-            and p.proname = 'upsert_course_full'
-            and pg_get_function_identity_arguments(p.oid) = 'jsonb, jsonb'
-        ) as exists
-      `;
-      rpcExists = Boolean(rows?.[0]?.exists);
-    } catch (error) {
-      rpcError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  res.json({
-    data: {
-      supabaseUrl,
-      projectRef,
-      rpc: {
-        name: 'public.upsert_course_full',
-        args: ['jsonb', 'jsonb'],
-        exists: rpcExists,
-        error: rpcError,
-      },
-    },
-  });
-});
+// /api/admin/courses/health/upsert-course-rpc moved to `server/routes/admin/adminCourses.js`
 
 // ✅ PUBLIC runtime status (no auth)
 // This endpoint is used by the frontend to decide if the API is reachable.
@@ -3276,40 +3177,8 @@ app.get(
   }),
 );
 
-// Bulk delete courses endpoint
-app.post('/api/admin/courses/bulk-delete', authenticate, requireAdmin, async (req, res) => {
-  if (!supabase) {
-    logger.error('bulk_delete_courses_failed', { reason: 'Supabase not configured' });
-    return res.status(500).json({ error: 'Supabase not configured' });
-  }
-  const { courseIds } = req.body || {};
-  if (!Array.isArray(courseIds) || courseIds.length === 0) {
-    logger.warn('bulk_delete_courses_invalid_payload', { courseIds });
-    return res.status(400).json({ error: 'courseIds array is required' });
-  }
-  logger.info('bulk_delete_courses_requested', {
-    userId: req.user?.userId ?? null,
-    courseIds,
-    requestId: req.requestId ?? null,
-  });
-  try {
-    // Delete from courses table
-    const { error } = await supabase.from('courses').delete().in('id', courseIds);
-    if (error) {
-      logger.error('bulk_delete_courses_failed', { error: error.message, courseIds });
-      return res.status(500).json({ error: error.message });
-    }
-    logger.info('bulk_delete_courses_success', {
-      userId: req.user?.userId ?? null,
-      courseIds,
-      requestId: req.requestId ?? null,
-    });
-    return res.status(200).json({ success: true, deleted: courseIds });
-  } catch (err) {
-    logger.error('bulk_delete_courses_exception', { error: err?.message || String(err), courseIds });
-    return res.status(500).json({ error: err?.message || 'Bulk delete failed' });
-  }
-});
+// /api/admin/courses/import/template and /api/admin/courses/bulk-delete moved to
+// `server/routes/admin/adminCourses.js`
 
 app.get('/api/admin/diagnostics/memberships', requireAdminAccess, asyncHandler(async (req, res) => {
   const context = requireUserContext(req, res);
@@ -3507,8 +3376,14 @@ async function initializeSupabaseWithRetry({ maxAttempts = 5, initialDelayMs = 5
     return;
   }
 
-  const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
-  const authClient = supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+  const adminClient = getSupabaseAdminClient();
+  const authClient = supabaseAnonKey ? getSupabaseUserClient() : null;
+  if (!adminClient) {
+    console.error('[supabase] configuration incomplete - admin client unavailable', {
+      missing: missingSupabaseEnvVars,
+    });
+    return;
+  }
   const dnsPromises = dns.promises;
 
   let attempt = 0;

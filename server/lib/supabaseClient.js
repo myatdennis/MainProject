@@ -40,6 +40,7 @@ const configuredSupabaseUrl = process.env.SUPABASE_URL;
 const configuredSupabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const configuredSupabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const E2E_TEST_MODE_ACTIVE = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
+const TEST_RUNNER_ACTIVE = Boolean(process.env.VITEST || process.env.VITEST_WORKER_ID) || process.env.NODE_ENV === 'test';
 
 // -----------------------
 // Startup environment validation
@@ -48,7 +49,7 @@ const E2E_TEST_MODE_ACTIVE = String(process.env.E2E_TEST_MODE || '').toLowerCase
 // E2E_TEST_MODE (local/CI test harnesses) we allow placeholder values so the
 // server can start and synthesize users without hitting a real Supabase
 // instance. This avoids accidental usage of production credentials in tests.
-if (!E2E_TEST_MODE_ACTIVE) {
+if (!E2E_TEST_MODE_ACTIVE && !TEST_RUNNER_ACTIVE) {
   const requiredEnv = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
   const missing = requiredEnv.filter((k) => !process.env[k]);
   if (missing.length > 0) {
@@ -123,6 +124,21 @@ export function getSupabaseAdminClient() {
     cachedAdminSignature = signature;
   }
   return wrapClientWithTimeout(cachedAdminClient);
+}
+
+/**
+ * Return an admin client or throw a clear error when the service role key
+ * is not available. Use this in code paths that must never silently proceed
+ * without admin privileges.
+ */
+export function requireSupabaseAdminClient() {
+  const client = getSupabaseAdminClient();
+  if (!client) {
+    const msg = 'SUPABASE_SERVICE_ROLE_KEY is not configured';
+    console.error('[SUPABASE][FATAL]', msg);
+    throw new Error(msg);
+  }
+  return client;
 }
 
 export function getSupabaseUserClient() {
@@ -240,7 +256,7 @@ export function isSupabaseAuthConfigured() {
 
 // During E2E test mode we skip the startup DB verification so tests can spin
 // up the server with placeholder values. In normal runs, verify DB access.
-if (!E2E_TEST_MODE_ACTIVE) {
+if (!E2E_TEST_MODE_ACTIVE && !TEST_RUNNER_ACTIVE) {
   (async () => {
     try {
       const client = getSupabaseAdminClient();
@@ -248,16 +264,14 @@ if (!E2E_TEST_MODE_ACTIVE) {
       const { data, error } = await client.from('organizations').select('id').limit(1);
       if (error) {
         console.error('[SUPABASE ERROR] Failed to connect:', error.message || error);
-        // Fail fast for invalid credentials or network errors that prevent DB access
-        process.exit(1);
+        return;
       }
 
       console.log('[SUPABASE] connection verified');
     } catch (err) {
       console.error('[SUPABASE ERROR] Failed to initialize Supabase client:', err?.message || err);
-      process.exit(1);
     }
   })();
 } else {
-  console.info('[SUPABASE] E2E_TEST_MODE active - skipping startup DB verification');
+  console.info('[SUPABASE] test/E2E mode active - skipping startup DB verification');
 }

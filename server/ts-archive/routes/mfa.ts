@@ -1,3 +1,3 @@
-// DELETED: TypeScript route moved to `server/routes/mfa.js` runtime.
-// Keep this short placeholder so TypeScript compilation doesn't include legacy code.
+// MOVED: This TypeScript source has been archived to server/ts-archive/routes/mfa.ts
+// Please see server/ts-archive/routes/mfa.ts for original content. Runtime imports server/routes/mfa.js.
 export {};

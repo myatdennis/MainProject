@@ -14,7 +14,6 @@ const parseEnvFlag = (value) => ['true', '1', 'yes', 'y', 'on'].includes(String(
 try {
   const localPath = path.resolve(process.cwd(), '.env.local');
   if (fs.existsSync(localPath)) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const dotenv = await import('dotenv');
     dotenv.config({ path: localPath });
   }
@@ -25,7 +24,6 @@ try {
 try {
   const envPath = path.resolve(process.cwd(), '.env');
   if (fs.existsSync(envPath)) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const dotenv = await import('dotenv');
     dotenv.config({ path: envPath });
   }

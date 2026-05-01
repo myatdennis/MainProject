@@ -252,6 +252,16 @@ describe('SecureAuthContext', () => {
       role: 'admin',
       organizationId: 'org-1',
     } as UserSession;
+    supabaseAuthMock.getSession.mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'supabase-test-token',
+          refresh_token: 'supabase-refresh-token',
+          user: storedState.user,
+        },
+      },
+      error: null,
+    });
     mockApiRequestRaw.mockImplementation((path: string) => {
       if (path === '/auth/session') {
         return jsonResponse({
@@ -282,6 +292,10 @@ describe('SecureAuthContext', () => {
   });
 
   it('returns friendly errors on invalid credentials', async () => {
+    supabaseAuthMock.getSession.mockResolvedValueOnce({
+      data: { session: null },
+      error: null,
+    });
     supabaseAuthMock.signInWithPassword.mockResolvedValueOnce({
       data: null,
       error: { message: 'Invalid login', status: 400 },
@@ -307,6 +321,16 @@ describe('SecureAuthContext', () => {
       organizationId: 'org-1',
       activeOrgId: 'org-1',
     } as UserSession;
+    supabaseAuthMock.getSession.mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'supabase-test-token',
+          refresh_token: 'supabase-refresh-token',
+          user: storedState.user,
+        },
+      },
+      error: null,
+    });
     mockApiRequestRaw.mockImplementation((path: string) => {
       if (path === '/auth/session') {
         return jsonResponse({

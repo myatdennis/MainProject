@@ -46,6 +46,17 @@ const isAuthUserNotFoundError = (error) => {
   return message.includes('user not found') || message.includes('not found');
 };
 
+import { requireSupabaseAdminClient } from '../lib/supabaseClient.js';
+
+const ensureAdminSupabase = (supabase) => {
+  try {
+    return supabase || requireSupabaseAdminClient();
+  } catch (err) {
+    // rethrow so callers get a clear error when service role key missing
+    throw err;
+  }
+};
+
 const cleanupOrphanedProfileByEmail = async ({
   supabase,
   email,
@@ -53,9 +64,9 @@ const cleanupOrphanedProfileByEmail = async ({
   requestId = null,
   getOrganizationMembershipsOrgColumnName,
 }) => {
-  if (!supabase || !email) return false;
-
-  const { data: profile, error: profileError } = await supabase
+  if (!email) return false;
+  const client = ensureAdminSupabase(supabase);
+  const { data: profile, error: profileError } = await client
     .from('user_profiles')
     .select('id, email')
     .eq('email', email)
@@ -64,7 +75,8 @@ const cleanupOrphanedProfileByEmail = async ({
   if (profileError || !profile?.id) return false;
 
   try {
-    const { data: authData, error: authError } = await supabase.auth.admin.getUserById(profile.id);
+    const client2 = ensureAdminSupabase(supabase);
+    const { data: authData, error: authError } = await client2.auth.admin.getUserById(profile.id);
     if (authData?.user?.id) return false;
     if (authError && !isAuthUserNotFoundError(authError)) return false;
   } catch (error) {
@@ -76,13 +88,14 @@ const cleanupOrphanedProfileByEmail = async ({
       ? await getOrganizationMembershipsOrgColumnName()
       : 'organization_id';
     // delete memberships regardless of orgId (cleanup of orphaned profile)
-    await supabase.from('organization_memberships').delete().eq('user_id', profile.id);
+    const client3 = ensureAdminSupabase(supabase);
+    await client3.from('organization_memberships').delete().eq('user_id', profile.id);
     try {
-      await supabase.from('admin_users').delete().eq('user_id', profile.id);
+      await client3.from('admin_users').delete().eq('user_id', profile.id);
     } catch (adminDeleteError) {
       // ignore missing column scenarios
     }
-    await supabase.from('user_profiles').delete().eq('id', profile.id);
+    await client3.from('user_profiles').delete().eq('id', profile.id);
     logger.warn('provisioning_orphaned_profile_removed', {
       requestId,
       email,
@@ -103,11 +116,12 @@ const cleanupOrphanedProfileByEmail = async ({
 
 export const resolveSupabaseAuthUserByEmail = async ({ supabase, email, requestId = null, logger = defaultLogger }) => {
   const normalizedEmail = normalizeEmail(email);
-  if (!supabase || !normalizedEmail) return null;
+  if (!normalizedEmail) return null;
+  const client = ensureAdminSupabase(supabase);
 
-  const directLookup = supabase.auth?.admin?.getUserByEmail;
+  const directLookup = client.auth?.admin?.getUserByEmail;
   if (typeof directLookup === 'function') {
-    const { data, error } = await directLookup.call(supabase.auth.admin, normalizedEmail);
+    const { data, error } = await directLookup.call(client.auth.admin, normalizedEmail);
     if (error) {
       const message = String(error?.message || '').toLowerCase();
       const isNotFound = message.includes('user not found');
@@ -121,7 +135,7 @@ export const resolveSupabaseAuthUserByEmail = async ({ supabase, email, requestI
   const perPage = Number(process.env.SUPABASE_AUTH_LIST_USERS_PAGE_SIZE || 200);
   let page = 1;
   while (page <= 50) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+  const { data, error } = await client.auth.admin.listUsers({ page, perPage });
     if (error) throw error;
     const users = Array.isArray(data?.users) ? data.users : [];
     const match = users.find((user) => normalizeEmail(user?.email) === normalizedEmail) ?? null;
@@ -147,7 +161,8 @@ const cleanupProvisionedUserAccount = async ({
   requestId = null,
   getOrganizationMembershipsOrgColumnName,
 }) => {
-  if (!supabase || !userId) return;
+  if (!userId) return;
+  supabase = ensureAdminSupabase(supabase);
   try {
     const membershipOrgColumn = getOrganizationMembershipsOrgColumnName
       ? await getOrganizationMembershipsOrgColumnName()
@@ -198,6 +213,7 @@ const ensureProfile = async ({ supabase, userId, profilePayload, requestId, logg
     columns: Object.keys(profilePayload ?? {}),
     label: 'userProvisioning.ensureProfile.upsert',
   });
+  supabase = ensureAdminSupabase(supabase);
   logAdminQuery(logger, {
     requestId,
     route: 'userProvisioning.ensureProfile',
@@ -243,7 +259,8 @@ const isUuid = (value) => {
 };
 
 const resolveUserIdentifierToUuid = async (supabase, identifier) => {
-  if (!supabase || identifier === null || identifier === undefined) return null;
+  if (identifier === null || identifier === undefined) return null;
+  supabase = ensureAdminSupabase(supabase);
   const raw = String(identifier).trim();
   if (!raw) return null;
   if (isUuid(raw)) return raw;
@@ -326,6 +343,9 @@ const ensureMembership = async ({
   if (membershipOrgColumn === 'organization_id') {
     payload.org_id = String(orgId);
   }
+
+  // Require admin client for membership operations
+  supabase = ensureAdminSupabase(supabase);
 
   const deactivateOtherActiveMemberships = async () => {
     const updatePayload = {
@@ -472,9 +492,10 @@ const isConflictTargetError = (error) => {
 const ensureAdminRoleMapping = async ({ supabase, orgId, userId, role, email = null }) => {
   if (!ADMIN_ROLES.has(role)) return null;
 
-  if (!supabase || !userId) {
-    throw new ProvisioningError('admin_role_upsert', 'admin_role_upsert_failed', 'Supabase not configured or missing userId', 500);
+  if (!userId) {
+    throw new ProvisioningError('admin_role_upsert', 'admin_role_upsert_failed', 'Missing userId', 500);
   }
+  supabase = ensureAdminSupabase(supabase);
 
   const tryLegacyAdminUserUpsert = async () => {
     const payload = {
@@ -482,7 +503,7 @@ const ensureAdminRoleMapping = async ({ supabase, orgId, userId, role, email = n
       is_active: true,
       ...(email ? { email } : {}),
     };
-    const { error } = await supabase.from('admin_users').upsert(payload, { onConflict: 'user_id' });
+  const { error } = await supabase.from('admin_users').upsert(payload, { onConflict: 'user_id' });
     if (error) {
       throw new ProvisioningError('admin_role_upsert', 'admin_role_upsert_failed', error.message || 'Admin role upsert failed', 500, error);
     }
@@ -519,6 +540,7 @@ const ensureAdminRoleMapping = async ({ supabase, orgId, userId, role, email = n
 };
 
 const generatePasswordSetupLink = async ({ supabase, email }) => {
+  supabase = ensureAdminSupabase(supabase);
   const { data, error } = await supabase.auth.admin.generateLink({ type: 'recovery', email });
   const actionLink = data?.action_link || data?.properties?.action_link || null;
   if (error || !actionLink) {
@@ -553,6 +575,7 @@ const sendProvisioningEmail = async ({ sendEmail, email, firstName, setupLink, o
 };
 
 const verifyProvisionedUserState = async ({ supabase, orgId, userId, email, setupLink, getOrganizationMembershipsOrgColumnName }) => {
+  supabase = ensureAdminSupabase(supabase);
   const { data: authData, error: authError } = await supabase.auth.admin.getUserById(userId);
   if (authError || !authData?.user?.id) {
     throw new ProvisioningError('final_verify', 'auth_user_missing', 'Auth user missing after provisioning', 500, authError);
@@ -708,9 +731,11 @@ const _provisionOrganizationUser = async ({
   let createError = null;
   let createdWithMinimalPayload = false;
   let createdViaSignUp = false;
+  // Prefer an explicit admin client for all admin-level operations in this flow.
+  const adminClient = ensureAdminSupabase(supabase);
 
   try {
-    const { data, error } = await supabase.auth.admin.createUser({
+    const { data, error } = await adminClient.auth.admin.createUser({
       email: normalizedEmail,
       email_confirm: true,
       user_metadata: {
@@ -777,7 +802,7 @@ const _provisionOrganizationUser = async ({
 
       if (!authUser?.id && password) {
         try {
-          const { data, error } = await supabase.auth.admin.generateLink({
+          const { data, error } = await adminClient.auth.admin.generateLink({
             type: 'signup',
             email: normalizedEmail,
             password,
@@ -808,7 +833,7 @@ const _provisionOrganizationUser = async ({
 
       if (!authUser?.id) {
         try {
-          const { data, error } = await supabase.auth.admin.createUser({
+          const { data, error } = await adminClient.auth.admin.createUser({
             email: normalizedEmail,
             email_confirm: true,
           });
@@ -828,7 +853,7 @@ const _provisionOrganizationUser = async ({
       }
 
       const cleaned = await cleanupOrphanedProfileByEmail({
-        supabase,
+        supabase: adminClient,
         email: normalizedEmail,
         logger,
         requestId,
@@ -836,7 +861,7 @@ const _provisionOrganizationUser = async ({
       });
       if (cleaned) {
         try {
-          const { data, error } = await supabase.auth.admin.createUser({
+          const { data, error } = await adminClient.auth.admin.createUser({
             email: normalizedEmail,
             email_confirm: true,
             user_metadata: {
@@ -869,7 +894,7 @@ const _provisionOrganizationUser = async ({
       columns: 'organization_id',
       label: 'userProvisioning.existingProfileLookup',
     });
-    const { data } = await supabase
+    const { data } = await adminClient
       .from('user_profiles')
       .select('organization_id')
       .eq('id', authUser.id)
@@ -901,7 +926,7 @@ const _provisionOrganizationUser = async ({
 
   if (password || createdWithMinimalPayload || createdViaSignUp || Object.keys(mergedUserMetadata).length > 0) {
     try {
-      await supabase.auth.admin.updateUserById(authUser.id, {
+      await adminClient.auth.admin.updateUserById(authUser.id, {
         ...(password ? { password } : {}),
         email_confirm: true,
         user_metadata: mergedUserMetadata,
@@ -945,7 +970,7 @@ const _provisionOrganizationUser = async ({
   };
 
   try {
-    await ensureProfile({ supabase, userId: authUser.id, profilePayload, requestId, logger });
+  await ensureProfile({ supabase: adminClient, userId: authUser.id, profilePayload, requestId, logger });
   } catch (error) {
     if (created) {
       await cleanupProvisionedUserAccount({
@@ -973,7 +998,7 @@ const _provisionOrganizationUser = async ({
     });
 
     membership = await ensureMembership({
-      supabase,
+      supabase: adminClient,
       orgId,
       userId: authUser.id,
       role: normalizedRole,
@@ -997,7 +1022,7 @@ const _provisionOrganizationUser = async ({
 
     let actorUserUuid = actor?.userId ?? null;
     if (actorUserUuid && !isUuid(actorUserUuid)) {
-      actorUserUuid = await resolveUserIdentifierToUuid(supabase, actorUserUuid).catch(() => null);
+  actorUserUuid = await resolveUserIdentifierToUuid(adminClient, actorUserUuid).catch(() => null);
     }
 
     if (assignContentToUser) {
@@ -1010,7 +1035,7 @@ const _provisionOrganizationUser = async ({
   } catch (error) {
     if (created) {
       await cleanupProvisionedUserAccount({
-        supabase,
+        supabase: adminClient,
         userId: authUser.id,
         orgId,
         logger,
@@ -1023,7 +1048,7 @@ const _provisionOrganizationUser = async ({
 
   stage = 'admin_role_upsert';
   try {
-    await ensureAdminRoleMapping({ supabase, orgId, userId: authUser.id, role: normalizedRole, email: normalizedEmail });
+  await ensureAdminRoleMapping({ supabase: adminClient, orgId, userId: authUser.id, role: normalizedRole, email: normalizedEmail });
   } catch (error) {
     if (created) {
       await cleanupProvisionedUserAccount({
@@ -1041,11 +1066,11 @@ const _provisionOrganizationUser = async ({
   stage = 'setup_link_generate';
   let setupLink = null;
   try {
-    setupLink = await generatePasswordSetupLink({ supabase, email: normalizedEmail });
+  setupLink = await generatePasswordSetupLink({ supabase: adminClient, email: normalizedEmail });
   } catch (error) {
     if (created) {
       await cleanupProvisionedUserAccount({
-        supabase,
+        supabase: adminClient,
         userId: authUser.id,
         orgId,
         logger,
@@ -1082,7 +1107,7 @@ const _provisionOrganizationUser = async ({
 
   stage = 'final_verify';
   const verification = await verifyProvisionedUserState({
-    supabase,
+    supabase: adminClient,
     orgId,
     userId: authUser.id,
     email: normalizedEmail,

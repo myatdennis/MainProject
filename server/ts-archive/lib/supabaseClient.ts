@@ -1,8 +1,6 @@
 /**
- * Supabase Client for Server
- * Server-side Supabase client configuration
+ * MOVED: server/lib/supabaseClient.ts archived to server/ts-archive/lib/supabaseClient.ts
+ * This placeholder remains in the repo to avoid compile-time errors in certain editors but the
+ * runtime uses `server/lib/supabaseClient.js`.
  */
-
-// Deleted: server/lib/supabaseClient.ts
-// Supabase runtime client now lives at server/lib/supabaseClient.js and is used by runtime code.
-// This TypeScript source is intentionally left as a placeholder to avoid runtime `.ts` import attempts.
+export {};

@@ -42,7 +42,7 @@ test('frontend attaches Authorization header for admin orgs when supabase sessio
   const result = await page.evaluate(async () => {
     try {
       // Use the injected E2E supabase client
-      // @ts-ignore
+      // @ts-expect-error injected by the E2E bootstrap harness
       const sup = (window as any).__E2E_SUPABASE_CLIENT || (window as any).__supabase || (window as any).supabase;
       const sessionResp = sup && sup.auth && typeof sup.auth.getSession === 'function' ? await sup.auth.getSession() : { data: { session: null } };
       const token = sessionResp?.data?.session?.access_token ?? null;

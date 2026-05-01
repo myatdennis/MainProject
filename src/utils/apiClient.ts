@@ -584,7 +584,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     if (needsOrg && !hasGlobalOrg) {
       // Best-effort wait (2s). If it times out, we proceed and let the server
       // enforce scoping to avoid deadlocking the UI.
-      // eslint-disable-next-line no-await-in-loop
+       
       await waitForOrgReady(2000).catch(() => null);
     }
   } catch (e) {
@@ -1224,15 +1224,15 @@ apiClient.interceptors.request.use((config) => {
                   extra: { header: key, url: config.url },
                 });
               } catch (e) {
-                // eslint-disable-next-line no-console
+                 
                 console.error('FORBIDDEN HEADER LEAK DETECTED:', key, 'on', config.url);
               }
             } else {
-              // eslint-disable-next-line no-console
+               
               console.error('FORBIDDEN HEADER LEAK DETECTED:', key, 'on', config.url);
             }
           } catch (e) {
-            // eslint-disable-next-line no-console
+             
             console.error('FORBIDDEN HEADER LEAK DETECTED:', key, 'on', config.url);
           }
 

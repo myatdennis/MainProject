@@ -32,7 +32,7 @@ export async function waitForAuthReady(page: any, timeout = 30000) {
       // loop
     }
     // small backoff to avoid tight loop
-    // eslint-disable-next-line no-await-in-loop
+     
     await new Promise((r) => setTimeout(r, 200));
   }
   throw new Error('waitForAuthReady: timeout');

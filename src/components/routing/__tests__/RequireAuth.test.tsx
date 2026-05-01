@@ -17,6 +17,7 @@ const mockUseSecureAuth = authHookMocks.useSecureAuth as Mock;
 
 const createAuthState = (overrides: Record<string, unknown> = {}) => ({
   isAuthenticated: { lms: true, admin: false, client: true },
+  authReady: true,
   authInitializing: false,
   authStatus: 'authenticated',
   sessionStatus: 'authenticated',

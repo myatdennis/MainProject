@@ -61,20 +61,9 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     user,
     organizationIds,
     logout,
+    authReady,
   } = useSecureAuth();
-  // Pull authReady from context so we can block rendering until Supabase reports
-  // session state. Previously RequireAuth used a fallback that defaulted to true
-  // which allowed early requests to fire before authReady — show a Loading
-  // placeholder until auth is settled.
-  const { authReady } = useSecureAuth();
   const orgReady = orgResolutionStatus === 'ready' || orgResolutionStatus === 'degraded';
-
-  // Global guard: do not render children until auth subsystem indicates readiness.
-  if (!authReady || authInitializing) {
-    // Keep a simple full-screen loading experience to avoid any API calls from
-    // page components being dispatched before the auth token is available.
-    return <Loading />;
-  }
   const location = useLocation();
   const params = useParams<Record<string, string | undefined>>();
   // Once authentication succeeds once, this ref stays true for the lifetime of
@@ -766,6 +755,13 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   // run in the background and update state without blocking the page render.
   const shouldShowBootstrapSpinner =
     !hasResolvedAuthRef.current && bootstrapInProgress;
+
+  // Global guard: do not render children until auth subsystem indicates readiness.
+  // This must stay after hook declarations so React sees the same hook order on
+  // every render.
+  if (!authReady || authInitializing) {
+    return <Loading />;
+  }
 
   // Global bootstrap guard: if the auth subsystem or org resolution hasn't
   // completed yet during initial bootstrap, block rendering to avoid routes

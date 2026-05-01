@@ -1990,7 +1990,7 @@ const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<str
       window.dispatchEvent(new CustomEvent('huddle:catalog-warning', { detail: payload }));
     } catch (err) {
       // Best effort dispatch — don't throw from diagnostic handler
-      // eslint-disable-next-line no-console
+       
       console.warn('[courseStore] catalog warning dispatch failed', err);
     }
   }
@@ -3545,7 +3545,11 @@ export const waitForLearnerCatalogSettled = (timeoutMs: number = 10000): Promise
         }
       });
       setTimeout(() => {
-        try { unsubscribe(); } catch (e) {}
+        try {
+          unsubscribe();
+        } catch {
+          // Subscription may already be cleaned up by a state transition.
+        }
         console.info('[HYDRATION TRACE]', { step: 'waitForLearnerCatalogSettled_timeout', timeoutMs });
         resolve();
       }, timeoutMs);

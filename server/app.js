@@ -1,8 +1,10 @@
+
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { attachRequestId, apiErrorHandler } from './middleware/apiErrorHandler.js';
-import { apiLimiter, securityHeaders } from './middleware/auth.js';
+import { apiLimiter, securityHeaders, resolveOrganizationContext } from './middleware/auth.js';
 import { authenticate } from './middleware/authenticate.js';
+import authShim from './middleware/authShim.js';
 import enforceSingleAuth, { enforceSingleAuth as namedEnforceSingleAuth } from './middleware/enforceSingleAuth.js';
 import { withAuth } from './middleware/withAuth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
@@ -23,6 +25,8 @@ import debugRlsRouter from './routes/debug-rls.js';
 import mfaRoutes from './routes/mfa.js';
 import analyticsRouter from './routes/analytics.js';
 import { setDoubleSubmitCSRF } from './middleware/csrf.js';
+import { registerAdminMeRoutes } from './routes/admin/adminMe.js';
+import { registerAdminCoursesRoutes } from './routes/admin/adminCourses.js';
 
 export default function createApp(deps = {}, existingApp = null) {
   const app = existingApp || express();
@@ -31,7 +35,20 @@ export default function createApp(deps = {}, existingApp = null) {
   // Central guarded E2E bypass middleware (registered once)
   // This middleware is implemented in `server/middleware/e2eBypass.js` and
   // only synthesizes an admin user when E2E_TEST_MODE=true and not in production.
+  // Phase 3 - preserve exact middleware order
+  // 1. cookieParser
+  app.use(cookieParser());
+  // 2. e2eBypass (must run before authenticate so tests can opt-in)
   app.use(e2eBypass);
+  // 3. authenticate (only applied per-route; we register here so order is clear)
+  // Note: routes should opt-in to `authenticate` via withAuth/route-level usage.
+  // We do not call `app.use(authenticate)` globally to avoid accidental protection.
+  // 4. authCompat shim (if present) to preserve backwards compatibility imports
+  app.use(authShim);
+  // 5. resolveOrganizationContext (attach org context helpers)
+  if (typeof resolveOrganizationContext === 'function') {
+    app.use(resolveOrganizationContext);
+  }
 
   // Global request tracing and watchdog
   app.use((req, res, next) => {
@@ -126,6 +143,9 @@ export default function createApp(deps = {}, existingApp = null) {
   app.use('/api/debug', debugRlsRouter);
   app.use('/', healthRouter);
 
+  // Register extracted admin route blocks (Phase 4)
+  registerAdminMeRoutes(app);
+
   // Mount routers that accept deps where available
   const isDemoOrTestMode = isDemoMode || E2E_TEST_MODE;
   app.use('/api/admin/organizations', ...withAuth(requireAdminAccess, adminOrganizationsRouter));
@@ -135,7 +155,6 @@ export default function createApp(deps = {}, existingApp = null) {
   app.use('/api/admin/surveys', ...withAuth(requireAdmin, createAdminSurveysRouter(deps)));
   app.use('/api/admin/notifications', ...withAuth(requireAdmin, createAdminNotificationsRouter(deps)));
   app.use('/api/admin/analytics', ...withAuth(requireAdmin, adminAnalyticsRouter));
-  app.use('/api/admin/courses', ...withAuth(requireAdmin, adminCoursesRouter));
   app.use('/api/media', ...withAuth(mediaRouter));
 
   // Admin subrouters and other endpoints

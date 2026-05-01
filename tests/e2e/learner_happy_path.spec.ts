@@ -156,10 +156,8 @@ test.describe('learner happy path', () => {
         const payloadArg = { title: courseTitle, createdId: createdCourseId };
         const result = (await page.evaluate(async (arg) => {
           try {
-            // @ts-ignore runtime evaluation
             const resp = await fetch('/api/client/courses');
             if (!resp || !resp.ok) return { ok: false, found: false };
-            // @ts-ignore runtime evaluation
             const payload = await resp.json();
             const list = Array.isArray(payload?.data) ? payload.data : [];
             const found = list.some((entry: any) => {
@@ -178,7 +176,7 @@ test.describe('learner happy path', () => {
           break;
         }
         // short backoff to allow assignment propagation
-        // eslint-disable-next-line no-await-in-loop
+         
         await page.waitForTimeout(500);
       }
       expect(learnerCourseVisibleInApi).toBe(true);

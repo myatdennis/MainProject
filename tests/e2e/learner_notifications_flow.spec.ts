@@ -72,7 +72,6 @@ test.describe('learner notifications end-to-end', () => {
     }
 
     const apiCtx = await createE2ERequestContext({ baseURL: apiBase });
-    let visibleInLearnerApi = false;
     // Poll the learner API deterministically until the notification appears
     await expect.poll(async () => {
       const response = await apiCtx.get('/api/learner/notifications');
@@ -82,14 +81,12 @@ test.describe('learner notifications end-to-end', () => {
       return records.some((entry: any) => entry?.id === notificationId);
   }, { timeout: 30_000, intervals: [500, 500] }).toBeTruthy();
     await apiCtx.dispose();
-    expect(visibleInLearnerApi).toBe(true);
 
     await page.getByLabel('Notifications').click();
     await expect(page.getByText(title)).toBeVisible({ timeout: 20_000 });
 
     await page.getByText(title).click();
 
-    let unreadCleared = false;
     const apiCtx2 = await createE2ERequestContext({ baseURL: apiBase });
     await expect.poll(async () => {
       const unreadResponse = await apiCtx2.get('/api/learner/notifications?unread_only=true');

@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+ 
 import { beforeEach, afterEach, test, expect, vi } from 'vitest';
 import { setCanonicalSession, clearCanonicalSession } from '../lib/canonicalAuth';
 import { writeBridgeSnapshot } from '../store/courseStoreOrgBridge';

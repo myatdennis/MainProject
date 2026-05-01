@@ -67,7 +67,7 @@ if (import.meta.env.DEV) {
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
 // Frontend runtime env check — print public values (safe to log)
   try {
-    // eslint-disable-next-line no-console
+     
     if (import.meta.env.DEV) {
       console.log('[ENV CHECK][FRONTEND]', {
         apiBase: import.meta.env.VITE_API_BASE_URL ?? null,

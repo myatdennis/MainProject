@@ -4,7 +4,7 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import supabase, { supabaseAuthClient, supabaseEnv, createSupabaseClientForToken, setRequestSupabaseClient } from '../lib/supabaseClient.js';
+import { supabaseAuthClient, supabaseEnv, createSupabaseClientForToken, setRequestSupabaseClient, getSupabaseAdminClient } from '../lib/supabaseClient.js';
 import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { getActiveOrgFromRequest, getAccessTokenFromRequest } from '../utils/authCookies.js';
@@ -59,11 +59,11 @@ const databaseHostForLogs =
     : databaseConnectionInfo.host || null;
 
 const fetchUserProfileRole = async (userId) => {
-  if (!userId || !supabase) {
-    return { role: null, isAdmin: false };
-  }
+  if (!userId) return { role: null, isAdmin: false };
+  const admin = getSupabaseAdminClient();
+  if (!admin) return { role: null, isAdmin: false };
   try {
-    const { data, error } = await supabase
+    const { data, error } = await admin
       .from('user_profiles')
       .select('role, is_admin')
       .eq('id', userId)
@@ -96,9 +96,9 @@ const SUPABASE_SYSTEM_ROLES = new Set(['authenticated', 'anon', 'service_role', 
 const ELEVATED_APP_ROLES = new Set(['admin', 'platform_admin']);
 
 const syncUserProfileFlags = async (user) => {
-  if (!supabase || !user?.id) {
-    return;
-  }
+  if (!user?.id) return;
+  const admin = getSupabaseAdminClient();
+  if (!admin) return;
   const rawRole = user.role ? String(user.role).toLowerCase() : null;
   const normalizedPlatformRole = user.platformRole ? String(user.platformRole).toLowerCase() : null;
   const normalizedEmail = user.email ? normalizeEmail(user.email) : null;
@@ -137,12 +137,12 @@ const syncUserProfileFlags = async (user) => {
       // For elevated roles, use .update() to avoid accidentally creating a new row
       // with a wrong role on conflict. We only want to SET is_admin and email, not role,
       // unless we're explicitly elevating.
-      await supabase
+      await admin
         .from('user_profiles')
         .update({ email: user.email ?? null, is_admin: isAdmin, role: appRole })
         .eq('id', user.id);
     } else {
-      await supabase
+      await admin
         .from('user_profiles')
         .upsert(payload, { onConflict: 'id' });
     }

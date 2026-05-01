@@ -98,7 +98,7 @@ test.describe('Real user flow audit', () => {
         await page.waitForURL('**/admin/courses', { timeout: 20_000 }).catch(() => {});
       }
     }
-    let firstCourseRow = page.locator('table tr').nth(1);
+    const firstCourseRow = page.locator('table tr').nth(1);
     let catalogHasRow = true;
     try {
       await expect(page.getByRole('heading', { name: /Course catalog/i })).toBeVisible({ timeout: 20_000 });
@@ -190,13 +190,6 @@ test.describe('Real user flow audit', () => {
       recreated.on('pageerror', (err) => console.error('[learner:pageerror]', err.message));
       await loginAsLearner(recreated);
       await expect(recreated).toHaveURL(/\/(lms|client)\/dashboard/, { timeout: 20_000 });
-      // swap reference so downstream steps use the recreated page
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      // @ts-ignore
-      // reassign learnerPage variable in this scope
-      // NOTE: this is a local variable shadowing so we continue with recreated
-      // for subsequent calls below.
-      // eslint-disable-next-line no-var
       learnerPage = recreated;
     } else {
       await expect(learnerPage).toHaveURL(/\/(lms|client)\/dashboard/, { timeout: 20_000 });

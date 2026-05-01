@@ -1,6 +1,6 @@
 import express from 'express';
 import { assertAdminQueryColumns, logAdminQuery } from '../utils/adminSchemaGuard.js';
-import supabaseDefault, { getSupabaseAdminClient, getSupabaseAuthClient } from '../lib/supabaseClient.js';
+import { getSupabaseAdminClient, getSupabaseAuthClient, getActiveSupabaseClient } from '../lib/supabaseClient.js';
 import { logger } from '../lib/logger.js';
 import { invalidateMembershipCache } from '../middleware/auth.js';
 import { getEffectiveUser } from '../utils/getEffectiveUser.js';
@@ -28,11 +28,12 @@ const createRuntimeSupabaseProxy = (getClient, label) =>
     },
   );
 
-// Prefer the request-scoped/default proxy (which will surface the user-scoped
-// client when available). Fall back to the admin client for scripts/ops that
-// explicitly require the service role.
-const getRuntimeSupabase = () => supabaseDefault || getSupabaseAdminClient() || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
-const getRuntimeSupabaseAdmin = () => getSupabaseAdminClient() || supabaseDefault || getRuntimeSupabase();
+// Prefer the request-scoped client (which will surface the user-scoped
+// client when available). Do NOT fall back to any legacy/global default
+// clients here — require the explicit admin/request clients so callers do
+// not silently run with elevated privileges.
+const getRuntimeSupabase = () => getActiveSupabaseClient() || null;
+const getRuntimeSupabaseAdmin = () => getSupabaseAdminClient() || null;
 const runtimeSupabase = createRuntimeSupabaseProxy(getRuntimeSupabase, 'Supabase');
 const runtimeSupabaseAdmin = createRuntimeSupabaseProxy(getRuntimeSupabaseAdmin, 'Supabase admin client');
 const runtimeSupabaseAuthClient = createRuntimeSupabaseProxy(getSupabaseAuthClient, 'Supabase auth client');

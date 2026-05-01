@@ -316,7 +316,7 @@ export default async function authorizedFetch(
       // Diagnostic: surface whether we found a usable auth token for this request
       try {
           // keep this log lightweight and safe for CI/dev
-          // eslint-disable-next-line no-console
+           
           if (import.meta.env?.DEV) {
             console.log('AUTH TOKEN', token ? 'present' : 'missing');
           }
@@ -344,12 +344,10 @@ export default async function authorizedFetch(
     // Prefer explicit global override check so we never attach org headers
     // when the platform-wide sentinel is configured.
     const globalOverride = getGlobalActiveOrgIdForApi();
-    if (globalOverride === GLOBAL_ORG_ID) {
-      // Explicit global scope — do not attach org headers.
-      var orgId: string | null = null;
-    } else {
-      var orgId: string | null = resolveOrgHeaderForRequest(url);
-    }
+    const orgId: string | null =
+      globalOverride === GLOBAL_ORG_ID
+        ? null
+        : resolveOrgHeaderForRequest(url);
 
     const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
     const bodyIsString = typeof init.body === 'string';
