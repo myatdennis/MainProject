@@ -54,7 +54,9 @@ const getEffectiveApiBase = (): string => {
     if (typeof base === 'string' && base.includes('supabase.co/functions/v1')) {
       try {
         console.warn('[apiBase] Ignoring Supabase functions URL as API base override and falling back to canonical API base');
-      } catch {}
+      } catch {
+        // Best-effort diagnostic only.
+      }
       return CANONICAL_API_BASE.trim();
     }
   } catch {
@@ -101,7 +103,9 @@ export function buildApiUrl(path: string): string {
       // by taking the trailing segment after /functions/v1.
       try {
         console.warn('[apiBase] Blocking Supabase functions URL, falling back to API_BASE');
-      } catch {}
+      } catch {
+        // Best-effort diagnostic only.
+      }
       const cleanPath = path.split('/functions/v1')[1] || '';
       // Recursively build using the extracted path (e.g. '/auth/login')
       return buildApiUrl(cleanPath);
@@ -126,7 +130,9 @@ export function buildApiUrl(path: string): string {
   if (cleaned.includes('supabase.co/functions/v1')) {
     try {
       console.warn('[apiBase] Rewriting Supabase functions URL to canonical API path');
-    } catch {}
+    } catch {
+      // Best-effort diagnostic only.
+    }
     const after = cleaned.split('/functions/v1')[1] || '';
     // Rebuild using the canonical base and normalized path
     const rebuilt = `${base}${normalizePath(after)}`;
@@ -155,4 +161,3 @@ export function resolveWsUrl(path = '/ws'): string {
     return `${toWsOrigin(getApiOrigin())}${path}`;
   }
 }
-

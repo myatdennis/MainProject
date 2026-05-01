@@ -65,9 +65,11 @@ const baseCors = cors({
   exposedHeaders: ['Set-Cookie'],
 });
 
+export const corsMiddleware = baseCors;
+
 export function installCors(app) {
-  app.use(baseCors);
-  app.options('*', baseCors);
+  app.use(corsMiddleware);
+  app.options('*', corsMiddleware);
   console.log('[CORS] Active origins:', allowedOrigins);
 }
 

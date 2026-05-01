@@ -1,5 +1,4 @@
-// DELETED: TypeScript route moved to `server/routes/textContent.js` runtime.
-// Minimal TypeScript placeholder that provides a default export so code importing
-// this module can still compile. Runtime will import the JS version.
+// MOVED: This TypeScript source has been archived to server/ts-archive/routes/textContent.ts
+// Minimal TypeScript placeholder kept in /server to avoid compilation problems while the runtime uses textContent.js.
 const router: any = null;
 export default router;

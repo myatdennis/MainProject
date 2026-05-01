@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import supabase from '../lib/supabaseClient.js';
+import { getSupabaseAdminClient } from '../lib/supabaseClient.js';
 import { generateTOTPSecret, getTOTPToken, verifyTOTPToken, sendMfaEmail } from '../utils/mfa.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 
@@ -36,7 +36,9 @@ const mfaRateLimiter = rateLimit({
 const normalizeEmail = (value = '') => String(value).trim().toLowerCase();
 
 const loadUserProfileByEmail = async (email) => {
-	const { data, error } = await supabase
+	const admin = getSupabaseAdminClient();
+	if (!admin) throw new Error('Supabase admin client not configured');
+	const { data, error } = await admin
 		.from('user_profiles')
 		.select('id, email, mfa_secret')
 		.eq('email', normalizeEmail(email))
@@ -60,7 +62,6 @@ router.post('/challenge', mfaRateLimiter, async (req, res, next) => {
 	}
 
 	try {
-		if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase client not initialized'));
 		const user = await loadUserProfileByEmail(email);
 		if (!user?.id || !user?.email) {
 			return res.status(200).json(MFA_GENERIC_CHALLENGE_RESPONSE);
@@ -69,7 +70,9 @@ router.post('/challenge', mfaRateLimiter, async (req, res, next) => {
 		let secret = user.mfa_secret;
 		if (!secret) {
 			const newSecret = generateTOTPSecret();
-			const { error: updateError } = await supabase
+			const admin = getSupabaseAdminClient();
+			if (!admin) throw new Error('Supabase admin client not configured');
+			const { error: updateError } = await admin
 				.from('user_profiles')
 				.update({ mfa_secret: newSecret.base32 })
 				.eq('id', user.id);
@@ -100,7 +103,6 @@ router.post('/verify', mfaRateLimiter, async (req, res, next) => {
 	}
 
 	try {
-		if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase client not initialized'));
 		const user = await loadUserProfileByEmail(email);
 		if (!user?.mfa_secret) {
 			return res.status(401).json(MFA_GENERIC_VERIFY_FAILURE);

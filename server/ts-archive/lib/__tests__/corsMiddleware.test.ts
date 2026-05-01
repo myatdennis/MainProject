@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import corsMiddleware, { resolveCorsOriginDecision } from '../../middleware/cors.js';
+import { corsMiddleware, resolveCorsOriginDecision } from '../../middleware/cors.js';
 
 interface MockRequest {
   method: string;
@@ -12,6 +12,7 @@ interface MockRes {
   setHeader(key: string, value: string): void;
   getHeader(key: string): string | undefined;
   get(key: string): string | undefined;
+  end(): void;
 }
 
 const runMiddleware = (req: MockRequest): Promise<Map<string, string>> => {
@@ -30,6 +31,7 @@ const runMiddleware = (req: MockRequest): Promise<Map<string, string>> => {
     get(key: string): string | undefined {
       return headers.get(key);
     },
+    end(): void {},
   };
   return new Promise<Map<string, string>>((resolve, reject) => {
     corsMiddleware(req, res, (err: unknown) => {

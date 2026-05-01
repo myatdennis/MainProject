@@ -122,13 +122,13 @@ const waitForCourseInClientCatalog = async (request: any, courseId: string) => {
     const found = Array.isArray(json?.data) && json.data.some((c: any) => c?.id === courseId || c?.slug === courseId || String(c?.id) === String(courseId) || String(c?.slug) === String(courseId));
 
     if (found) {
-      // eslint-disable-next-line no-console
+       
       console.log('[E2E] course visible in client catalog:', courseId);
       return;
     }
 
     // wait 250ms before retrying
-    // eslint-disable-next-line no-await-in-loop
+     
     await new Promise((r) => setTimeout(r, 250));
   }
 
@@ -145,7 +145,7 @@ const deleteCourse = async (_request: any, courseId: string | null) => {
     await apiCtx.dispose();
   } catch (e) {
     // Best-effort cleanup; don't fail tests during teardown.
-    // eslint-disable-next-line no-console
+     
     console.warn('cleanup deleteCourse failed', e);
   }
 };
@@ -178,7 +178,7 @@ const loginAsLearner = async (page: Page) => {
     (window as any).__E2E_ACTIVE_ORG_ID = injected.orgId;
 
     const originalFetch = window.fetch.bind(window);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (window as any).fetch = async (input: RequestInfo, init?: RequestInit) => {
       try {
         const urlString = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
@@ -224,11 +224,11 @@ const waitForAssignedCourseCard = async (page: Page, courseTitle: string) => {
   try {
     const debugApiCtx = await createE2ERequestContext({ baseURL: apiBase });
     const sessRes = await debugApiCtx.get('/api/auth/session');
-    // eslint-disable-next-line no-console
+     
     console.log('[E2E SESSION]', sessRes.status(), await sessRes.text());
     try {
       const coursesRes = await debugApiCtx.get('/api/client/courses');
-      // eslint-disable-next-line no-console
+       
       console.log('[E2E COURSES]', coursesRes.status(), await coursesRes.text());
     } catch (e) {
       // ignore
@@ -239,13 +239,13 @@ const waitForAssignedCourseCard = async (page: Page, courseTitle: string) => {
   }
   // Debug: snapshot E2E events recorded in the page for diagnostics
   try {
-    // eslint-disable-next-line no-console
+     
     console.log('E2E_EVENTS_SNAPSHOT', await page.evaluate(() => JSON.stringify((window as any).__HUDDLE_E2E_EVENTS || [])));
   } catch (err) {
     // ignore
   }
   try {
-    // eslint-disable-next-line no-console
+     
     console.log('PAGE_CONTENT_SNIPPET', (await page.content()).slice(0, 4000));
   } catch (err) {
     // ignore
@@ -311,7 +311,7 @@ test.describe('Learner progress persistence regression (isolated)', () => {
     });
     // Also mirror all browser console output to the test runner for diagnostics
     page.on('console', (msg) => {
-      // eslint-disable-next-line no-console
+       
       console.log(`[browser:${msg.type()}] ${msg.text()}`);
     });
 
@@ -331,7 +331,7 @@ test.describe('Learner progress persistence regression (isolated)', () => {
 
   // Now assign the course to the org/user once it's visible to learners.
   // Add a debug log so CI artifacts show the exact id being assigned.
-  // eslint-disable-next-line no-console
+   
   console.log('[E2E] assigning courseId:', created.id);
   await assignCourse(request, created.id);
 
@@ -340,7 +340,7 @@ test.describe('Learner progress persistence regression (isolated)', () => {
         await apiHelpers.provisionUser({ email: LEARNER_EMAIL, organizationId: TEST_ORG_ID, membershipRole: 'member' });
       } catch (e) {
         // Best-effort — provisioning may already exist
-        // eslint-disable-next-line no-console
+         
         console.warn('provisionUser failed', e);
       }
 

@@ -1,11 +1,6 @@
 import cookieParser from 'cookie-parser';
-import { createClient } from '@supabase/supabase-js';
 import { finalizeUser } from '../lib/finalizeUser.js';
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+import { supabaseAuthClient, createSupabaseClientForToken, setRequestSupabaseClient } from '../lib/supabaseClient.js';
 
 export async function authenticate(req, res, next) {
   try {
@@ -26,7 +21,28 @@ export async function authenticate(req, res, next) {
       return next(); // DO NOT set req.user = null
     }
 
-    const { data, error } = await supabase.auth.getUser(token);
+    // Prefer the centralized auth client. It may be unavailable in some test modes.
+    const authClient = supabaseAuthClient || null;
+    let data = null;
+    let error = null;
+    if (authClient && typeof authClient.auth?.getUser === 'function') {
+      const result = await authClient.auth.getUser(token);
+      data = result?.data || null;
+      error = result?.error || null;
+    } else {
+      // Fallback: if centralized auth client is not configured, attempt to
+      // create a per-request client for token introspection.
+      try {
+        const probe = createSupabaseClientForToken(token);
+        if (probe && typeof probe.auth?.getUser === 'function') {
+          const result = await probe.auth.getUser(token);
+          data = result?.data || null;
+          error = result?.error || null;
+        }
+      } catch (e) {
+        error = e;
+      }
+    }
 
     if (error || !data?.user) {
       if (process.env.NODE_ENV !== 'production') {
@@ -36,6 +52,16 @@ export async function authenticate(req, res, next) {
     }
 
     const user = data.user;
+
+    // Bind a per-request supabase client (with Authorization header) so
+    // downstream handlers use the user's JWT for RLS-bound reads.
+    try {
+      const perReqClient = createSupabaseClientForToken(token);
+      if (perReqClient) setRequestSupabaseClient(perReqClient);
+    } catch (e) {
+      // non-fatal; continue without binding
+      console.warn('[AUTH] failed to bind per-request supabase client', e?.message || e);
+    }
 
     req.user = finalizeUser({
       id: user.id,

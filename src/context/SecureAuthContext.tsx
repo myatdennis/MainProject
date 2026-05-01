@@ -106,7 +106,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (!E2E_ENABLED) return;
       // Use console.log so Playwright captures it under [browser:log]
       // include timestamp and minimal context
-      // eslint-disable-next-line no-console
+       
       if (E2E_ENABLED && import.meta.env.DEV) {
         console.log(`[E2E][AUTH] ${tag}`, payload ?? {});
       }
@@ -188,7 +188,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       lastAdminAllowedRef.current = false;
       try {
         if (typeof window !== 'undefined') (window as any).AUTH_READY = false;
-      } catch (e) {}
+      } catch {
+        // Best-effort E2E readiness signal only.
+      }
     }
     // No return value (no cleanup needed)
   }, [user, activeOrgId, membershipStatus]);
@@ -518,7 +520,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setMemberships(resolvedMemberships);
       // Debug: surface auth readiness and session presence when session applied
       try {
-        // eslint-disable-next-line no-console
+         
         if (import.meta.env.DEV) {
           console.log('AUTH STATE', { authReady: authReadyRef.current, hasSession: !!session });
         }
@@ -582,7 +584,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   setAuthState({ user: session, isAdmin });
 
   // Debug visibility: make role resolution explicit in console during login/session restoration
-  // eslint-disable-next-line no-console
+   
   if (import.meta.env.DEV) {
     console.log('ROLE CHECK:', { platformRole, role, isAdmin });
   }
@@ -647,7 +649,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             // Helpful debug trace when running locally so developers can see
             // that the in-memory canonical session snapshot was populated.
             // This log is intentionally verbose and only enabled in dev.
-            // eslint-disable-next-line no-console
+             
             console.debug('[AUTH DEBUG] canonical session set', {
               userId: session.id ?? null,
               accessTokenPresent: Boolean(payload.accessToken ?? getAccessToken()),
@@ -1486,7 +1488,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                           const session = res?.data?.session ?? null;
                           sessionExists = Boolean(session);
                           // Debug log for presence
-                          // eslint-disable-next-line no-console
+                           
                           if (import.meta.env.DEV) {
                             console.log('AUTH STATE (bootstrap timeout check)', { authReady: authReadyRef.current, hasSession: !!session });
                           }
@@ -2110,7 +2112,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   // Global debug visibility for org/auth readiness
   try {
-    // eslint-disable-next-line no-console
+     
   // Intentionally silent in production-hardening pass
   } catch (e) {
     // swallow
