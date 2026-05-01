@@ -1,4 +1,4 @@
-import supabase from '../lib/supabaseClient.js';
+import { getSupabaseAdminClient } from '../lib/supabaseClient.js';
 import sql, { getDatabaseConnectionInfo } from '../db.js';
 
 const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
@@ -270,14 +270,15 @@ export const buildMembershipFilterString = async (userId) => {
 };
 
 const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
-  if (!supabase || !userId) {
-    return { rows: [], error: new Error('supabase_unavailable') };
+  const admin = getSupabaseAdminClient();
+  if (!admin || !userId) {
+    return { rows: [], error: new Error('supabase_admin_unavailable') };
   }
   try {
     const selectClause = await getMembershipSelectColumns();
     const filter = await buildMembershipFilterString(userId);
     const activityFilter = 'status.eq.active,is_active.eq.true,accepted_at.not.is.null';
-    let query = supabase.from('organization_memberships').select(selectClause);
+    let query = admin.from('organization_memberships').select(selectClause);
     query = query.or(activityFilter);
 
     if (filter) {
@@ -305,7 +306,7 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
     let orgMap = new Map();
     if (orgIds.length > 0) {
       const selectClause = await getOrganizationSelectClause();
-      const { data: organizations, error: orgError } = await supabase
+      const { data: organizations, error: orgError } = await admin
         .from('organizations')
         .select(selectClause)
         .in('id', orgIds);
@@ -336,7 +337,7 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
       });
     });
 
-    return { rows: filteredRows, error: null };
+  return { rows: filteredRows, error: null };
   } catch (error) {
     console.warn(`${logPrefix} membership_base_fallback_failed`, {
       userId,
@@ -373,8 +374,9 @@ const resolveUserIdFromEmail = async (userId) => {
 };
 
 export const getUserMemberships = async (userId, { logPrefix = '[memberships]' } = {}) => {
-  if (!supabase || !userId) {
-    return attachDiagnostics([], buildDiagnostics({ code: 'membership_query_error', severity: 'error', message: 'Supabase client unavailable' }));
+  const admin = getSupabaseAdminClient();
+  if (!admin || !userId) {
+    return attachDiagnostics([], buildDiagnostics({ code: 'membership_query_error', severity: 'error', message: 'Supabase admin client unavailable' }));
   }
 
   const normalizedUserId = await resolveUserIdFromEmail(userId);
@@ -397,7 +399,7 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
       columns: VIEW_COLUMNS,
       userId: normalizedUserId,
     });
-    const { data, error } = await supabase.from(MEMBERSHIP_VIEW_NAME).select(VIEW_COLUMNS).eq('user_id', normalizedUserId);
+    const { data, error } = await admin.from(MEMBERSHIP_VIEW_NAME).select(VIEW_COLUMNS).eq('user_id', normalizedUserId);
 
     if (error) {
       if (isViewMissingError(error)) {
@@ -457,7 +459,7 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
     const normalizedRows = data.map((row) => mapMembershipRecord(row));
     const filtered = filterActiveMemberships(normalizedRows);
     if (filtered.length === 0) {
-      const fallbackResult = await fetchMembershipsFromBaseTables(userId, logPrefix);
+  const fallbackResult = await fetchMembershipsFromBaseTables(userId, logPrefix);
       const diag = fallbackResult.error
         ? buildDiagnostics({
             code: 'membership_query_error',

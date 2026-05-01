@@ -547,9 +547,7 @@ const applyAdminOrgContextToUrl = (url: string, pathname: string): string => {
     return url;
   }
   const session = getActiveSession();
-  if (session?.isPlatformAdmin) {
-    return url;
-  }
+  const isPlatformAdmin = Boolean(session?.isPlatformAdmin === true || session?.role === 'platform_admin');
   const activeOrgId = getGlobalActiveOrgIdForApi() ?? session?.activeOrgId ?? session?.organizationId ?? null;
   if (activeOrgId === GLOBAL_ORG_ID) {
     return url;
@@ -560,7 +558,13 @@ const applyAdminOrgContextToUrl = (url: string, pathname: string): string => {
     console.debug('[apiClient] admin_request_missing_org_context', { path: pathname });
     return url;
   }
-  return appendOrgIdQueryParam(url, activeOrgId);
+  if (!isPlatformAdmin && activeOrgId) {
+    return appendOrgIdQueryParam(url, activeOrgId);
+  }
+  if (isPlatformAdmin) {
+    console.debug('[apiClient] platform_admin_bypass_org_param', { path: pathname });
+  }
+  return url;
 };
 
 const prepareRequest = async (path: string, options: InternalRequestOptions = {}): Promise<PreparedRequest> => {
@@ -593,13 +597,20 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   // Developer-visible failure in DEV to catch regressions early.
   try {
     const activeOrg = getGlobalActiveOrgIdForApi();
-    if (pathRequiresOrgHeader(pathname || '') && !activeOrg) {
-      // Log critical error and surface failure during development.
-      console.error('BLOCKED REQUEST: Missing orgId', { path, url });
+  const user = (options as any)?.user || (window as any).__CURRENT_USER__ || null;
+    const isPlatformAdmin =
+      user?.role === 'platform_admin' ||
+      user?.isPlatformAdmin === true;
+
+    if (pathRequiresOrgHeader(pathname || '') && !activeOrg && !isPlatformAdmin) {
+      console.error('[API BLOCK] Missing orgId for non-platform user', { path, url, userId: user?.id || null });
       if (import.meta.env?.DEV) {
-        throw new Error('Attempted API call without orgId');
+        throw new Error('Missing orgId');
       }
-      // In production, simply return the computed URL; server will enforce scoping.
+    }
+
+    if (isPlatformAdmin) {
+      console.log('[API] Platform admin request — bypassing orgId requirement', { path });
     }
   } catch (e) {
     // swallow to avoid breaking non-dev flows

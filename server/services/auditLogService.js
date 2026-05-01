@@ -8,7 +8,7 @@ export const createAuditLogService = ({
 } = {}) => ({
   record: async ({ req, res }) => {
     const { action, details = {}, timestamp, userId, user_id, orgId, org_id } = req.body || {};
-    const sessionUser = req.user || req.supabaseJwtUser || null;
+  const sessionUser = req.user || null;
     if (!sessionUser) {
       logger.info('audit_log_missing_authenticated_user', {
         requestId: req.requestId ?? null,

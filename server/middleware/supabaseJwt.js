@@ -331,13 +331,24 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     const roleHeader = String(req.headers?.['x-user-role'] || '').trim().toLowerCase();
     const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
     if (!isProd && (rawBypass.length > 0 || roleHeader.length > 0)) {
-      req.user = req.user || {};
-      req.user.id = req.user.id || '00000000-0000-0000-0000-000000000001';
-      req.user.email = req.user.email || 'mya+e2e@the-huddle.co';
-      req.user.role = req.user.role || 'admin';
-      req.user.platformRole = req.user.platformRole || (roleHeader === 'platform_admin' ? 'platform_admin' : 'platform_admin');
-      req.user.isPlatformAdmin = true;
+      // Synthesize an E2E/demo user but do NOT mutate `req.user` here. Only
+      // the canonical authenticate middleware or the global E2E bypass should
+      // set `req.user`. Populate legacy-compatible shapes instead so other
+  // middleware can read validated JWT token payloads attached to the
+  // request by upstream validation logic. Do NOT write legacy shapes.
+      const demoUser = {
+        id: '00000000-0000-0000-0000-000000000001',
+        userId: '00000000-0000-0000-0000-000000000001',
+        email: 'mya+e2e@the-huddle.co',
+        role: 'admin',
+        platformRole: roleHeader === 'platform_admin' ? 'platform_admin' : 'platform_admin',
+        isPlatformAdmin: true,
+      };
       req.e2eSynthesized = true;
+      req.e2eSynthesizedUser = req.e2eSynthesizedUser || demoUser;
+      // Do NOT write legacy shapes. E2E bypass should set canonical req.user
+      // via the global e2eBypass middleware or authenticate. Mark as bypassed.
+      req.authBypassed = true;
       jwtLog('info', 'e2e_bypass_synthesized', { path: req.path || null, xE2EBypass: rawBypass, roleHeader });
       return next();
     }
@@ -384,23 +395,31 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     // synthesize a safe E2E session if needed.
     try {
       req.authBypassed = true;
-      // Do not overwrite an existing req.user (e.g., set by global E2E bypass)
-      if (!req.user) {
-        req.user = { id: '00000000-0000-0000-0000-000000000001', role: 'admin' };
-      }
+      // Synthesize a minimal admin user for tokenless E2E bypass, but do not
+      // create `req.user` here. Populate legacy shapes and a synthesized user
+      // container for downstream checks.
+      const synth = {
+        id: '00000000-0000-0000-0000-000000000001',
+        userId: '00000000-0000-0000-0000-000000000001',
+        role: 'admin',
+      };
+  req.e2eSynthesized = true;
+  req.e2eSynthesizedUser = req.e2eSynthesizedUser || synth;
+  // Mark as bypassed; do NOT write legacy shapes here.
+  req.authBypassed = true;
 
-      // If the test harness indicates platform_admin via header, mark it here so
-      // downstream requireAdmin checks will recognize the synthetic admin.
+      // If the test harness indicates platform_admin via header, mark it here
+      // so downstream allowlist/require-admin checks looking at claims can
+      // recognize the synthetic admin. Do not mutate req.user.
       const roleHeader = String(req?.headers?.['x-user-role'] || '').trim().toLowerCase();
       const bypassHeader = String(req?.headers?.['x-e2e-bypass'] || '').trim();
       if (roleHeader === 'platform_admin' || bypassHeader === '1') {
-        req.user.platformRole = 'platform_admin';
-        req.user.isPlatformAdmin = true;
-        // make role consistent as well
-        req.user.role = req.user.role || 'admin';
+        req.e2eSynthesizedUser.platformRole = 'platform_admin';
+        req.e2eSynthesizedUser.isPlatformAdmin = true;
+        req.e2eSynthesizedUser.role = req.e2eSynthesizedUser.role || 'admin';
       }
 
-      req.userId = req.userId || req.user?.userId || req.user?.id || null;
+      req.userId = req.userId || req.e2eSynthesizedUser?.userId || req.e2eSynthesizedUser?.id || null;
     } catch (e) {
       // ignore
     }
@@ -418,15 +437,10 @@ export default async function supabaseJwtMiddleware(req, res, next) {
 
   try {
     const claims = await verifySupabaseToken(token);
-    req.supabaseJwtClaims = claims;
-    const supabaseUser = mapClaimsToUser(claims);
-    syncUserProfileFlags(supabaseUser);
-    req.supabaseJwtUser = supabaseUser;
-    req.supabaseJwtToken = token;
-    // Respect any existing req.user (e.g., from global E2E bypass).
-    if (!req.user) {
-      req.user = supabaseUser;
-    }
+  // Do not write legacy shapes. Let authenticate() copy validated context into req.user.
+  const supabaseUser = mapClaimsToUser(claims);
+  syncUserProfileFlags(supabaseUser);
+  req.supabaseJwtToken = token;
       // Emit a lightweight, non-production debug log of parsed claims for diagnostics.
       try {
         if (!isProduction) {
@@ -453,12 +467,12 @@ export default async function supabaseJwtMiddleware(req, res, next) {
         const supabaseClaims = mapLocalClaimsToSupabaseClaims(localClaims);
         const supabaseUser = mapClaimsToUser(supabaseClaims);
         syncUserProfileFlags(supabaseUser);
-        req.supabaseJwtUser = supabaseUser;
+        // Expose validated user for authenticate() to consume; do not write legacy shapes.
+        req.authValidatedUser = supabaseUser;
         req.supabaseJwtToken = token;
         // Do not overwrite an existing req.user set by upstream middleware
-        if (!req.user) {
-          req.user = supabaseUser;
-        }
+        // Do NOT assign to req.user here; leave canonical population to the
+        // authenticate middleware or explicit global E2E bypass.
         return next();
       }
     }

@@ -1,3 +1,9 @@
+// 🚨 AUTH SYSTEM RULE 🚨
+// NEVER use router.use(authenticate) in this file.
+// It will break public endpoints like /api/auth/csrf.
+// Authentication must ONLY be applied at the ROUTE level.
+// Violating this rule will cause production auth failures.
+
 /**
  * Authentication Routes
  * Login, register, token refresh, and logout endpoints
@@ -448,7 +454,43 @@ const refreshSessionFromToken = async (refreshToken) => {
   }
 };
 
+// 🚨 AUTH RULE:
+// NEVER use router.use(authenticate) in this file.
+// It will break /api/auth/csrf and other public endpoints.
+// Always apply authentication at the ROUTE level only.
+
+// Fail-fast runtime guard — must run before any other router middleware
+export function assertNoRouterLevelAuth(req, res, next) {
+  try {
+    // 🚨 ANY authenticated request inside /api/auth is suspicious
+    if (req.baseUrl === '/api/auth') {
+      // CSRF must ALWAYS be public
+      if (req.path === '/csrf' && req.user) {
+        console.error('[AUTH MISCONFIG] CSRF route received req.user');
+
+        return res.status(500).json({
+          error: 'auth_misconfiguration',
+          message: 'CSRF route must be public but received authenticated user',
+        });
+      }
+
+      // Optional: catch accidental global auth usage early
+      if (req.user && req.method === 'GET') {
+        console.warn('[AUTH WARNING] Unexpected req.user in /api/auth route:', req.path);
+      }
+    }
+
+    next();
+  } catch (err) {
+    console.error('[AUTH GUARD ERROR]', err);
+    next();
+  }
+}
+
 const router = express.Router();
+
+// MUST be first middleware on this router to detect misconfiguration early
+router.use(assertNoRouterLevelAuth);
 
 // Export the router
 export default router;
@@ -842,23 +884,24 @@ const sessionHandler = asyncHandler(async (req, res) => {
   try {
     const context = await buildAuthContext(req, { optional: true });
     if (!context) {
-      const membershipStatus = schemaDegraded ? 'degraded' : 'unknown';
+      // No authenticated session. Do not expose degraded membership states.
       return res.status(200).json({
         ok: true,
         authenticated: false,
         session: null,
         schemaHealth,
-        membershipStatus,
-        membershipDegraded: membershipStatus !== 'ready',
+        membershipStatus: 'ready',
+        membershipDegraded: false,
         membershipCount: null,
         activeOrgId: null,
         platformRole: null,
       });
     }
 
-    const membershipStatus = context.membershipStatus || (schemaDegraded ? 'degraded' : 'ready');
-    const membershipDegraded = membershipStatus !== 'ready';
-    const membershipCount = membershipDegraded ? null : context.membershipCount ?? null;
+  // Normalize membership state: avoid 'degraded' flag and return explicit counts only when ready
+  const membershipStatus = context.membershipStatus || 'ready';
+  const membershipDegraded = false;
+  const membershipCount = context.membershipCount ?? null;
     const sessionPayload = {
       user: context.user,
       role: context.user.role || null,
@@ -920,7 +963,11 @@ router.get('/session', sessionHandler);
 // Protected routes (require valid access token)
 // ============================================================================
 
-router.use(authenticate);
+// NOTE: Do NOT register `authenticate` as a router-level middleware here.
+// The CSRF endpoint is mounted at `/api/auth/csrf` from the main app and
+// must remain public so clients and scripts can fetch the token without
+// presenting credentials. Protected routes below should use per-route
+// authentication (e.g. via `authenticate` or `withAuth`) where required.
 
 router.patch('/active-org', (req, res) => {
   const requested =

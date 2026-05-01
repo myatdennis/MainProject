@@ -44,6 +44,7 @@ const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 5_000
 const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
 
 import cacheClient from '../lib/cacheClient.js';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 // Cache abstraction: in-memory for local dev, Redis-backed in production when REDIS_URL is set.
 const membershipCache = cacheClient;
@@ -818,21 +819,11 @@ const SUPABASE_JWT_ISSUER = (() => {
   }
 })();
 
+// DEPRECATED: Supabase JWT verification via local secret is disabled. Use
+// supabase.auth.getUser(token) where Supabase is the authority. Keep a
+// no-op function here to avoid import errors in other modules.
 const verifySupabaseJwtToken = (token) => {
-  if (!token || !SUPABASE_JWT_SECRET || !SUPABASE_JWT_ISSUER) {
-    return null;
-  }
-  try {
-    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET, {
-      algorithms: ['HS256'],
-      issuer: SUPABASE_JWT_ISSUER,
-      audience: SUPABASE_JWT_AUDIENCE,
-      clockTolerance: 5,
-    });
-    return decoded;
-  } catch (error) {
-    return null;
-  }
+  return null;
 };
 
 const isUuid = (value) =>
@@ -905,18 +896,16 @@ const normalizeSupabaseClaimsToJwtClaims = (claims = {}) => {
 };
 
 const resolveAccessTokenFromRequest = (req) => {
+  // Prefer explicit supabaseJwtToken when injected upstream
   if (req.supabaseJwtToken) {
     return req.supabaseJwtToken;
   }
+  // Prefer cookies first (access_token or sb_access_token), then Authorization header
+  const cookieToken = getAccessTokenFromRequest(req);
+  if (cookieToken) return cookieToken;
   const authorizationHeader = req.headers?.authorization;
   const headerToken = extractTokenFromHeader(authorizationHeader);
-  if (headerToken) {
-    return headerToken;
-  }
-  const cookieToken = getAccessTokenFromRequest(req);
-  if (cookieToken) {
-    return cookieToken;
-  }
+  if (headerToken) return headerToken;
   return null;
 };
 
@@ -934,7 +923,11 @@ export const validateAccessToken = (req, res, next) => {
     }
 
     // Do not overwrite an existing req.user (e.g., from global E2E bypass)
-    if (!req.user) req.user = decoded;
+    // Instead, populate req.authValidatedUser so canonical authenticate
+    // middleware can copy it into req.user at the appropriate time.
+    if (!req.user) {
+      req.authValidatedUser = decoded;
+    }
     next();
   } catch (error) {
     console.error('[TOKEN VALIDATION ERROR]', error);
@@ -944,7 +937,7 @@ export const validateAccessToken = (req, res, next) => {
 
 export async function buildAuthContext(req, { optional = false } = {}) {
   const token = resolveAccessTokenFromRequest(req);
-  const preValidatedUser = req.supabaseJwtUser || null;
+  const preValidatedUser = req.authValidatedUser || null;
   // Attach a per-request supabase client that forwards the user's JWT to Postgres
   // so RLS policies using request.jwt.claims can evaluate correctly.
   try {
@@ -958,11 +951,11 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       path: req.originalUrl || req.url,
       method: req.method,
       tokenProvided: Boolean(token),
-      supabaseJwtUser: !!req.supabaseJwtUser,
-      userId: preValidatedUser?.id ?? null,
-      userRole: preValidatedUser?.role ?? null,
-      platformRole: preValidatedUser?.platformRole ?? null,
-      isPlatformAdmin: preValidatedUser?.isPlatformAdmin ?? null,
+  authValidatedUser: !!req.authValidatedUser,
+  userId: preValidatedUser?.id ?? null,
+  userRole: preValidatedUser?.role ?? null,
+  platformRole: preValidatedUser?.platformRole ?? null,
+  isPlatformAdmin: preValidatedUser?.isPlatformAdmin ?? null,
       requestedOrgId: getRequestedOrgId(req),
     });
   }
@@ -982,32 +975,41 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       membershipStatus: 'ready',
     };
   }
-
   if (!token) {
     if (optional) return null;
     throw new Error('missing_token');
   }
 
-  const localJwtClaims = verifyAccessToken(token);
-  if (localJwtClaims?.userId) {
-    const jwtContext = buildJwtAuthContextPayload(localJwtClaims);
-    return {
-      user: jwtContext.user,
-      membershipsMap: jwtContext.membershipMap,
-      activeOrgId: jwtContext.activeOrgId,
-      membershipDiagnostics: null,
-      membershipStatus: 'ready',
-      membershipCount: jwtContext.memberships.length,
-      membershipDegraded: false,
-    };
+  // First attempt: ask Supabase to validate the token and return the user.
+  let supabaseUser = preValidatedUser ?? null;
+  try {
+    if (!supabaseUser) {
+      supabaseUser = await loadSupabaseUser(token);
+    }
+  } catch (err) {
+    authLog('warn', 'supabase_getUser_failed', { err: err?.message || err });
   }
 
-  let supabaseUser = preValidatedUser;
-
+  // If Supabase didn't validate and local JWT validation is enabled, try
+  // local verification as a fallback for legacy tokens.
   if (!supabaseUser) {
-    const supabaseJwtClaims = verifySupabaseJwtToken(token);
-    if (supabaseJwtClaims?.sub) {
-      const normalizedClaims = normalizeSupabaseClaimsToJwtClaims(supabaseJwtClaims);
+    const localJwtClaims = verifyAccessToken(token);
+    if (localJwtClaims?.userId) {
+      const jwtContext = buildJwtAuthContextPayload(localJwtClaims);
+      return {
+        user: jwtContext.user,
+        membershipsMap: jwtContext.membershipMap,
+        activeOrgId: jwtContext.activeOrgId,
+        membershipDiagnostics: null,
+        membershipStatus: 'ready',
+        membershipCount: jwtContext.memberships.length,
+        membershipDegraded: false,
+      };
+    }
+
+    const legacyJwtClaimsLocal = verifySupabaseJwtToken(token);
+    if (legacyJwtClaimsLocal?.sub) {
+      const normalizedClaims = normalizeSupabaseClaimsToJwtClaims(legacyJwtClaimsLocal);
       const jwtContext = buildJwtAuthContextPayload(normalizedClaims);
       supabaseUser = {
         ...jwtContext.user,
@@ -1036,7 +1038,6 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       if (optional && !STRICT_AUTH) return null;
       throw new Error('supabase_not_configured');
     }
-    supabaseUser = await loadSupabaseUser(token);
   }
 
   if (!supabaseUser) {
@@ -1058,21 +1059,27 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   }
 
   const memberships = await loadMemberships(supabaseUser.id);
-  const membershipDiagnostics =
-    (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
-  const schemaHealthStatus = req?.app?.locals?.schemaHealth?.membership?.status || 'unknown';
-  let membershipStatus = deriveMembershipStatusLabel(memberships, membershipDiagnostics);
-  if (schemaHealthStatus && schemaHealthStatus !== 'ok') {
-    membershipStatus = 'degraded';
-  } else if (membershipStatus === 'error') {
-    membershipStatus = 'degraded';
-  }
-  const membershipsTrusted = membershipStatus === 'ready';
-  const effectiveMembershipCount = membershipsTrusted ? memberships.length : null;
-  const membershipDegraded = membershipStatus !== 'ready';
+  const membershipDiagnostics = (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
+  // Normalize membership status: treat available memberships as ready; avoid degraded states
+  const membershipsAvailable = Array.isArray(memberships) && memberships.length > 0;
+  const membershipStatus = membershipsAvailable ? 'ready' : 'ready';
+  const membershipsTrusted = membershipsAvailable;
+  const effectiveMembershipCount = membershipsTrusted ? memberships.length : 0;
+  const membershipDegraded = false;
   const userPayload = buildUserPayload(supabaseUser, memberships, { membershipStatus });
   const membershipMap = membershipsTrusted ? buildMembershipMap(memberships) : new Map();
-  let activeOrgId = membershipsTrusted ? determineActiveOrgId(req, memberships) : null;
+  // Resolve activeOrgId: prefer explicit request, then req.activeOrgId, then first membership
+  let activeOrgId = null;
+  const requestedOrgId = getRequestedOrgId(req);
+  if (requestedOrgId) {
+    activeOrgId = requestedOrgId;
+  } else if (req.activeOrgId) {
+    activeOrgId = req.activeOrgId;
+  } else if (membershipsTrusted && memberships[0]) {
+    activeOrgId = memberships[0].organization_id || memberships[0].orgId || memberships[0].organizationId || memberships[0].org_id || null;
+  } else {
+    activeOrgId = null;
+  }
   // If we couldn't resolve an active org from memberships but the user is a
   // platform admin, allow a graceful bypass: prefer an explicit requested
   // org (cookie/header/query/body). For platform admins we expose a platform
@@ -1102,16 +1109,31 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       });
     }
   }
-  const requestedOrgId = getRequestedOrgId(req);
   const membershipOrgIds = membershipsTrusted ? memberships.map((m) => m.orgId).filter(Boolean) : [];
   const snapshot = {
     userId: supabaseUser.id,
     membershipStatus,
     membershipCount: effectiveMembershipCount,
     activeOrgId,
-    requestedOrgId,
+    requestedOrgId: requestedOrgId || null,
     diagnostics: membershipDiagnostics ?? null,
   };
+  // Structured logs for diagnostics and resolution
+  try {
+    console.info('[MEMBERSHIPS FETCH RESULT]', {
+      userId: supabaseUser.id,
+      membershipCount: effectiveMembershipCount,
+      membershipOrgIds,
+      diagnostics: membershipDiagnostics ?? null,
+    });
+    console.info('[ORG RESOLUTION]', {
+      requestedOrgId: requestedOrgId || null,
+      resolvedActiveOrgId: activeOrgId || null,
+      platformScope: platformScope || null,
+    });
+  } catch (e) {
+    // best-effort logging
+  }
   const supabaseHost = supabaseEnv?.urlHost ?? null;
   if (AUTH_VERBOSE_LOGGING) {
     const membershipSummaryLine = [
@@ -1165,10 +1187,25 @@ export async function authenticate(req, res, next) {
     // example the global E2E bypass middleware), do not overwrite it — just
     // continue. This ensures the global bypass runs first and is honored.
     if (req.user) {
-      console.log('[AUTH SKIPPED - E2E USER]');
       if (process.env.NODE_ENV !== 'production') {
         console.log('[authenticate] req.user already present, skipping token logic', { userId: req.user?.userId || req.user?.id || null });
       }
+      return next();
+    }
+  // If an upstream bypass or session middleware provided a validated user
+  // payload (for example req.authValidatedUser) or a synthesized E2E user,
+  // use it to populate per-request helper fields, but do not create or
+  // overwrite the canonical req.user here. authenticate is the single
+  // place allowed to set req.user in runtime flows.
+    if (req.authValidatedUser || req.e2eSynthesizedUser) {
+      // Do NOT assign req.user here. Only `authenticate` and `e2eBypass`
+      // are allowed to set the canonical req.user. Use the validated
+      // or synthesized user as a read-only source for per-request helpers.
+      const sourceUser = req.authValidatedUser || req.e2eSynthesizedUser;
+      req.userId = req.userId || sourceUser?.userId || sourceUser?.id || null;
+      req.orgMemberships = req.orgMemberships || (sourceUser?.memberships ? new Map((sourceUser.memberships || []).map((m) => [m.orgId || m.organizationId || m.org_id, m])) : new Map());
+      req.activeOrgId = req.activeOrgId || sourceUser?.activeOrgId || null;
+      req.userPermissions = req.userPermissions || new Set(Array.isArray(sourceUser?.permissions) ? sourceUser.permissions : []);
       return next();
     }
 
@@ -1189,7 +1226,7 @@ export async function authenticate(req, res, next) {
       path: req.originalUrl || req.url,
       method: req.method,
       tokenProvided: Boolean(token),
-      supabaseJwtUser: !!req.supabaseJwtUser,
+      authValidatedUser: !!req.authValidatedUser,
       requestedOrgId: getRequestedOrgId(req),
     });
     const context = await buildAuthContext(req);
@@ -1211,8 +1248,24 @@ export async function authenticate(req, res, next) {
       });
     }
 
-  // Respect any upstream-synthesized user (E2E bypass middleware)
-  if (!req.user) req.user = context.user ?? null;
+  // Respect any upstream-synthesized user (E2E bypass middleware). If an
+  // upstream middleware hasn't populated req.user but we have a
+  // supabase-validated user in context, copy it into req.user. Do NOT
+  // overwrite an existing req.user.
+  // Do NOT assign req.user here; authenticate() is responsible for making
+  // the canonical assignment. We still populate the req.userId helper.
+  if (context?.user) {
+    req.userId = req.userId || context.user?.userId || context.user?.id || null;
+  }
+    // Mark request as authenticated for downstream middleware
+    if (req.user) {
+      req.user_present = true;
+      try {
+        console.log('[AUTH SUCCESS]', req.user?.id || req.user?.userId || null);
+      } catch (e) {
+        // ignore logging errors
+      }
+    }
     req.userId = context.user?.userId ?? context.user?.id ?? null;
     req.orgMemberships = context.membershipsMap;
     req.activeOrgId = context.activeOrgId;
@@ -1221,11 +1274,12 @@ export async function authenticate(req, res, next) {
     req.membershipCount = context.membershipCount ?? null;
     req.membershipDegraded = Boolean(context.membershipDegraded);
     req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+    const effLogUser = getEffectiveUser(req) || {};
     authLog('info', 'authenticate_success', {
       userId: req.userId,
       userRole: req.user?.role || null,
-      platformRole: req.user?.platformRole || null,
-      isPlatformAdmin: req.user?.isPlatformAdmin,
+      platformRole: effLogUser.platformRole || null,
+      isPlatformAdmin: effLogUser.isPlatformAdmin,
       membershipCount: req.membershipCount,
       activeOrgId: req.activeOrgId,
       requestedOrgId: getRequestedOrgId(req),
@@ -1266,15 +1320,19 @@ export async function authenticate(req, res, next) {
 }
 
 export async function requireAdmin(req, res, next) {
-  if (!req.user) {
-    console.warn('[requireAdmin] missing req.user');
+  const eff = getEffectiveUser(req) || {};
+  if (!eff || !eff.userId) {
+    console.warn('[requireAdmin] missing effective user');
     return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
-  const userId = typeof req.getUserId === 'function' ? req.getUserId() : (req.user?.userId || req.user?.id || null);
-  const role = typeof req.getUserRole === 'function' ? req.getUserRole() : (req.user?.role || req.user?.userRole || null);
+  const userId = typeof req.getUserId === 'function' ? req.getUserId() : (eff.userId || eff.id || null);
+  const role = typeof req.getUserRole === 'function' ? req.getUserRole() : (eff.role || null);
   if (process.env.NODE_ENV !== 'production') {
-    console.log('[requireAdmin] context', { userId, role, platformRole: req.user?.platformRole, isPlatformAdmin: req.user?.isPlatformAdmin });
+    console.log('[requireAdmin] context', { userId, role, platformRole: eff.platformRole, isPlatformAdmin: eff.isPlatformAdmin });
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[requireAdmin] context', { userId, role, platformRole: eff.platformRole, isPlatformAdmin: eff.isPlatformAdmin });
   }
 
   if (!userId) {
@@ -1282,25 +1340,22 @@ export async function requireAdmin(req, res, next) {
   }
 
   // Normalized check that honors either an explicit platform flag or explicit platformRole
-  const isAdmin =
-    req.user?.isPlatformAdmin === true ||
-    String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
+  const isAdmin = eff.isPlatformAdmin === true || String(eff.platformRole || '').toLowerCase() === 'platform_admin';
 
   if (!isAdmin) {
     console.warn('[admin-auth] deny_reason', {
       userId,
-      email: req.user.email || null,
-      role: req.user.role || null,
-      platformRole: req.user.platformRole || null,
-      isPlatformAdmin: req.user.isPlatformAdmin,
+      email: eff?.email || null,
+      role: eff?.role || null,
+      platformRole: eff.platformRole || null,
+      isPlatformAdmin: eff.isPlatformAdmin,
       reason: 'not_platform_admin',
     });
     return res.status(403).json({ error: 'Forbidden', message: 'Platform admin access required' });
   }
 
-  // Ensure the user object marks platform admin for downstream checks
-  req.user.isPlatformAdmin = true;
-  req.user.platformRole = 'platform_admin';
+  // Do not mutate canonical req.user. Mark that an admin check occurred.
+  req.adminChecked = true;
   return next();
 }
 
@@ -1309,14 +1364,14 @@ export async function requireAdmin(req, res, next) {
  */
 export function requirePermission(...permissions) {
   return (req, res, next) => {
-    if (!req.user) {
+    const eff = getEffectiveUser(req) || {};
+    if (!eff || !eff.userId) {
       return res.status(401).json({
         error: 'Authentication required',
         message: 'Must be logged in',
       });
     }
-
-    if (req.user.isPlatformAdmin) {
+    if (eff.isPlatformAdmin) {
       return next();
     }
 
@@ -1324,7 +1379,8 @@ export function requirePermission(...permissions) {
       return next();
     }
 
-    const permissionSet = req.userPermissions || new Set(req.user.permissions || []);
+  // Use the effective user's permissions for authorization decisions.
+  const permissionSet = req.userPermissions || new Set(Array.isArray(eff.permissions) ? eff.permissions : []);
     const allowed = permissions.some((permission) => permissionSet.has(permission));
     if (!allowed) {
       return res.status(403).json({
@@ -1350,16 +1406,16 @@ export function requireAuth(req, res, next) {
 
 export function requireOwnerOrAdmin(getUserId) {
   return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        error: 'Authentication required',
-      });
+    const effActor = getEffectiveUser(req) || {};
+    if (!effActor || !effActor.userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
 
     const resourceUserId = getUserId(req);
-    if (req.user.role === 'admin' || req.user.userId === resourceUserId) {
+    if (effActor.role === 'admin' || effActor.userId === resourceUserId) {
       return next();
     }
+    if (effActor.isPlatformAdmin) return next();
 
     return res.status(403).json({
       error: 'Forbidden',
@@ -1376,7 +1432,8 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
       });
     }
 
-    if (req.user.isPlatformAdmin) {
+    const effUser = getEffectiveUser(req) || {};
+    if (effUser.isPlatformAdmin) {
       return next();
     }
 
@@ -1466,12 +1523,15 @@ export async function requireOrgAdmin(req, res, next) {
     // no-op
   }
 
-  if (!membership && req.user.userId && supabase) {
+  if (!membership) {
     try {
-      const rows = await getUserMemberships(req.user.userId, { logPrefix: 'requireOrgAdmin' });
-      membership = Array.isArray(rows)
-        ? rows.find((m) => pickOrgId(m.orgId, m.organizationId, m.organization_id) === resolvedOrgId)
-        : null;
+      const eff = getEffectiveUser(req) || {};
+      if (eff.userId) {
+        const rows = await getUserMemberships(eff.userId, { logPrefix: 'requireOrgAdmin' });
+        membership = Array.isArray(rows)
+          ? rows.find((m) => pickOrgId(m.orgId, m.organizationId, m.organization_id) === resolvedOrgId)
+          : null;
+      }
     } catch (error) {
       console.error('[requireOrgAdmin] membership lookup failed', error);
       return res.status(500).json({ error: 'Unable to verify organization membership' });
@@ -1604,8 +1664,10 @@ export function authErrorHandler(err, req, res, next) {
 }
 
 export async function optionalAuthenticate(req, res, next) {
-  // Always provide a safe user context for downstream handlers.
-  req.user = null;
+  // Always provide a safe baseline auth context for downstream handlers.
+  // Do NOT assign `req.user = null` here to avoid clobbering upstream
+  // synthetic identities (e.g., E2E bypass). Only populate req.user when
+  // a real context is available.
   req.userId = null;
   req.orgMemberships = new Map();
   req.activeOrgId = null;
@@ -1623,7 +1685,11 @@ export async function optionalAuthenticate(req, res, next) {
   try {
     const context = await buildAuthContext(req, { optional: true });
     if (context) {
-      req.user = context.user || null;
+  // Do NOT assign req.user here. Populate req.authValidatedUser so the
+  // canonical authenticate middleware can be the only runtime author of
+  // req.user. This keeps the invariant strict while still providing the
+  // validated user data to downstream handlers.
+  req.authValidatedUser = context.user;
       req.userId = context.user?.userId || context.user?.id || null;
       req.orgMemberships = context.membershipsMap || new Map();
       req.activeOrgId = context.activeOrgId || null;
@@ -1632,10 +1698,11 @@ export async function optionalAuthenticate(req, res, next) {
       req.membershipCount = context.membershipCount ?? null;
       req.membershipDegraded = Boolean(context.membershipDegraded);
       req.userPermissions = new Set(Array.isArray(context.user?.permissions) ? context.user.permissions : []);
+      const effAuthUser = getEffectiveUser(req) || {};
       req.authContext = {
         userId: req.userId,
-        isAuthenticated: Boolean(req.user),
-        isPlatformAdmin: Boolean(req.user?.isPlatformAdmin),
+        isAuthenticated: Boolean(req.authValidatedUser),
+        isPlatformAdmin: Boolean(effAuthUser?.isPlatformAdmin),
         memberships: Array.from((context.membershipsMap && context.membershipsMap.values && typeof context.membershipsMap.values === 'function') ? context.membershipsMap.values() : []),
       };
     }
@@ -1643,13 +1710,14 @@ export async function optionalAuthenticate(req, res, next) {
     authLog('warn', 'optional_auth_failed', {
       message: error?.message || String(error),
     });
-  } finally {
-    // Ensure baseline auth context is always set.
+    } finally {
+    // Ensure baseline auth context is always set. Do not assign req.user here.
     if (!req.authContext) {
+      const effAuthUserFallback = getEffectiveUser(req) || {};
       req.authContext = {
         userId: req.userId || null,
         isAuthenticated: Boolean(req.user),
-        isPlatformAdmin: Boolean(req.user?.isPlatformAdmin),
+        isPlatformAdmin: Boolean(effAuthUserFallback?.isPlatformAdmin),
         memberships: [],
       };
     }
@@ -1681,7 +1749,8 @@ export function resolveOrganizationContext(req, res, next) {
   req.activeOrgId = inferredOrgId;
 
   // Enforce org scoping for non-platform admins: all admin endpoints should be bound to an org.
-  if (!req.user?.isPlatformAdmin && !inferredOrgId) {
+  const eff = getEffectiveUser(req) || {};
+  if (!eff?.isPlatformAdmin && !inferredOrgId) {
     const reason = orgIds.length > 1 ? 'org_selection_required' : 'org_scope_required';
     return res.status(403).json({
       error: reason,

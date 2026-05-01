@@ -1,9 +1,10 @@
-import supabaseJwtMiddleware from './supabaseJwt.js';
+import { authenticate } from './authenticate.js';
 import supabase from '../lib/supabaseClient.js';
 import { isDemoMode, isProduction, isTestMode, isDevMode } from '../config/runtimeFlags.js';
 import {
   isAllowlistedAdminEmail,
 } from './auth.js';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 const FALLBACK_SUPERUSER = {
   id: 'dev-admin',
@@ -68,16 +69,13 @@ const grantAdminAccess = (req, reason, meta = {}) => {
   if (meta.allowlistEntry) {
     req.adminAllowlistEntry = meta.allowlistEntry;
   }
-  req.user = req.user || {};
-  if (elevatePlatformAdmin) {
-    req.user.isPlatformAdmin = true;
-  }
-  if (elevatePlatformAdmin && !req.user.platformRole) {
-    req.user.platformRole = 'platform_admin';
-  }
-  if (!req.user.role) {
-    req.user.role = 'admin';
-  }
+  // Do not mutate the canonical req.user. Instead record a per-request
+  // elevation object that downstream checks may consult via getEffectiveUser(req).
+  req.adminElevation = req.adminElevation || {};
+  if (elevatePlatformAdmin) req.adminElevation.isPlatformAdmin = true;
+  if (elevatePlatformAdmin && !req.adminElevation.platformRole) req.adminElevation.platformRole = 'platform_admin';
+  if (!req.adminElevation.role) req.adminElevation.role = 'admin';
+  req.adminElevation.reason = meta && meta.reason ? meta.reason : 'allowlist';
   return true;
 };
 
@@ -86,7 +84,7 @@ const fallbackFlagEnabled = (value) => String(value || '').trim().toLowerCase() 
 const isLocalDebugAdminToken = (req) => {
   if (isProduction) return false;
   if (String(process.env.ALLOW_DEBUG_LOGIN || '').trim().toLowerCase() !== 'true') return false;
-  const user = req?.supabaseJwtUser;
+  const user = req?.user;
   const appMetadata = user?.app_metadata || {};
   const userMetadata = user?.user_metadata || {};
   const debugLogin =
@@ -111,8 +109,10 @@ const ensureAdminAccess = async (req, res) => {
     const e2eEnabled = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
     if (hasBypassHeader && e2eEnabled) {
       req.e2eBypass = true;
-      req.user = req.user || {
+      // Do not assign req.user here; synthesize a per-request E2E user container.
+      req.e2eSynthesizedUser = req.e2eSynthesizedUser || {
         id: '00000000-0000-0000-0000-000000000001',
+        userId: '00000000-0000-0000-0000-000000000001',
         role: 'admin',
       };
       req.session = req.session || {
@@ -123,21 +123,21 @@ const ensureAdminAccess = async (req, res) => {
       try {
         const headerOrg = (req.get && (req.get('X-Org-Id') || req.get('x-org-id'))) || req.headers['x-org-id'] || req.query?.orgId || req.query?.organizationId || req.body?.orgId || req.body?.organization_id || null;
         const resolvedOrg = headerOrg || (req.body && (req.body.organization_id || req.body.orgId)) || 'demo-sandbox-org';
-        req.user.memberships = req.user.memberships || [];
-        if (!req.user.memberships.find((m) => String(m.orgId || m.organizationId || m.org_id) === String(resolvedOrg))) {
-          req.user.memberships.push({ orgId: resolvedOrg, role: 'admin', status: 'active' });
+        req.e2eSynthesizedUser.memberships = req.e2eSynthesizedUser.memberships || [];
+        if (!req.e2eSynthesizedUser.memberships.find((m) => String(m.orgId || m.organizationId || m.org_id) === String(resolvedOrg))) {
+          req.e2eSynthesizedUser.memberships.push({ orgId: resolvedOrg, role: 'admin', status: 'active' });
         }
-        req.user.organizationIds = req.user.organizationIds || [];
-        if (!req.user.organizationIds.includes(resolvedOrg)) req.user.organizationIds.push(resolvedOrg);
+        req.e2eSynthesizedUser.organizationIds = req.e2eSynthesizedUser.organizationIds || [];
+        if (!req.e2eSynthesizedUser.organizationIds.includes(resolvedOrg)) req.e2eSynthesizedUser.organizationIds.push(resolvedOrg);
         // activeOrgId is used by getRequestContext and other helpers
         req.activeOrgId = req.activeOrgId || resolvedOrg;
       } catch (e) {
         // non-fatal
       }
       try {
-        console.info('[requireAdminAccess] e2e_injected_orgs', { requestId: req.requestId ?? null, userId: req.user?.id, activeOrgId: req.activeOrgId, memberships: req.user?.memberships });
+        console.info('[requireAdminAccess] e2e_injected_orgs', { requestId: req.requestId ?? null, userId: req.e2eSynthesizedUser?.id, activeOrgId: req.activeOrgId, memberships: req.e2eSynthesizedUser?.memberships });
       } catch (e) {}
-  console.info('[requireAdminAccess] e2e_header_bypass granted', { requestId: req.requestId ?? null, userId: req.user?.id });
+  console.info('[requireAdminAccess] e2e_header_bypass granted', { requestId: req.requestId ?? null, userId: req.e2eSynthesizedUser?.id });
   // For E2E runs, allow the bypass to elevate to platform admin so test harnesses
   // can exercise admin-only endpoints. This is strictly guarded by E2E_TEST_MODE.
   return grantAdminAccess(req, 'e2e_header_bypass', { elevatePlatformAdmin: true });
@@ -161,13 +161,12 @@ const ensureAdminAccess = async (req, res) => {
   }
 
   const safeFallbackEnabled = !isProduction && fallbackFlagEnabled(process.env.E2E_TEST_MODE);
-  console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, supabaseJwtUser: req?.supabaseJwtUser });
+  console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, user: req?.user });
 
   if (safeFallbackEnabled) {
     // In E2E mode, bypass external allowlist lookups, but DO NOT elevate to platform-admin.
     // Preserve the org scope embedded in the token so cross-org operations still enforce correctly.
-    req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
-    req.user = req.user || req.supabaseJwtUser;
+  req.e2eSynthesizedUser = req.e2eSynthesizedUser || { ...FALLBACK_SUPERUSER };
 
     // If an X-Org-Id header / body org is present, ensure membership shape exists so
     // requireOrgAccess and related checks can validate organization scope in E2E mode.
@@ -175,19 +174,22 @@ const ensureAdminAccess = async (req, res) => {
       const headerOrg = (req.get && (req.get('X-Org-Id') || req.get('x-org-id'))) || req.headers['x-org-id'] || req.query?.orgId || req.query?.organizationId || req.body?.orgId || req.body?.organization_id || null;
       const resolvedOrg = headerOrg || req.user?.organization_id || req.user?.org_id || null;
       if (resolvedOrg) {
-        req.user.memberships = req.user.memberships || [];
-        if (!req.user.memberships.find((m) => String(m.orgId || m.organizationId || m.org_id) === String(resolvedOrg))) {
-          req.user.memberships.push({ orgId: resolvedOrg, role: 'admin', status: 'active' });
+        // Do not mutate canonical req.user. Add memberships/org ids to the
+        // synthesized e2e user container when in fallback mode.
+        req.e2eSynthesizedUser.memberships = req.e2eSynthesizedUser.memberships || [];
+        if (!req.e2eSynthesizedUser.memberships.find((m) => String(m.orgId || m.organizationId || m.org_id) === String(resolvedOrg))) {
+          req.e2eSynthesizedUser.memberships.push({ orgId: resolvedOrg, role: 'admin', status: 'active' });
         }
-        req.user.organizationIds = req.user.organizationIds || [];
-        if (!req.user.organizationIds.includes(resolvedOrg)) req.user.organizationIds.push(resolvedOrg);
+        req.e2eSynthesizedUser.organizationIds = req.e2eSynthesizedUser.organizationIds || [];
+        if (!req.e2eSynthesizedUser.organizationIds.includes(resolvedOrg)) req.e2eSynthesizedUser.organizationIds.push(resolvedOrg);
         req.activeOrgId = req.activeOrgId || resolvedOrg;
       }
     } catch (e) {}
 
-    const role = String(req.user?.role || '').trim().toLowerCase();
-    const platformRole = String(req.user?.platformRole || '').trim().toLowerCase();
-    const isAdmin = role === 'admin' || platformRole === 'platform_admin' || req.user?.isPlatformAdmin === true;
+  const eff = getEffectiveUser(req) || {};
+  const role = String((eff.role || req.e2eSynthesizedUser?.role || '')).trim().toLowerCase();
+  const platformRole = String((eff.platformRole || req.e2eSynthesizedUser?.platformRole || '')).trim().toLowerCase();
+  const isAdmin = role === 'admin' || platformRole === 'platform_admin' || eff.isPlatformAdmin === true || (req.e2eSynthesizedUser?.isPlatformAdmin === true);
 
     if (!isAdmin) {
       res.status(403).json({
@@ -203,12 +205,12 @@ const ensureAdminAccess = async (req, res) => {
     return grantAdminAccess(req, 'e2e_fallback', { elevatePlatformAdmin: false });
   }
 
-  const user = req.supabaseJwtUser;
+  const user = req.user || req.e2eSynthesizedUser || null;
   if (!user?.id) {
     console.warn('[requireAdminAccess] auth_required_missing_user_id', {
       requestId: req.requestId ?? null,
       userId: null,
-      email: req?.supabaseJwtUser?.email ?? null,
+      email: req?.user?.email ?? null,
     });
     res.status(401).json({
       code: 'AUTH_REQUIRED',
@@ -218,7 +220,7 @@ const ensureAdminAccess = async (req, res) => {
     return false;
   }
 
-  req.user = req.user || req.supabaseJwtUser;
+  // intentional no-op removed: do not create or mutate req.user here
 
   if (isLocalDebugAdminToken(req)) {
     console.info('[requireAdminAccess] local_debug_admin_token', {
@@ -316,7 +318,7 @@ const ensureAdminAccess = async (req, res) => {
 };
 
 const requireAdminAccess = [
-  supabaseJwtMiddleware,
+  authenticate,
   async (req, res, next) => {
     const allowed = await ensureAdminAccess(req, res);
     if (!allowed) {

@@ -4,8 +4,7 @@ import { sendError, sendOk } from '../lib/apiEnvelope.js';
 export const createAdminUserManagementRouter = (deps) => {
   const router = express.Router();
   const {
-    authenticate,
-    requireAdmin,
+  // authenticate and requireAdmin intentionally omitted; auth handled at mount level
     isDemoOrTestMode,
     e2eStore,
     normalizeOrgIdValue,
@@ -43,7 +42,8 @@ export const createAdminUserManagementRouter = (deps) => {
     return Boolean(requestUserId && requestUserId === demoAdminId && looksLocal);
   };
 
-  router.use(authenticate, requireAdmin);
+  // router-level authenticate removed to avoid accidental router-level auth.
+  // Authentication/authorization will be applied per-route below.
 
   const DEMO_FALLBACK_USER_SEED = [
     {

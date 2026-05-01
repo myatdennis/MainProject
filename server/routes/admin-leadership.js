@@ -4,6 +4,7 @@ import sql from '../db.js'
 import { createHttpError, sendApiSuccess, withHttpError } from '../middleware/apiErrorHandler.js'
 
 const router = express.Router()
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 const clampNumber = (value, min = 0, max = 100) => {
   if (typeof value !== 'number' || Number.isNaN(value)) return min
@@ -220,7 +221,8 @@ router.get('/health', async (req, res, next) => {
 router.get('/:orgId/recommendations', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.params.orgId)
-    const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  const eff = getEffectiveUser(req) || {};
+  const isPlatformAdmin = Boolean(eff?.isPlatformAdmin || String(eff?.platformRole || '').trim().toLowerCase() === 'platform_admin');
     if (process.env.NODE_ENV !== 'production') {
       console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     }
@@ -246,7 +248,8 @@ router.get('/:orgId/recommendations', async (req, res, next) => {
 router.post('/:orgId/recommendations', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.params.orgId)
-    const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  const eff2 = getEffectiveUser(req) || {};
+  const isPlatformAdmin = Boolean(eff2?.isPlatformAdmin || String(eff2?.platformRole || '').trim().toLowerCase() === 'platform_admin');
     if (process.env.NODE_ENV !== 'production') {
       console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     }

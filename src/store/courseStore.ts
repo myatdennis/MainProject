@@ -1810,7 +1810,7 @@ const ensureOrgScopedCatalog = async (
 
     let assignments: CourseAssignment[] = [];
     try {
-      const outcome = await retryAsync(() => getAssignmentsForUserWithOutcome(userId, orgId), 2, 150);
+      const outcome = await retryAsync(() => getAssignmentsForUserWithOutcome(userId), 2, 150);
       if (outcome.outcome === 'success' || outcome.outcome === 'empty') {
         assignments = outcome.assignments || [];
       } else if (outcome.outcome !== 'unauthenticated') {
@@ -2114,12 +2114,15 @@ export const courseStore = {
   // We wrap the real init IIFE in a race against a timeout so the UI cannot
   // remain stuck in 'loading' forever if a helper never resolves.
   const actualInit = (async () => {
-    let earlyUnauthenticatedExit = false;
-    let didSetHydrated = false;
-    let restrictToOrg = true;
-    let canUseAdminApi = false;
-    let adminLoadStatus: AdminLoadStatus = 'skipped';
-    let adminLoadError: string | null = null;
+  let earlyUnauthenticatedExit = false;
+  let didSetHydrated = false;
+  let restrictToOrg = true;
+  let canUseAdminApi = false;
+  let adminLoadStatus: AdminLoadStatus = 'skipped';
+  let adminLoadError: string | null = null;
+  // When true, indicates a fatal admin fetch error (client-side 4xx)
+  // where retries should be suppressed to avoid tight infinite loops.
+  let adminFetchIsFatal = false;
     let resolvedOrgIdForInit: string | null = null;
     const attemptStartedAt = monotonicNow();
     if (import.meta.env.DEV) {
@@ -2315,14 +2318,19 @@ export const courseStore = {
         });
         return;
       }
-      // Effective org id: prefer resolved org context, fallback to bridge snapshot
-      const effectiveOrgId = orgContext.orgId ?? (snapshot ? snapshot.activeOrgId ?? snapshot.orgId ?? null : null);
+  // Effective org id: prefer resolved org context, fallback to bridge snapshot
+  const effectiveOrgId = orgContext.orgId ?? (snapshot ? snapshot.activeOrgId ?? snapshot.orgId ?? null : null);
+  // Detect whether current session is a platform admin so we can allow
+  // admin-mode flows to proceed even when no org is selected.
+  const currentAuth = getAuthState();
+  const isPlatformAdminSession = Boolean(currentAuth && currentAuth.isPlatformAdmin);
       // Record the org being resolved so forceInit can detect org switches.
       resolvedOrgIdForInit = effectiveOrgId ?? null;
       // Block initialization if orgId is not resolved. The app must have an
       // explicit organization selected before performing catalog/course
-      // fetches. This prevents requests from being sent without X-Org-Id.
-      if (!effectiveOrgId) {
+      // fetches. Exception: platform-admin sessions are allowed to proceed
+      // without an org so they can query across all orgs.
+      if (!effectiveOrgId && !isPlatformAdminSession) {
         emitCatalogDiagnostic('org_bootstrap_pending', { reason: initReason });
         setLearnerCatalogState({
           status: 'loading',
@@ -2489,8 +2497,16 @@ export const courseStore = {
         // its output from a fresh `{}` using catalogSnapshot as the "prior state"
         // reference, achieving the same single-source guarantee without the flash.
         try {
+          // Debug/log before the admin fetch so we can trace platform-admin
+          // requests that intentionally omit orgId.
+          console.debug('[ADMIN FETCH DEBUG]', {
+            source: 'getAllCoursesFromDatabase',
+            endpoint: '/api/admin/courses?includeStructure=true&includeLessons=true',
+            isPlatformAdminSession,
+            effectiveOrgId,
+            orgContextRole: orgContext.role ?? null,
+          });
           console.debug('[COURSE FETCH]', {
-
             source: 'getAllCoursesFromDatabase',
             url: '/api/admin/courses',
             params: { includeStructure: true, includeLessons: true },
@@ -2585,6 +2601,13 @@ export const courseStore = {
               : adminError instanceof Error
               ? adminError.message
               : 'admin_courses_error';
+          // Treat 4xx errors as fatal for retry logic (unauthorized, bad request, etc.)
+          if (typeof status === 'number' && status >= 400 && status < 500) {
+            adminFetchIsFatal = true;
+          }
+          if (adminLoadError === 'admin_courses_auth_error') {
+            adminFetchIsFatal = true;
+          }
           if (isBlockedByGuard) {
             // This should never happen after the skipAdminGateCheck fix in courseService.ts,
             // but if it does, log it clearly so it's distinguishable from a real 403.
@@ -2672,6 +2695,12 @@ export const courseStore = {
           } catch (adminFetchErr) {
             adminLoadStatus = 'error';
             adminLoadError = adminFetchErr instanceof Error ? adminFetchErr.message : String(adminFetchErr);
+            // If we received an ApiError with a 4xx status, mark as fatal to
+            // avoid scheduling retries that will inevitably fail.
+            const maybeStatus = adminFetchErr instanceof ApiError ? (adminFetchErr as ApiError).status : undefined;
+            if (typeof maybeStatus === 'number' && maybeStatus >= 400 && maybeStatus < 500) {
+              adminFetchIsFatal = true;
+            }
             console.warn('[courseStore.init] admin_courses_fetch_failed_override', { error: adminLoadError });
             // Restore previous catalog if available to avoid wiping UI
             if (Object.keys(adminSnapshotBefore).length > 0) {
@@ -3080,7 +3109,11 @@ export const courseStore = {
         });
         if (courseCount === 0 && !earlyUnauthenticatedExit) {
           console.warn('[courseStore.init] no courses after init — scheduling retry', { reason: initReason });
-          if (!initRetryScheduled) {
+          // Don't schedule a retry when the admin fetch failed with a fatal
+          // client error (4xx). Retrying will not help and creates loops.
+          if (adminFetchIsFatal) {
+            console.warn('[courseStore.init] not scheduling retry due to fatal admin fetch error', { adminLoadError });
+          } else if (!initRetryScheduled) {
             initRetryScheduled = true;
             initRetryTimeoutHandle = setTimeout(() => {
               initRetryTimeoutHandle = null;

@@ -1,7 +1,13 @@
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
+
 export const isPlatformAdminFor = ({ req = null, context = null } = {}) => {
   try {
     const fromContext = context && (context.isPlatformAdmin === true || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
-    const fromReq = req && (req.user?.isPlatformAdmin === true || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+    let fromReq = false;
+    if (req) {
+      const eff = getEffectiveUser(req) || {};
+      fromReq = eff.isPlatformAdmin === true || String(eff.platformRole || '').trim().toLowerCase() === 'platform_admin';
+    }
     return Boolean(fromContext || fromReq);
   } catch (e) {
     return false;

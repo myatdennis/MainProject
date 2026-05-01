@@ -21,6 +21,25 @@ export const sendOk = (res, data = null, options = {}) => {
 };
 
 export const sendError = (res, status = 500, code = 'server_error', message = 'Request failed', details = undefined, meta = undefined) => {
+  try {
+    // Helpful debug: when org_id_required is returned, log request context and stack
+    if (String(code) === 'org_id_required' || status === 400 && String(code).includes('org_id')) {
+      try {
+        const req = res && res.req ? res.req : null;
+        console.error('[DEBUG sendError] org_id_required triggered', {
+          path: req?.originalUrl || req?.url || null,
+          method: req?.method || null,
+          requestId: req?.requestId || null,
+          userId: req?.user?.id || req?.user?.userId || null,
+          stack: new Error().stack,
+        });
+      } catch (e) {
+        // noop
+      }
+    }
+  } catch (e) {
+    // noop
+  }
   const payload = {
     ok: false,
     error: {
