@@ -54,15 +54,6 @@ export const createDocumentsService = ({
       ...(Array.isArray(req.user?.organization_ids) ? req.user.organization_ids : []),
       ...(Array.isArray(req.user?.app_metadata?.organization_ids) ? req.user.app_metadata.organization_ids : []),
       ...(Array.isArray(req.user?.app_metadata?.organizationIds) ? req.user.app_metadata.organizationIds : []),
-      ...(Array.isArray(req.supabaseJwtUser?.organizationIds) ? req.supabaseJwtUser.organizationIds : []),
-      ...(Array.isArray(req.supabaseJwtClaims?.organization_ids) ? req.supabaseJwtClaims.organization_ids : []),
-      ...(Array.isArray(req.supabaseJwtClaims?.organizationIds) ? req.supabaseJwtClaims.organizationIds : []),
-      ...(Array.isArray(req.supabaseJwtClaims?.app_metadata?.organization_ids)
-        ? req.supabaseJwtClaims.app_metadata.organization_ids
-        : []),
-      ...(Array.isArray(req.supabaseJwtClaims?.app_metadata?.organizationIds)
-        ? req.supabaseJwtClaims.app_metadata.organizationIds
-        : []),
     ].forEach(push);
 
     push(context.organizationId);
@@ -139,7 +130,9 @@ export const createDocumentsService = ({
       };
     }
 
-  const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  const { getEffectiveUser } = await import('../utils/getEffectiveUser.js');
+  const eff = getEffectiveUser(req) || {};
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin || eff?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
   if (process.env.NODE_ENV !== 'production') {
     console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId: resolvedRequestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
   }

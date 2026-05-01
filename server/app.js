@@ -1,10 +1,12 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { attachRequestId, apiErrorHandler } from './middleware/apiErrorHandler.js';
-import { apiLimiter, securityHeaders, authenticate } from './middleware/auth.js';
+import { apiLimiter, securityHeaders } from './middleware/auth.js';
+import { authenticate } from './middleware/authenticate.js';
+import enforceSingleAuth, { enforceSingleAuth as namedEnforceSingleAuth } from './middleware/enforceSingleAuth.js';
+import { withAuth } from './middleware/withAuth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
 import adminOrganizationsRouter from './routes/adminOrganizations.js';
-import supabaseJwtMiddleware from './middleware/supabaseJwt.js';
 import authRoutes from './routes/auth.js';
 import adminUsersRouter from './routes/admin-users.js';
 import { requireAdmin } from './middleware/auth.js';
@@ -112,8 +114,12 @@ export default function createApp(deps = {}, existingApp = null) {
   app.use(cookieParser());
   app.use('/api/media', mediaRouter);
   app.use('/api', apiLimiter);
-  app.use('/api', supabaseJwtMiddleware);
+  // Register single-source-of-truth authenticate middleware (per-route usage below)
   app.use(setDoubleSubmitCSRF);
+
+  // Keep the enforceSingleAuth global guard as a no-op when req.user is absent.
+  // Do NOT run authenticate globally — protected routes must opt-in via withAuth.
+  app.use(enforceSingleAuth);
 
   app.get(['/api/health', '/health'], (deps && deps.respondWithHealthPayload) || ((_req, res) => res.json({ ok: true })));
   app.use('/api/auth', authRoutes);
@@ -122,14 +128,15 @@ export default function createApp(deps = {}, existingApp = null) {
 
   // Mount routers that accept deps where available
   const isDemoOrTestMode = isDemoMode || E2E_TEST_MODE;
-  app.use('/api/admin/organizations', authenticate, requireAdminAccess, adminOrganizationsRouter);
-  if (!isDemoOrTestMode) app.use('/api/admin/users', authenticate, requireAdmin, adminUsersRouter);
+  app.use('/api/admin/organizations', ...withAuth(requireAdminAccess, adminOrganizationsRouter));
+  // Always mount admin users router at mount level and protect with withAuth(requireAdmin, ...)
+  app.use('/api/admin/users', ...withAuth(requireAdmin, adminUsersRouter));
 
-  app.use('/api/admin/surveys', authenticate, requireAdmin, createAdminSurveysRouter(deps));
-  app.use('/api/admin/notifications', authenticate, requireAdmin, createAdminNotificationsRouter(deps));
-  app.use('/api/admin/analytics', authenticate, requireAdmin, adminAnalyticsRouter);
-  app.use('/api/admin/courses', authenticate, requireAdmin, adminCoursesRouter);
-  app.use('/api/media', authenticate, mediaRouter);
+  app.use('/api/admin/surveys', ...withAuth(requireAdmin, createAdminSurveysRouter(deps)));
+  app.use('/api/admin/notifications', ...withAuth(requireAdmin, createAdminNotificationsRouter(deps)));
+  app.use('/api/admin/analytics', ...withAuth(requireAdmin, adminAnalyticsRouter));
+  app.use('/api/admin/courses', ...withAuth(requireAdmin, adminCoursesRouter));
+  app.use('/api/media', ...withAuth(mediaRouter));
 
   // Admin subrouters and other endpoints
   app.use('/api/analytics', analyticsRouter);

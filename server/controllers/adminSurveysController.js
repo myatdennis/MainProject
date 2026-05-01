@@ -1,4 +1,5 @@
 import { sendError, sendOk } from '../lib/apiEnvelope.js';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 export const createAdminSurveysController = ({ logger, service }) => ({
   participantReport: async (req, res) => {
@@ -62,7 +63,8 @@ export const createAdminSurveysController = ({ logger, service }) => ({
         if (result.error) return sendError(res, result.status, result.error.code, result.error.message, result.error.details);
         return sendOk(res, result.data, { status: result.status });
       } catch (err) {
-        if (req.user?.isPlatformAdmin && req.headers['x-e2e-bypass'] === '1') {
+  const eff = getEffectiveUser(req) || {};
+  if (eff?.isPlatformAdmin && req.headers['x-e2e-bypass'] === '1') {
           console.warn('[E2E FALLBACK] surveys fetch failed, returning mock data');
           return sendOk(res, [], { status: 200, meta: { e2eFallback: true } });
         }

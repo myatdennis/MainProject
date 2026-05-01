@@ -68,7 +68,9 @@ export const createAdminSurveysService = ({
       context.requestedOrgId,
       context.activeOrganizationId,
     );
-    const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+    const { getEffectiveUser } = await import('../utils/getEffectiveUser.js');
+    const eff = getEffectiveUser(req) || {};
+    const isPlatformAdmin = Boolean(context.isPlatformAdmin || eff?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
     if (process.env.NODE_ENV !== 'production') {
       console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, requestedOrgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     }

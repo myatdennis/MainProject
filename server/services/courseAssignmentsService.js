@@ -305,8 +305,8 @@ export const createCourseAssignmentsService = ({
         envServiceRolePresent: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
         envAnonKeyPresent: !!process.env.SUPABASE_ANON_KEY,
       };
-      const jwtClaims = req.supabaseJwtClaims ?? null;
-      const jwtUser = req.supabaseJwtUser ?? null;
+  const jwtClaims = null;
+  const jwtUser = req.user ?? null;
       const authContext = req.authContext ?? null;
       // developer-friendly console output in non-production
       debugAssign('[assign][debug][auth]', {

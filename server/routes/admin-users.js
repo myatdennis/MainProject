@@ -2,7 +2,8 @@ import express from 'express';
 import { assertAdminQueryColumns, logAdminQuery } from '../utils/adminSchemaGuard.js';
 import supabaseDefault, { getSupabaseAdminClient, getSupabaseAuthClient } from '../lib/supabaseClient.js';
 import { logger } from '../lib/logger.js';
-import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
+import { invalidateMembershipCache } from '../middleware/auth.js';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { isPlatformAdminActor, canModifyUser, canAssignAcrossOrganizations } from '../utils/adminAuthz.js';
 import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
@@ -105,7 +106,7 @@ const isActiveValue = (statusColumn, value) => {
 };
 
 // PATCH /api/admin/users/:userId
-router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
+router.patch('/:userId', async (req, res, next) => {
   try {
     if (!getRuntimeSupabaseAdmin()) {
       return res.status(503).json({
@@ -178,11 +179,12 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       '';
     const membershipRole = normalizeOrgRole(req.body?.membershipRole || req.body?.membership_role || 'member');
 
+  const eff = getEffectiveUser(req) || {};
     const actor = {
-      platformRole: req.user?.platformRole,
-      isPlatformAdmin: req.user?.isPlatformAdmin,
-      userRole: req.user?.role || req.user?.userRole,
-      memberships: req.user?.memberships || [],
+      platformRole: eff.platformRole || req.user?.platformRole,
+      isPlatformAdmin: eff.isPlatformAdmin === true,
+      userRole: eff.role || req.user?.role || req.user?.userRole,
+      memberships: eff.memberships || req.user?.memberships || [],
     };
 
     let previousOrgId = null;
@@ -395,7 +397,8 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
   }
 });
 
-router.use(authenticate, requireAdmin);
+// router-level authenticate removed to prevent accidental protection of public subroutes.
+// Authentication/authorization is applied per-route where needed.
 
 const INVITE_PASSWORD_MIN_CHARS = 8;
 const writableMembershipRoles = new Set(['admin', 'owner', 'org_admin', 'organization_admin', 'super_admin']);
@@ -602,8 +605,10 @@ router.post('/', async (req, res, next) => {
     const cohort = normalizeText(req.body?.cohort ?? '');
     const phoneNumber = normalizeText(req.body?.phoneNumber ?? req.body?.phone_number ?? '');
 
+    const { getEffectiveUser } = await import('../utils/getEffectiveUser.js');
+    const eff = getEffectiveUser(req) || {};
     // Platform admins are allowed to create users without specifying orgId.
-    if (!orgId && !req.user?.isPlatformAdmin) {
+    if (!orgId && !eff.isPlatformAdmin) {
       return next(createHttpError(400, 'org_id_required', 'organizationId is required.'));
     }
     if (!firstName || !lastName || !email) {
@@ -614,7 +619,7 @@ router.post('/', async (req, res, next) => {
     }
 
     // Defensive: ensure we don't read undefined req.user properties.
-    const actorUserId = (typeof req.getUserId === 'function' ? req.getUserId() : (req.user && (req.user.userId || req.user.id))) || null;
+  const actorUserId = (typeof req.getUserId === 'function' ? req.getUserId() : (eff && (eff.userId || eff.id || req.user?.userId || req.user?.id))) || null;
     if (!actorUserId) {
       // If no actor context is available, be explicit: unauthenticated for admin routes.
       return next(createHttpError(401, 'unauthenticated', 'Authentication required'));

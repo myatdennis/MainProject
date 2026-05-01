@@ -259,6 +259,17 @@ export const createCourseCatalogService = ({
     const context = requireUserContext(req, res);
     if (!context) return null;
 
+    // Backend debug log for platform-admin request verification
+    try {
+      console.log('[ADMIN COURSES REQUEST]', {
+        userId: req.user?.id ?? req.user?.userId ?? null,
+        isPlatformAdmin: Boolean(req.user?.isPlatformAdmin),
+        orgId: req.query?.orgId ?? req.query?.org_id ?? req.headers['x-org-id'] ?? undefined,
+      });
+    } catch (e) {
+      // noop
+    }
+
     const requestedOrgId = pickOrgId(
       req.query?.orgId,
       req.query?.org_id,
@@ -271,14 +282,34 @@ export const createCourseCatalogService = ({
       context.requestedOrgId,
       context.activeOrganizationId,
     );
-    // Allow platform_admin to omit orgId (they can see all orgs). For non-platform
-    // admins an explicit orgId or header is still required.
-    if (!requestedOrgId && !context.isPlatformAdmin) {
-      return {
-        status: 400,
-        body: { error: 'org_id_required', message: 'orgId query parameter or X-Org-Id header is required.' },
-      };
+    // Additional debug: log resolved context so we can confirm platform admin state
+    try {
+      const ctx = requireUserContext(req, res);
+      console.log('[ADMIN COURSES CTX]', {
+        resolvedContextIsPlatformAdmin: Boolean(ctx?.isPlatformAdmin),
+        resolvedContextPlatformRole: ctx?.platformRole ?? null,
+        resolvedContextUserId: ctx?.userId ?? null,
+        requestedOrgId,
+      });
+    } catch (e) {
+      // noop
     }
+    // Allow platform_admin to omit orgId (they can see all orgs). For non-platform
+    // admins an explicit orgId or header is still required. Be conservative and
+    // accept either context.isPlatformAdmin or req.user flags (defensive).
+    try {
+      console.log('[ADMIN COURSES FLAGS]', {
+        contextIsPlatformAdmin: Boolean(context?.isPlatformAdmin),
+        reqUserIsPlatformAdmin: Boolean(req.user?.isPlatformAdmin),
+        reqUserPlatformRole: req.user?.platformRole ?? null,
+        reqAdminElevation: req.adminElevation ?? null,
+        reqE2eSynthesizedUser: req.e2eSynthesizedUser ? { id: req.e2eSynthesizedUser.id, isPlatformAdmin: req.e2eSynthesizedUser.isPlatformAdmin } : null,
+        requestedOrgId
+      });
+    } catch (e) {}
+    // NOTE: Do NOT perform a duplicate early orgId check here. Let
+    // buildAdminOrgAccess() centralize membership and platform-admin handling
+    // (it understands E2E/demo/test modes, adminElevations and synthesized users).
 
     const accessContext = await buildAdminOrgAccess({ req, res, context, requestedOrgId });
     if (accessContext?.handled) return null;

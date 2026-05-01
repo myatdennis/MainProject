@@ -15,6 +15,7 @@ import {
   type UserMembership,
   type SessionMetadata,
 } from '../lib/secureStorage';
+import { getUserSession } from '../lib/secureStorage';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
@@ -1273,39 +1274,85 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (!client || !client.auth || typeof client.auth.onAuthStateChange !== 'function') {
         return;
       }
-      const { data: sub } = client.auth.onAuthStateChange((event: any, session: any) => {
-        // Mark auth subsystem as ready once we receive an event
-        if (!authReadyRef.current) {
-          setAuthReady(true);
-          // eslint-disable-next-line no-console
-          if (import.meta.env.DEV) {
-            console.log('AUTH STATE', { authReady: true, hasSession: !!session });
+      // First: proactively query Supabase for current session to hydrate
+      // immediately on startup. This ensures the client-side Supabase
+      // subsystem has had a chance to restore and report session state.
+      (async () => {
+        try {
+          const res = await client.auth.getSession();
+          const session = res?.data?.session ?? null;
+          // If a session was restored by Supabase, apply it via our
+          // applySessionPayload flow so all derived state is consistent.
+          if (session) {
+            try {
+              const normalizedPayload = normalizeSessionResponsePayload({
+                user: session.user,
+                accessToken: session.access_token,
+                refreshToken: session.refresh_token,
+              });
+              if (normalizedPayload) {
+                applySessionPayload(normalizedPayload, { persistTokens: true, reason: 'supabase_getSession' });
+              }
+            } catch (e) {
+              // fallback: set minimal user state
+              try {
+                setUser(session.user as any);
+              } catch (_) {
+                /* ignore */
+              }
+            }
           }
-        } else {
-          // eslint-disable-next-line no-console
-          if (import.meta.env.DEV) {
-            console.log('AUTH STATE CHANGE', { event, hasSession: !!session });
+
+          // Now mark the Supabase auth subsystem as ready
+          if (!authReadyRef.current) {
+            setAuthReady(true);
+            if (import.meta.env.DEV) {
+              console.log('AUTH STATE', { authReady: true, hasSession: !!session });
+            }
+          }
+        } catch (e) {
+          // Even if getSession() fails, consider auth subsystem ready to
+          // avoid blocking forever; the onAuthStateChange listener will
+          // still arrive and update state.
+          if (!authReadyRef.current) {
+            setAuthReady(true);
+            if (import.meta.env.DEV) {
+              console.warn('AUTH STATE: getSession failed, marking ready', e);
+            }
           }
         }
+      })();
 
-        // If we had deferred a bootstrap error because auth wasn't ready,
-        // resolve it now based on whether a session exists.
-        if (pendingBootstrapReason) {
+      const { data: sub } = client.auth.onAuthStateChange((event: any, session: any) => {
+        // Log the auth state change
+        if (import.meta.env.DEV) {
+          console.log('[AUTH STATE CHANGE]', { event, hasSession: !!session });
+        }
+
+        // Keep our local session and user state in sync with Supabase
+        try {
           if (session) {
-            // session present, clear pending error and continue
-            setPendingBootstrapReason(null);
-            setBootstrapError(null);
-            setAuthInitializing(false);
-            setAuthStatus('authenticated', 'onAuthStateChange:session_present');
-            setSessionStatus('authenticated', 'onAuthStateChange:session_present');
+            const normalizedPayload = normalizeSessionResponsePayload({
+              user: session.user,
+              accessToken: session.access_token,
+              refreshToken: session.refresh_token,
+            });
+            if (normalizedPayload) {
+              applySessionPayload(normalizedPayload, { persistTokens: true, reason: `onAuthStateChange:${event}` });
+            } else {
+              setUser(session.user as any);
+            }
           } else {
-            // no session — surface the error now
-            setPendingBootstrapReason(null);
-            setAuthInitializing(false);
-            setAuthStatus('unauthenticated', 'onAuthStateChange:no_session');
-            setSessionStatus('unauthenticated', 'onAuthStateChange:no_session');
-            setBootstrapError('Session bootstrap failed. Please log in.');
+            // No session — clear client state
+            applySessionPayload(null, { persistTokens: true, reason: `onAuthStateChange:${event}:clear` });
           }
+        } catch (e) {
+          console.warn('[SecureAuth] onAuthStateChange handler error', e);
+        }
+
+        // Mark authReady on first arrival if not already done
+        if (!authReadyRef.current) {
+          setAuthReady(true);
         }
       });
       return () => {
@@ -1710,6 +1757,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthInitializing(false);
           setAuthBootstrapping(false);
           console.debug('[AUTH BOOTSTRAP] complete', { ts: Date.now() });
+          // Dev-only debug: expose final session snapshot after bootstrap
+          try {
+            if (import.meta.env?.DEV) {
+              const finalSession = getUserSession();
+              console.log('[SESSION AFTER BOOTSTRAP]', { sessionPresent: Boolean(finalSession), userId: finalSession?.id ?? null });
+            }
+          } catch (e) {
+            /* ignore debug logging failures */
+          }
           e2eLog('bootstrap_complete', { ts: Date.now(), authStatus: authStatusRef.current, sessionStatus: sessionStatusRef.current, authBootstrapState });
         }
       }

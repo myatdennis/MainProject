@@ -119,30 +119,16 @@ const mapDecodedPayload = (decoded) => {
   };
 };
 
+// DEPRECATED: local JWT verification is disabled in favor of Supabase session
+// validation. These functions are retained as no-ops to avoid widespread
+// rip-the-bandage refactors elsewhere in the codebase. They deliberately
+// return null so downstream code uses Supabase as the single source of truth.
 export const verifyAccessToken = (token) => {
-  if (!token) return null;
-  try {
-    const decoded = jwt.verify(token, ensureAccessSecret());
-    if (decoded?.type && decoded.type !== 'access') {
-      return null;
-    }
-    return mapDecodedPayload(decoded);
-  } catch {
-    return null;
-  }
+  return null;
 };
 
 export const verifyRefreshToken = (token) => {
-  if (!token) return null;
-  try {
-    const decoded = jwt.verify(token, ensureRefreshSecret());
-    if (decoded?.type && decoded.type !== 'refresh') {
-      return null;
-    }
-    return mapDecodedPayload(decoded);
-  } catch {
-    return null;
-  }
+  return null;
 };
 
 export { extractTokenFromHeader };

@@ -76,6 +76,14 @@ export const createAuthActions = ({
             persistTokens: true,
             reason: `${type}_login_success`,
           });
+          // Dev-only debug: log full login result (no persistent localStorage writes)
+          try {
+            if (import.meta.env?.DEV) {
+              console.log('[LOGIN RESULT]', { user: envelope.data.user ?? null });
+            }
+          } catch (e) {
+            /* ignore debug logging failures */
+          }
           setAuthStatus('authenticated', `login:${type}_success`);
           setSessionStatus('authenticated', `login:${type}_success`);
           logAuthSessionState(`${type}-login_success`, null);

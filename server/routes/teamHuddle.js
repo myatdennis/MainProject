@@ -1,5 +1,6 @@
 import express from 'express';
 import { hasOrgAdminRole } from '../middleware/auth.js';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 import { sendError, sendOk } from '../lib/apiEnvelope.js';
 import { createTeamHuddleService, TEAM_HUDDLE_REACTIONS, TEAM_HUDDLE_TABLES } from '../services/teamHuddleService.js';
 
@@ -39,7 +40,8 @@ export const createTeamHuddleRouter = ({
     const context = requireUserContext(req, res);
     if (!context) return;
     const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
-    const isPlatformAdmin = Boolean(context.isPlatformAdmin || req.user?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  const eff = getEffectiveUser(req) || {};
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin || eff?.isPlatformAdmin || String(context?.platformRole || '').trim().toLowerCase() === 'platform_admin');
     if (process.env.NODE_ENV !== 'production') {
       console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId: orgScope.orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
     }

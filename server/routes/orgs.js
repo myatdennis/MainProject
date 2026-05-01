@@ -1,6 +1,7 @@
 // Organization routes extracted from server/index.js
 // Modularize all /api/orgs endpoints here
 import express from 'express';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 const router = express.Router();
 
@@ -10,7 +11,8 @@ router.post('/:orgId/memberships/accept', async (req, res) => {
   const { supabase, ensureSupabase, requireUserContext, invalidateMembershipCache, buildMembershipSelect, getOrgInvitesOrganizationColumnName, buildActorFromRequest, recordActivationEvent, markActivationStep } = req.app.locals;
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
-  const isPlatformAdmin = Boolean(req.user?.isPlatformAdmin || String(req.user?.platformRole || '').trim().toLowerCase() === 'platform_admin');
+  const eff = getEffectiveUser(req) || {};
+  const isPlatformAdmin = Boolean(eff?.isPlatformAdmin || String(eff?.platformRole || '').trim().toLowerCase() === 'platform_admin');
   if (process.env.NODE_ENV !== 'production') {
     console.log('[ADMIN ENDPOINT]', { path: req.path, isPlatformAdmin, orgId, behavior: isPlatformAdmin ? 'ALL_ORGS' : 'SCOPED' });
   }
