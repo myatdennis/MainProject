@@ -1,5 +1,5 @@
 -- Migration: Add targeted RLS policies for tables previously flagged as "RLS enabled but no policy"
--- Generated: 2026-04-30
+-- Generated: 2026-05-02
 -- This migration is idempotent: it only creates policies when the table and target columns exist
 -- and will ENABLE ROW LEVEL SECURITY after creating policies. It will skip non-table objects (views)
 -- and create a conservative SELECT-only policy when no owner/org columns exist, to restore read access.
@@ -13,6 +13,9 @@ DECLARE
   policy_org text := 'org_members_access';
   policy_owner text := 'owner_can_manage';
   policy_select text := 'authenticated_select_all';
+  policy_sql text;
+  org_cols text[];
+  org_expr text;
   tables text[] := ARRAY[
     '_backup_org_onboarding_progress_vw',
     '_policy_backup',
@@ -90,29 +93,39 @@ BEGIN
     );
 
     IF has_org THEN
-      -- Create an org-membership-based policy that allows members with owner/admin/editor roles to manage rows.
+      -- Build a dynamic org expression using existing org columns for this table
+      SELECT array_agg(column_name) INTO org_cols
+      FROM information_schema.columns c
+      WHERE c.table_schema = 'public' AND c.table_name = tbl AND c.column_name IN ('org_id', 'organization_id', 'organizationid');
+
+      IF org_cols IS NOT NULL THEN
+        IF array_length(org_cols,1) > 1 THEN
+          org_expr := '(coalesce(' || (
+            SELECT string_agg(format('(%I)::text', col), ', ')
+            FROM unnest(org_cols) AS col
+          ) || '))';
+        ELSE
+          IF org_cols[1] = 'org_id' THEN
+            org_expr := '((org_id)::text)';
+          ELSIF org_cols[1] = 'organization_id' THEN
+            org_expr := '((organization_id)::text)';
+          ELSE
+            org_expr := '((organizationid)::text)';
+          END IF;
+        END IF;
+      ELSE
+        org_expr := 'NULL';
+      END IF;
+
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = policy_org) THEN
-        EXECUTE format($sql$
-          CREATE POLICY %I ON public.%I
-            FOR ALL
-            TO authenticated
-            USING (
-              EXISTS (
-                SELECT 1 FROM public.organization_memberships m
-                WHERE m.user_id = auth.uid()
-                  AND lower(coalesce(m.role, 'member')) = ANY (ARRAY['owner','admin','editor'])
-                  AND (m.organization_id)::text = coalesce((org_id)::text, (organization_id)::text)
-              )
-            )
-            WITH CHECK (
-              EXISTS (
-                SELECT 1 FROM public.organization_memberships m
-                WHERE m.user_id = auth.uid()
-                  AND lower(coalesce(m.role, 'member')) = ANY (ARRAY['owner','admin','editor'])
-                  AND (m.organization_id)::text = coalesce((org_id)::text, (organization_id)::text)
-              )
-            );
-        $sql$, policy_org, tbl);
+        policy_sql := 'CREATE POLICY ' || quote_ident(policy_org) || ' ON public.' || quote_ident(tbl) ||
+                      ' FOR ALL TO authenticated USING ( EXISTS ( SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+                      ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
+                      ' AND (m.organization_id)::text = ' || org_expr || ' ) ) WITH CHECK ( EXISTS ( SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+                      ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
+                      ' AND (m.organization_id)::text = ' || org_expr || ' ) );';
+        RAISE NOTICE 'Policy SQL for org-members on %: %', tbl, policy_sql;
+        EXECUTE policy_sql;
         RAISE NOTICE 'Created org-members policy on %', tbl;
       ELSE
         RAISE NOTICE 'Org-members policy already exists on %', tbl;
@@ -124,18 +137,35 @@ BEGIN
 
     ELSIF has_owner THEN
       -- Create an ownership-based policy that allows row owner to manage rows
-      IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = policy_owner) THEN
-        EXECUTE format($sql$
-          CREATE POLICY %I ON public.%I
-            FOR ALL
-            TO authenticated
-            USING ((auth.uid())::text = coalesce((owner_id)::text, (created_by)::text, (user_id)::text))
-            WITH CHECK ((auth.uid())::text = coalesce((owner_id)::text, (created_by)::text, (user_id)::text));
-        $sql$, policy_owner, tbl);
-        RAISE NOTICE 'Created owner-based policy on %', tbl;
-      ELSE
-        RAISE NOTICE 'Owner-based policy already exists on %', tbl;
-      END IF;
+                            -- Build dynamic owner expression (only include columns that exist)
+                            DECLARE owner_cols text[];
+                            owner_expr text;
+                            policy_sql text;
+                            BEGIN
+          SELECT array_agg(column_name) INTO owner_cols
+          FROM information_schema.columns c
+          WHERE c.table_schema = 'public' AND c.table_name = tbl AND c.column_name IN ('owner_id', 'created_by', 'user_id');
+
+          IF owner_cols IS NOT NULL THEN
+            owner_expr := '(coalesce(' || (
+              SELECT string_agg(format('(%I)::text', col), ', ')
+              FROM unnest(owner_cols) AS col
+            ) || '))';
+          ELSE
+            owner_expr := 'NULL';
+          END IF;
+
+          IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = policy_owner) THEN
+            -- Construct policy SQL using only existing owner columns
+            policy_sql := 'CREATE POLICY ' || quote_ident(policy_owner) || ' ON public.' || quote_ident(tbl) ||
+                          ' FOR ALL TO authenticated USING ((auth.uid())::text = ' || owner_expr || ') WITH CHECK ((auth.uid())::text = ' || owner_expr || ');';
+            RAISE NOTICE 'Owner policy SQL for %: %', tbl, policy_sql;
+            EXECUTE policy_sql;
+            RAISE NOTICE 'Created owner-based policy on %', tbl;
+          ELSE
+            RAISE NOTICE 'Owner-based policy already exists on %', tbl;
+          END IF;
+        END;
 
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
       RAISE NOTICE 'Enabled RLS on %', tbl;
@@ -157,8 +187,6 @@ BEGIN
   END LOOP;
 END
 $$;
-
-COMMENT ON FUNCTION pg_temp.planner IS NULL; -- noop: keeps some linters happy
 
 -- NOTES:
 -- - The org-membership policy assumes a table `public.organization_memberships` with columns `organization_id`, `user_id`, and `role`.
