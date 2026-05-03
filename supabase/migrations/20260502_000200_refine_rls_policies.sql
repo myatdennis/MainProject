@@ -137,7 +137,7 @@ BEGIN
       -- org-based SELECT policy
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = 'org_select') THEN
   policy_sql := 'CREATE POLICY org_select ON public.' || quote_ident(tbl) || ' FOR SELECT TO authenticated USING (' ||
-    ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid() AND (m.organization_id)::text = ' || org_expr || ')' ||
+    ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = (select auth.uid()) AND (m.organization_id)::text = ' || org_expr || ')' ||
     ' );';
   RAISE NOTICE 'Policy SQL for org_select on %: %', tbl, policy_sql;
   EXECUTE policy_sql;
@@ -150,7 +150,7 @@ BEGIN
       -- Create separate policies for INSERT, UPDATE, DELETE since Postgres does not accept a combined event list
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = 'org_manage_insert') THEN
         policy_sql := 'CREATE POLICY org_manage_insert ON public.' || quote_ident(tbl) || ' FOR INSERT TO authenticated WITH CHECK (' ||
-          ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+          ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = (select auth.uid())' ||
           ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
           ' AND (m.organization_id)::text = ' || org_expr || ' )' ||
           ' );';
@@ -160,7 +160,7 @@ BEGIN
 
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = 'org_manage_update') THEN
         policy_sql := 'CREATE POLICY org_manage_update ON public.' || quote_ident(tbl) || ' FOR UPDATE TO authenticated USING (' ||
-          ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+          ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = (select auth.uid())' ||
           ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
           ' AND (m.organization_id)::text = ' || org_expr || ' )' ||
           ' );';
@@ -170,7 +170,7 @@ BEGIN
 
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = 'org_manage_delete') THEN
         policy_sql := 'CREATE POLICY org_manage_delete ON public.' || quote_ident(tbl) || ' FOR DELETE TO authenticated USING (' ||
-          ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+          ' EXISTS (SELECT 1 FROM public.organization_memberships m WHERE m.user_id = (select auth.uid())' ||
           ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
           ' AND (m.organization_id)::text = ' || org_expr || ' )' ||
           ' );';
@@ -210,7 +210,7 @@ BEGIN
 
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = 'owner_all') THEN
   -- Use constructed owner_expr in the policy
-  EXECUTE 'CREATE POLICY owner_all ON public.' || quote_ident(tbl) || ' FOR ALL TO authenticated USING ((auth.uid())::text = ' || owner_expr || ') WITH CHECK ((auth.uid())::text = ' || owner_expr || ');';
+  EXECUTE 'CREATE POLICY owner_all ON public.' || quote_ident(tbl) || ' FOR ALL TO authenticated USING ((select auth.uid())::text = ' || owner_expr || ') WITH CHECK ((select auth.uid())::text = ' || owner_expr || ');';
         RAISE NOTICE 'Created owner_all on %', tbl;
       ELSE
         RAISE NOTICE 'owner_all already exists on %', tbl;

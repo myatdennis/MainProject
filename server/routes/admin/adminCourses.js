@@ -122,11 +122,12 @@ async function bulkDeleteHandler(req, res) {
 
 export function registerAdminCoursesRoutes(app) {
   const router = express.Router();
+  const isDev = process.env.NODE_ENV !== 'production';
 
   // Admin courses guard middleware (migrated from server/index.js)
   router.use((req, res, next) => {
     try {
-      if (req.method && req.method.toUpperCase() === 'POST') {
+      if (isDev && req.method && req.method.toUpperCase() === 'POST') {
         console.log('[ADMIN COURSES REQUEST]', {
           path: req.path,
           method: req.method,

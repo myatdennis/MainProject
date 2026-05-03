@@ -119,9 +119,9 @@ BEGIN
 
       IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = policy_org) THEN
         policy_sql := 'CREATE POLICY ' || quote_ident(policy_org) || ' ON public.' || quote_ident(tbl) ||
-                      ' FOR ALL TO authenticated USING ( EXISTS ( SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+                      ' FOR ALL TO authenticated USING ( EXISTS ( SELECT 1 FROM public.organization_memberships m WHERE m.user_id = (select auth.uid())' ||
                       ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
-                      ' AND (m.organization_id)::text = ' || org_expr || ' ) ) WITH CHECK ( EXISTS ( SELECT 1 FROM public.organization_memberships m WHERE m.user_id = auth.uid()' ||
+                      ' AND (m.organization_id)::text = ' || org_expr || ' ) ) WITH CHECK ( EXISTS ( SELECT 1 FROM public.organization_memberships m WHERE m.user_id = (select auth.uid())' ||
                       ' AND lower(coalesce(m.role, ''member'')) = ANY (ARRAY[''owner'',''admin'',''editor''])' ||
                       ' AND (m.organization_id)::text = ' || org_expr || ' ) );';
         RAISE NOTICE 'Policy SQL for org-members on %: %', tbl, policy_sql;
@@ -158,7 +158,7 @@ BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = tbl AND p.policyname = policy_owner) THEN
             -- Construct policy SQL using only existing owner columns
             policy_sql := 'CREATE POLICY ' || quote_ident(policy_owner) || ' ON public.' || quote_ident(tbl) ||
-                          ' FOR ALL TO authenticated USING ((auth.uid())::text = ' || owner_expr || ') WITH CHECK ((auth.uid())::text = ' || owner_expr || ');';
+                          ' FOR ALL TO authenticated USING ((select auth.uid())::text = ' || owner_expr || ') WITH CHECK ((select auth.uid())::text = ' || owner_expr || ');';
             RAISE NOTICE 'Owner policy SQL for %: %', tbl, policy_sql;
             EXECUTE policy_sql;
             RAISE NOTICE 'Created owner-based policy on %', tbl;

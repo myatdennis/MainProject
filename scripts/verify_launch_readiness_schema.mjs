@@ -2,7 +2,7 @@ import sql from '../server/db.js';
 
 const requiredIndexes = [
   ['courses_org_slug_unique_idx'],
-  ['user_course_progress_unique'],
+  ['user_course_progress_unique', 'user_course_progress_pkey'],
   ['user_lesson_progress_unique'],
   ['organization_memberships_unique', 'organization_memberships_unique_organization_id_user_id'],
 ];

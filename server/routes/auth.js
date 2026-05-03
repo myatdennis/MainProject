@@ -26,6 +26,7 @@ import {
 import { supabaseAuthClient, getActiveSupabaseClient, requireSupabaseAdminClient } from '../lib/supabaseClient.js';
 import { getUserMemberships } from '../utils/memberships.js';
 import { verifySupabaseToken } from '../middleware/supabaseJwt.js';
+import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 import { attachAuthCookies, clearAuthCookies, getRefreshTokenFromRequest } from '../utils/authCookies.js';
 
@@ -519,8 +520,9 @@ const loginHandler = async (req, res) => {
       });
     }
 
-    console.log("LOGIN HIT");
-    console.log("EMAIL:", email);
+    if (!isProduction && devLoginDiagnosticsEnabled) {
+      console.info('[auth/login] submit', { emailPresent: Boolean(email) });
+    }
 
     if (!supabaseAuthClient) {
       const configError = buildAuthConfigError();
@@ -540,9 +542,11 @@ const loginHandler = async (req, res) => {
 
     const session = data.session;
 
-    console.log("LOGIN SUCCESS", {
-      userId: data.user?.id,
-    });
+    if (!isProduction && devLoginDiagnosticsEnabled) {
+      console.info('[auth/login] success', {
+        userId: data.user?.id,
+      });
+    }
 
     const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-login]' });
     const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
@@ -567,9 +571,12 @@ const loginRateLimiter = authLimiter;
 // Add fail-open fallback for login route
 router.post('/login', loginRateLimiter, asyncHandler(async (req, res, next) => {
   try {
-    console.log("LOGIN HIT");
-    console.log("EMAIL:", req.body?.email);
-    console.log("SUPABASE URL:", process.env.SUPABASE_URL);
+    if (!isProduction && devLoginDiagnosticsEnabled) {
+      console.info('[auth/login] route_hit', {
+        emailPresent: Boolean(req.body?.email),
+        supabaseConfigured: Boolean(process.env.SUPABASE_URL),
+      });
+    }
 
     await loginHandler(req, res, next);
   } catch (err) {
@@ -631,6 +638,8 @@ router.post('/register', authLimiter, async (req, res) => {
       });
     }
 
+    // Resolve the active supabase client for this request (may be null in demo/test modes)
+    const supabase = getActiveSupabaseClient(req);
     if (!supabase || !supabaseAuthClient) {
       const configError = buildAuthConfigError();
       return res.status(configError.status).json(configError);
@@ -776,7 +785,12 @@ router.post('/register', authLimiter, async (req, res) => {
     } catch (error) {
       console.error('Registration persistence error:', error);
       if (createdAuthUserId) {
-        await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
+        try {
+          const adminDel = requireSupabaseAdminClient();
+          await adminDel.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
+        } catch (e) {
+          // best-effort cleanup; swallow errors
+        }
       }
       res.status(500).json({
         code: 'REGISTRATION_FAILED',
@@ -1048,7 +1062,8 @@ router.post('/self-heal-membership', async (req, res) => {
     });
   }
 
-  const userId = req.user?.userId;
+  const effectiveUser = getEffectiveUser(req);
+  const userId = effectiveUser?.id || effectiveUser?.userId || null;
   if (!userId) {
     return res.status(401).json({
       code: 'NOT_AUTHENTICATED',
@@ -1093,7 +1108,8 @@ router.get('/me', async (req, res) => {
         message: 'You must be signed in to access this resource.',
       });
     }
-    
+    // Resolve the active supabase client for this request
+    const supabase = getActiveSupabaseClient(req);
     if (!supabase || isDemoModeExplicit || isE2ETestMode) {
       // Return token data in demo mode
       return res.json({
@@ -1105,7 +1121,7 @@ router.get('/me', async (req, res) => {
     const { data: user, error } = await supabase
       .from('user_profiles')
       .select('id, email, first_name, last_name, role, organization_id, is_active')
-      .eq('id', req.user.userId)
+      .eq('id', userId)
       .single();
     
     if (error || !user) {

@@ -25,6 +25,9 @@ const wrapClientWithTimeout = (client, ms = Number(process.env.SUPABASE_CALL_TIM
         return function wrapped(...args) {
           try {
             const result = v.apply(target, args);
+            if (['from', 'schema', 'rpc'].includes(String(prop))) {
+              return result;
+            }
             return withTimeoutMs(result, ms);
           } catch (err) {
             return Promise.reject(err);
@@ -80,11 +83,13 @@ try {
 } catch {
   urlHostSafe = null;
 }
-console.log('[SUPABASE CONFIG]', {
-  urlHost: urlHostSafe,
-  hasServiceKey: !!configuredSupabaseServiceKey,
-  hasAnonKey: !!configuredSupabaseAnonKey,
-});
+if (process.env.NODE_ENV !== 'production') {
+  console.log('[SUPABASE CONFIG]', {
+    urlHost: urlHostSafe,
+    hasServiceKey: !!configuredSupabaseServiceKey,
+    hasAnonKey: !!configuredSupabaseAnonKey,
+  });
+}
 
 let cachedAdminClient = null;
 let cachedAdminSignature = null;
@@ -226,6 +231,7 @@ export function getActiveSupabaseClient() {
   // Fallback to a shared anon client (no JWT)
   const anon = getSupabaseUserClient();
   if (anon) return anon;
+  console.warn('[ADMIN FALLBACK USED]');
   return getSupabaseAdminClient();
 }
 

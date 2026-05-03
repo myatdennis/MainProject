@@ -273,7 +273,9 @@ export default async function authorizedFetch(
     const headers = new Headers(init.headers || {});
     // Attach request id for server-side correlation
     if (!headers.has('X-Request-Id')) headers.set('X-Request-Id', requestId);
-    console.info('[request_start]', { requestId, url: extractPathname(url), attempt });
+    if (devMode) {
+      console.info('[request_start]', { requestId, url: extractPathname(url), attempt });
+    }
     let token: string | null = null;
     const e2eBypass = isE2EBypassActive();
     const allowE2EBypass = e2eBypass && !import.meta.env.PROD;
@@ -366,7 +368,6 @@ export default async function authorizedFetch(
     if (devMode && extractPathname(url) === '/api/admin/me') {
       console.debug('[authorizedFetch][dev] /api/admin/me Authorization', {
         attached: Boolean(token),
-        tokenPreview: token ? `${token.slice(0, 6)}…${token.slice(-6)}` : null,
       });
     }
 
@@ -388,12 +389,17 @@ export default async function authorizedFetch(
       if (isAuthEndpoint(targetUrl)) {
         if (import.meta.env?.DEV) {
           console.log('[AUTH REQUEST]', targetUrl);
-          console.log('[COOKIES]', readCookieSnapshot());
         }
       }
       const native = getNativeFetch();
       // In test runs prefer the global fetch so test spies/mocks observe calls.
       const fetchImpl = (isTest ? (globalThis as any).fetch : undefined) ?? native ?? fetch;
+      if (devMode) {
+        console.log('[REQUEST]', {
+          url: targetUrl,
+          hasToken: !!token,
+        });
+      }
       response = await fetchImpl(targetUrl, {
         ...init,
         // Ensure credentials are always included so cookies are sent for auth
@@ -404,10 +410,11 @@ export default async function authorizedFetch(
       if (isAuthEndpoint(targetUrl)) {
         if (import.meta.env?.DEV) {
           console.log('[AUTH RESPONSE]', response.status);
-          console.log('[COOKIES]', readCookieSnapshot());
         }
       }
-      console.info('[request_success]', { requestId, url: extractPathname(url), status: response.status, attempt });
+      if (devMode) {
+        console.info('[request_success]', { requestId, url: extractPathname(url), status: response.status, attempt });
+      }
     } catch (error: any) {
       cleanup();
       console.warn('[request_failure]', { requestId, url: extractPathname(url), attempt, error });
