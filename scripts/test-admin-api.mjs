@@ -9,6 +9,14 @@ if (!EMAIL || !PASSWORD) {
   process.exit(1);
 }
 
+const buildCookieHeader = (headers) => {
+  const rawCookies =
+    typeof headers.raw === 'function'
+      ? headers.raw()['set-cookie'] || []
+      : [headers.get('set-cookie')].filter(Boolean);
+  return rawCookies.map((entry) => String(entry).split(';')[0]).filter(Boolean).join('; ');
+};
+
 async function test() {
   // Step 1: login to obtain session cookie
   const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
@@ -23,8 +31,8 @@ async function test() {
     process.exit(2);
   }
 
-  const setCookie = loginRes.headers.get('set-cookie');
-  if (!setCookie) {
+  const cookieHeader = buildCookieHeader(loginRes.headers);
+  if (!cookieHeader) {
     console.error('Login did not return set-cookie header. Full headers:', Array.from(loginRes.headers.entries()));
     process.exit(3);
   }
@@ -34,7 +42,7 @@ async function test() {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      Cookie: setCookie,
+      Cookie: cookieHeader,
     },
   });
 

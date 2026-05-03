@@ -353,12 +353,15 @@ const isUuid = (value) => {
 };
 
 const resolveUserIdFromEmail = async (userId) => {
-  if (!supabase || !userId || isUuid(userId)) return userId;
+  // Use the admin client for lookups so this util doesn't depend on a
+  // per-request user client being bound to a module-global `supabase`.
+  const admin = getSupabaseAdminClient();
+  if (!admin || !userId || isUuid(userId)) return userId;
   const email = String(userId).trim().toLowerCase();
   if (!email.includes('@')) return userId;
 
   try {
-    const { data, error } = await supabase.from('user_profiles').select('id').eq('email', email).maybeSingle();
+    const { data, error } = await admin.from('user_profiles').select('id').eq('email', email).maybeSingle();
     if (error) {
       console.warn('[memberships] user_profile_lookup_failed', { userId, code: error.code, message: error.message });
       return userId;

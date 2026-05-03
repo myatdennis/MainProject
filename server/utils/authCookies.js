@@ -67,8 +67,14 @@ export function getCookieOptions(...args) {
     ...safeOverrides,
   };
 
-  // Temporary debug to verify runtime cookie policy in local dev
-  console.log('[COOKIE FINAL]', finalOptions);
+  if (!isProduction) {
+    console.log('[COOKIE FINAL]', {
+      httpOnly: finalOptions.httpOnly,
+      secure: finalOptions.secure,
+      sameSite: finalOptions.sameSite,
+      hasDomain: Boolean(finalOptions.domain),
+    });
+  }
 
   return finalOptions;
 }
@@ -105,7 +111,14 @@ export function getPublicCookieOptions(...args) {
     ...sanitizeOverrides(overrides),
   };
 
-  console.log('[COOKIE FINAL]', finalOptions);
+  if (!isProduction) {
+    console.log('[COOKIE FINAL]', {
+      httpOnly: finalOptions.httpOnly,
+      secure: finalOptions.secure,
+      sameSite: finalOptions.sameSite,
+      hasDomain: Boolean(finalOptions.domain),
+    });
+  }
   return finalOptions;
 }
 

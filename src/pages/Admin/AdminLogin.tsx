@@ -499,7 +499,9 @@ const AdminLogin: React.FC = () => {
 
     clearAdminAccessSnapshot();
 
-    console.log("[SUBMIT HIT]", { email, password });
+    if (import.meta.env.DEV) {
+      console.info('[AdminLogin] submit', { emailPresent: Boolean(sanitizedEmail) });
+    }
 
     let result;
     try {

@@ -1,6 +1,9 @@
 import dotenv from 'dotenv';
 dotenv.config();
-console.log("DOTENV LOADED");
+const isDevRuntime = process.env.NODE_ENV !== 'production';
+if (isDevRuntime) {
+  console.log('DOTENV LOADED');
+}
 
 // FINAL AUTH SYSTEM:
 // req.user is the ONLY source of truth
@@ -8,11 +11,12 @@ console.log("DOTENV LOADED");
 // NO legacy auth fields exist anywhere
 // DO NOT introduce new user objects
 
-console.log("ENV CHECK START");
-console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
-console.log("SERVICE ROLE LENGTH:", process.env.SUPABASE_SERVICE_ROLE_KEY?.length);
-console.log("SERVICE ROLE PREVIEW:", process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(0, 20));
-console.log("ENV CHECK END");
+if (isDevRuntime) {
+  console.log('ENV CHECK START');
+  console.log('SUPABASE_URL configured:', Boolean(process.env.SUPABASE_URL));
+  console.log('SERVICE ROLE configured:', Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY));
+  console.log('ENV CHECK END');
+}
 
 import './env/loadEnv.js';
 import express from 'express';
@@ -82,14 +86,16 @@ const COOKIE_DOMAIN = '.the-huddle.co';
   }
 })();
 
-console.log('[ENV CHECK]', {
-  SUPABASE_URL: SUPABASE_URL || 'https://abc123xyz.supabase.co',
-  DATABASE_POOLER_URL: DATABASE_POOLER_URL || 'postgresql://postgres.eprsgmfzqjptfywoecuy:ETWyHLaaJ9arfCm6@aws-0-us-west-2.pooler.supabase.com:5432/postgres',
-  JWT_ACCESS_SECRET: JWT_ACCESS_SECRET || 'your-jwt-access-secret',
-  JWT_REFRESH_SECRET: JWT_REFRESH_SECRET || 'your-jwt-refresh-secret',
-  COOKIE_DOMAIN: COOKIE_DOMAIN,
-  CORS_ALLOWED_ORIGINS: CORS_ALLOWED_ORIGINS,
-});
+if (isDevRuntime) {
+  console.log('[ENV CHECK]', {
+    SUPABASE_URL: Boolean(SUPABASE_URL),
+    DATABASE_POOLER_URL: Boolean(DATABASE_POOLER_URL),
+    JWT_ACCESS_SECRET: Boolean(JWT_ACCESS_SECRET),
+    JWT_REFRESH_SECRET: Boolean(JWT_REFRESH_SECRET),
+    COOKIE_DOMAIN: Boolean(COOKIE_DOMAIN),
+    CORS_ALLOWED_ORIGINS: Boolean(CORS_ALLOWED_ORIGINS),
+  });
+}
 // Startup guard: when running in E2E mode, do not allow the server to start
 // on the legacy port 3000. Running E2E on port 3000 previously caused
 // collisions with other local dev servers and led to mismatched API origins
@@ -281,6 +287,7 @@ import {
   // note: we keep the legacy exports from ./middleware/auth.js for compatibility
   requireAdmin,
   requireOrgAdmin,
+  requireOrg,
   optionalAuthenticate,
   resolveOrganizationContext,
   invalidateMembershipCache,
@@ -288,7 +295,8 @@ import {
   isPlatformAdmin,
 } from './middleware/auth.js';
 import { authenticate } from './middleware/authenticate.js';
-// compatibility shim removed — migrated to canonical req.user
+import authCompat from './middleware/authShim.js';
+import { e2eBypass } from './middleware/e2eBypass.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
 // Deprecated: supabaseJwtMiddleware replaced by single-source supabase session auth
 // import supabaseJwtMiddleware, {
@@ -1068,7 +1076,9 @@ const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .filter(Boolean);
 
 // Log CORS configuration at runtime
-console.log('[CORS]', process.env.CORS_ALLOWED_ORIGINS);
+if (isDevRuntime) {
+  console.log('[CORS]', Boolean(process.env.CORS_ALLOWED_ORIGINS));
+}
 
 const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
@@ -1082,12 +1092,14 @@ const cookieSameSite = cookiePolicySnapshot.sameSite;
 const cookieSecure = cookiePolicySnapshot.secure;
 
 // Log cookie configuration at runtime (do not leak secrets)
-console.log('[COOKIE CONFIG]', {
-  domain: isProd ? process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain : null,
-  secure: cookieSecure,
-  httpOnly: true,
-  sameSite: cookieSameSite,
-});
+if (isDevRuntime) {
+  console.log('[COOKIE CONFIG]', {
+    domain: isProd ? Boolean(process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain) : null,
+    secure: cookieSecure,
+    httpOnly: true,
+    sameSite: cookieSameSite,
+  });
+}
 
 // Confirm Supabase JWT secret status at startup using the same value the
 // JWT middleware captured at module-load time (SUPABASE_JWT_SECRET_CONFIGURED).
@@ -1340,24 +1352,6 @@ import createApp from './app.js';
 // the factory can mount routers/middleware onto the same app object.
 let app = express();
 
-// Ensure the guarded E2E bypass middleware is installed on the early app as well
-// so top-level mounts (like /api/admin/me) still honor the E2E guard when
-// the early app is used prior to the full createApp invocation.
-try {
-  // Import lazily to avoid circular imports during startup sequencing
-  const { e2eBypass } = await import('./middleware/e2eBypass.js');
-  app.use(e2eBypass);
-} catch (e) {
-  // non-fatal: if dynamic import fails, continue without the early bypass
-  console.warn('[startup] failed to attach early e2eBypass middleware', e?.message || e);
-}
-
-// Global E2E bypass middleware installed on the early app instance so it
-// runs before any prior top-level mounts in this file. This ensures that a
-// test harness can short-circuit auth for routes that were mounted earlier
-// during the bootstrap phase.
-// ...existing code...
-
 // -- Diagnostic helpers --------------------------------------------------
 // Wrap a promise and reject if it doesn't settle within `ms` milliseconds.
 const withTimeoutMs = (promise, ms, label = 'operation') => {
@@ -1386,6 +1380,9 @@ const wrapClientWithTimeout = (client, ms = 3000) => {
           return (...args) => {
             try {
               const result = val.apply(target, args);
+              if (['from', 'schema', 'rpc'].includes(String(prop))) {
+                return result;
+              }
               return withTimeoutMs(Promise.resolve(result), ms, `supabase.${String(prop)}`);
             } catch (err) {
               return Promise.reject(err);
@@ -1519,25 +1516,27 @@ app.use((req, res, next) => {
     const cookieBypassPresent = cookieHeader.includes('x-e2e-bypass=');
     const queryBypass = req.query && (typeof req.query.e2e_bypass !== 'undefined' || typeof req.query.e2eBypass !== 'undefined');
 
-    logger.info('[global-entry] request', {
-      method: req.method,
-      url: req.url,
-      requestId: req.requestId || null,
-      e2eBypass: {
-        headerPresent: Boolean(headerBypass),
-        headerValuePreview: headerBypass ? `${headerBypass}`.slice(0, 64) : null,
-        cookiePresent: cookieBypassPresent,
-        queryPresent: Boolean(queryBypass),
-      },
-      auth: {
-        authorizationPresent: Boolean(req.headers && req.headers.authorization),
-        authorizationPreview: typeof req.headers?.authorization === 'string' ? String(req.headers.authorization).slice(0,64) : null,
-      },
-      resolvedOrg: req.organizationId || null,
-    });
+    if (isDevRuntime) {
+      logger.info('[global-entry] request', {
+        method: req.method,
+        url: req.url,
+        requestId: req.requestId || null,
+        e2eBypass: {
+          headerPresent: Boolean(headerBypass),
+          cookiePresent: cookieBypassPresent,
+          queryPresent: Boolean(queryBypass),
+        },
+        auth: {
+          authorizationPresent: Boolean(req.headers && req.headers.authorization),
+        },
+        resolvedOrg: req.organizationId || null,
+      });
+    }
     // DEBUG: surface whether an upstream middleware already set req.user
     try {
-      console.info('[GLOBAL-ENTRY] req.user_present=', Boolean(req.user), 'userId=', req.user?.id || req.user?.userId || null);
+      if (isDevRuntime) {
+        console.info('[GLOBAL-ENTRY] req.user_present=', Boolean(req.user), 'userId=', req.user?.id || req.user?.userId || null);
+      }
     } catch (err) {
       // ignore
     }
@@ -1660,47 +1659,39 @@ app.use('/api/media', mediaRouter);
 const JSON_BODY_LIMIT = process.env.API_JSON_BODY_LIMIT || '25mb';
 
 // AUTH FLOW (DO NOT MODIFY ORDER):
-// e2eBypass → authenticate → routes
+// cookieParser → e2eBypass → authenticate → authCompat → resolveOrganizationContext
 app.use(attachRequestId);
 app.use(cookieParser());
-// Single-source authentication (Supabase client validation) must run after cookies are parsed.
-// E2E bypass middleware — when the special header is present we inject a
-// deterministic admin user onto req and mark the request as an e2e bypass.
-// This must run before authentication middleware so tests can opt-in to a
-// fast-path without changing production auth behavior.
-app.use((req, _res, next) => {
-  try {
-    const header = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
-    if (header === 'true') {
-      req.e2eBypass = true;
-      // Provide a minimal admin-shaped synthesized user without modifying
-      // the canonical req.user. This preserves the invariant that only the
-      // authenticate middleware or global test harness may set req.user.
-      const synth = {
-        id: '00000000-0000-0000-0000-000000000001',
-        userId: '00000000-0000-0000-0000-000000000001',
-        role: 'admin',
-        platformRole: 'platform_admin',
-      };
-      req.e2eSynthesized = true;
-      req.e2eSynthesizedUser = req.e2eSynthesizedUser || synth;
-      // Do not set req.user here on the early app; rely on e2eBypass middleware.
-      req.e2eSynthesizedUser = req.e2eSynthesizedUser || synth;
-      // Also ensure active org hint for admin flows (tests may override as needed)
-      req.activeOrgId = req.activeOrgId || null;
-    }
-  } catch (e) {
-    // swallow any middleware errors — do not block request startup
-    logger.warn('[e2e_bypass] middleware_failed', { error: e?.message || e });
-  }
-  return next();
-});
+if (isDevRuntime) {
+  console.log('[E2E MODE]', process.env.E2E_TEST_MODE);
+}
+app.use(e2eBypass);
+app.use(authenticate);
+app.use(authCompat);
+app.use(resolveOrganizationContext);
+app.use(['/api/admin', '/api/client'], requireOrg);
 
 // Safe, minimal admin identity endpoint that returns the canonical user shape (req.user).
 import { withAuth } from './middleware/withAuth.js';
 app.get('/api/admin/me', ...withAuth((req, res) => {
+  if (isDevRuntime) {
+    console.log('[ROUTE ENTRY]', {
+      route: '/api/admin/me',
+      hasUser: !!req.user,
+      userId: req.user?.id || req.user?.userId || null,
+      orgId: req.organizationId,
+    });
+    console.log('[ADMIN ME ENTRY]', {
+      hasUser: !!req.user,
+      userId: req.user?.id,
+      orgId: req.organizationId,
+      activeOrgId: req.activeOrgId,
+    });
+  }
+
   try {
-    if (!req.user || !req.user.id) {
+    const user = getEffectiveUser(req);
+    if (!user?.id && !user?.userId) {
       return res.status(401).json({ ok: false, error: 'unauthenticated' });
     }
     return res.json({ ok: true, data: { user: req.user } });
@@ -1721,18 +1712,25 @@ app.use('/api', (req, _res, next) => {
     req.cookies?.accessToken ||
     req.cookies?.sb_access_token ||
     null;
-  // User-requested explicit token presence log for debugging auth propagation
-  console.log('TOKEN FOUND:', !!req.headers.authorization || !!req.cookies);
+  if (isDevRuntime) {
+    console.log('TOKEN FOUND:', !!req.headers.authorization || !!req.cookies);
+  }
   try {
-    console.info('[SUPABASE BIND] creating per-request supabase client', { requestId: req.requestId || null });
+    if (isDevRuntime) {
+      console.info('[SUPABASE BIND] creating per-request supabase client', { requestId: req.requestId || null });
+    }
     const requestSupabase = createSupabaseClientForToken(token);
     if (requestSupabase) {
       // Wrap client methods with timeout guards so long-running DB calls fail fast
       const wrapped = wrapClientWithTimeout(requestSupabase, Number(process.env.SUPABASE_CALL_TIMEOUT_MS || 3000));
       setRequestSupabaseClient(wrapped);
-      console.info('[SUPABASE BIND] bound per-request supabase client with timeout proxy', { requestId: req.requestId || null });
+      if (isDevRuntime) {
+        console.info('[SUPABASE BIND] bound per-request supabase client with timeout proxy', { requestId: req.requestId || null });
+      }
     } else {
-      console.info('[SUPABASE BIND] no per-request supabase client created (null)', { requestId: req.requestId || null });
+      if (isDevRuntime) {
+        console.info('[SUPABASE BIND] no per-request supabase client created (null)', { requestId: req.requestId || null });
+      }
     }
   } catch (error) {
     logger.warn('request_supabase_bind_failed', {
@@ -1749,6 +1747,18 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get('/api/health/full', (req, res) => {
+  const user = getEffectiveUser(req);
+  res.json({
+    ok: true,
+    user: Boolean(user),
+    userId: user?.id || user?.userId || null,
+    orgId: req.organizationId || null,
+    role: user?.role || null,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Lightweight metrics middleware
@@ -1797,7 +1807,7 @@ app.get('/api/_admin_elevation', (req, res) => {
         allowed: true,
         primaryAdmin: primaryAdmin,
         overrideEnabled: overrideEnabled,
-        requestUser: req.user ? { id: req.user.id || null, email: req.user.email || null, role: req.user.role || null, platformRole: req.user.platformRole || null } : null,
+        requestUser: effUser ? { id: effUser.id || effUser.userId || null, role: effUser.role || null, platformRole: effUser.platformRole || null } : null,
         isPlatformAdmin,
         elevatedBy: isPlatformAdmin ? elevatedBy : null,
       },
@@ -3349,11 +3359,15 @@ logger.info('diagnostics_supabase_env', {
   serviceKeySource: supabaseEnv.serviceKeySource || null,
 });
 
-console.log('[supabase] startup', {
-  host: supabaseUrlHost || '(not set)',
-  serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
-});
-console.log("SUPABASE URL:", process.env.SUPABASE_URL);
+if (isDevRuntime) {
+  console.log('[supabase] startup', {
+    host: supabaseUrlHost || '(not set)',
+    serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
+  });
+}
+if (isDevRuntime) {
+  console.log('SUPABASE URL configured:', Boolean(process.env.SUPABASE_URL));
+}
 
 // Startup banner for production readiness
 console.info('========================================');
@@ -7664,31 +7678,32 @@ const normalizeAssignmentUserIds = (rawList = []) => {
 };
 
 const getRequestContext = (req) => {
-  if (!req.user) {
+  const effectiveUser = getEffectiveUser(req);
+  if (!effectiveUser) {
     return { userId: null, userRole: null, memberships: [], organizationIds: [], requestedOrgId: null };
   }
 
-  const normalizedActiveOrg = normalizeOrgIdValue(req.activeOrgId ?? req.user?.activeOrgId ?? null);
-  const appMetadata = req.user?.app_metadata && typeof req.user.app_metadata === 'object'
-    ? req.user.app_metadata
-    : req.user?.appMetadata && typeof req.user.appMetadata === 'object'
-      ? req.user.appMetadata
+  const normalizedActiveOrg = normalizeOrgIdValue(req.activeOrgId ?? effectiveUser.activeOrgId ?? null);
+  const appMetadata = effectiveUser.app_metadata && typeof effectiveUser.app_metadata === 'object'
+    ? effectiveUser.app_metadata
+    : effectiveUser.appMetadata && typeof effectiveUser.appMetadata === 'object'
+      ? effectiveUser.appMetadata
       : {};
   const platformRoleFromMetadata = String(appMetadata.platform_role || '').trim().toLowerCase();
-  const platformRoleFromUser = String(req.user?.platformRole || '').trim().toLowerCase();
+  const platformRoleFromUser = String(effectiveUser.platformRole || '').trim().toLowerCase();
   const resolvedPlatformRole = platformRoleFromMetadata || platformRoleFromUser || null;
   const platformRoleFromAdminElevation = String(req.adminElevation?.platformRole || '').trim().toLowerCase();
   const platformRoleFromE2e = String(req.e2eSynthesizedUser?.platformRole || '').trim().toLowerCase();
   const resolvedPlatformRoleFinal = resolvedPlatformRole || platformRoleFromAdminElevation || platformRoleFromE2e || null;
   const isPlatformAdminFlag =
-    Boolean(req.user?.isPlatformAdmin) || Boolean(req.adminElevation?.isPlatformAdmin) || Boolean(req.e2eSynthesizedUser?.isPlatformAdmin) || String(resolvedPlatformRoleFinal || '').toLowerCase() === 'platform_admin';
+    Boolean(effectiveUser.isPlatformAdmin) || Boolean(req.adminElevation?.isPlatformAdmin) || Boolean(req.e2eSynthesizedUser?.isPlatformAdmin) || String(resolvedPlatformRoleFinal || '').toLowerCase() === 'platform_admin';
 
   return {
-    userId: req.user.userId || req.user.id || null,
-    userRole: (req.user.role || req.user.platformRole || '').toLowerCase(),
+    userId: effectiveUser.userId || effectiveUser.id || null,
+    userRole: (effectiveUser.role || effectiveUser.platformRole || '').toLowerCase(),
     platformRole: resolvedPlatformRoleFinal || null,
-    memberships: req.user.memberships || req.e2eSynthesizedUser?.memberships || [],
-    organizationIds: Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [],
+    memberships: effectiveUser.memberships || req.e2eSynthesizedUser?.memberships || [],
+    organizationIds: Array.isArray(effectiveUser.organizationIds) ? effectiveUser.organizationIds : [],
     isPlatformAdmin: Boolean(isPlatformAdminFlag),
     requestedOrgId: normalizedActiveOrg,
     activeOrganizationId: normalizedActiveOrg,
@@ -8160,6 +8175,16 @@ app.get(
   '/api/admin/me',
   requireAdminAccess,
   asyncHandler((req, res) => {
+    const effectiveUser = getEffectiveUser(req);
+    if (isDevRuntime) {
+      console.log('[ADMIN ME ENTRY]', {
+        hasUser: !!effectiveUser,
+        userId: effectiveUser?.id || effectiveUser?.userId || null,
+        orgId: req.organizationId,
+        activeOrgId: req.activeOrgId,
+      });
+    }
+
     const user = req.user;
     const adminPortalAllowed = req.adminPortalAllowed === true;
     const accessReason =

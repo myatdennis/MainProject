@@ -13,6 +13,7 @@ const FALLBACK_SUPERUSER = {
   platformRole: 'platform_admin',
   isPlatformAdmin: true,
 };
+const isDev = process.env.NODE_ENV !== 'production';
 
 const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
   const admin = getSupabaseAdminClient();
@@ -136,9 +137,13 @@ const ensureAdminAccess = async (req, res) => {
         // non-fatal
       }
       try {
-        console.info('[requireAdminAccess] e2e_injected_orgs', { requestId: req.requestId ?? null, userId: req.e2eSynthesizedUser?.id, activeOrgId: req.activeOrgId, memberships: req.e2eSynthesizedUser?.memberships });
+        if (isDev) {
+          console.info('[requireAdminAccess] e2e_injected_orgs', { requestId: req.requestId ?? null, userId: req.e2eSynthesizedUser?.id, activeOrgId: req.activeOrgId, membershipCount: req.e2eSynthesizedUser?.memberships?.length ?? 0 });
+        }
       } catch (e) {}
-  console.info('[requireAdminAccess] e2e_header_bypass granted', { requestId: req.requestId ?? null, userId: req.e2eSynthesizedUser?.id });
+  if (isDev) {
+    console.info('[requireAdminAccess] e2e_header_bypass granted', { requestId: req.requestId ?? null, userId: req.e2eSynthesizedUser?.id });
+  }
   // For E2E runs, allow the bypass to elevate to platform admin so test harnesses
   // can exercise admin-only endpoints. This is strictly guarded by E2E_TEST_MODE.
   return grantAdminAccess(req, 'e2e_header_bypass', { elevatePlatformAdmin: true });
@@ -162,9 +167,18 @@ const ensureAdminAccess = async (req, res) => {
   }
 
   const safeFallbackEnabled = !isProduction && fallbackFlagEnabled(process.env.E2E_TEST_MODE);
-  console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, user: req?.user });
+  if (isDev) {
+    console.log('[requireAdminAccess] safeFallbackEnabled', {
+      safeFallbackEnabled,
+      userId: req?.user?.id || req?.user?.userId || null,
+    });
+  }
 
   if (safeFallbackEnabled) {
+    console.warn('[ADMIN FALLBACK USED]', {
+      reason: 'requireAdminAccess_safe_fallback',
+      path: req.originalUrl || req.url || null,
+    });
     // In E2E mode, bypass external allowlist lookups, but DO NOT elevate to platform-admin.
     // Preserve the org scope embedded in the token so cross-org operations still enforce correctly.
   req.e2eSynthesizedUser = req.e2eSynthesizedUser || { ...FALLBACK_SUPERUSER };
@@ -202,11 +216,13 @@ const ensureAdminAccess = async (req, res) => {
       return false;
     }
 
-    console.log('[requireAdminAccess] granted e2e_fallback', { userId: req.user?.id });
+    if (isDev) {
+      console.log('[requireAdminAccess] granted e2e_fallback', { userId: req.user?.id || req.user?.userId || null });
+    }
     return grantAdminAccess(req, 'e2e_fallback', { elevatePlatformAdmin: false });
   }
 
-  const user = req.user || req.e2eSynthesizedUser || null;
+  const user = getEffectiveUser(req) || req.e2eSynthesizedUser || null;
   if (!user?.id) {
     console.warn('[requireAdminAccess] auth_required_missing_user_id', {
       requestId: req.requestId ?? null,

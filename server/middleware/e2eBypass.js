@@ -1,5 +1,7 @@
 import { finalizeUser } from '../lib/finalizeUser.js';
 
+const isDev = process.env.NODE_ENV !== 'production';
+
 export function e2eBypass(req, res, next) {
   const isE2E =
     String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' &&
@@ -8,8 +10,18 @@ export function e2eBypass(req, res, next) {
   try {
     const bypassHeader = typeof req.headers['x-e2e-bypass'] !== 'undefined' ? String(req.headers['x-e2e-bypass']) : null;
     // Debug: log E2E bypass decision inputs
-    console.info('[e2eBypass] invoked', { isE2E, nodeEnv: process.env.NODE_ENV, bypassHeader });
-    if (isE2E && bypassHeader === '1') {
+    if (isDev) {
+      console.log('[E2E MODE]', process.env.E2E_TEST_MODE);
+      console.info('[e2eBypass] invoked', { isE2E, nodeEnv: process.env.NODE_ENV, bypassHeader: Boolean(bypassHeader) });
+    }
+    const normalizedBypass = String(bypassHeader || '').trim().toLowerCase();
+    if (isE2E && ['1', 'true', 'yes', 'on'].includes(normalizedBypass)) {
+      const headerOrg =
+        req.headers['x-organization-id'] ||
+        req.headers['x-org-id'] ||
+        req.query?.organizationId ||
+        req.query?.orgId ||
+        'demo-sandbox-org';
       const synth = {
         id: '00000000-0000-0000-0000-000000000001',
         userId: '00000000-0000-0000-0000-000000000001',
@@ -17,6 +29,9 @@ export function e2eBypass(req, res, next) {
         role: 'platform_admin',
         platformRole: 'platform_admin',
         isPlatformAdmin: true,
+        organizationIds: [headerOrg],
+        activeOrgId: headerOrg,
+        organizationId: headerOrg,
         e2eSynthesized: true,
       };
       req.e2eSynthesized = true;
@@ -27,6 +42,7 @@ export function e2eBypass(req, res, next) {
         // Finalize canonical user via central helper (freezes in non-prod)
         req.user = finalizeUser(synth);
         req.userId = req.userId || req.user.userId || req.user.id || null;
+        req.organizationId = req.organizationId || req.user.organizationId || null;
         req.activeOrgId = req.activeOrgId || req.user.organizationId || null;
         req.userPermissions = req.userPermissions || new Set(Array.isArray(req.user.permissions) ? req.user.permissions : []);
       }

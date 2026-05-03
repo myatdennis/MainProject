@@ -4,7 +4,7 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import { supabaseAuthClient, supabaseEnv, createSupabaseClientForToken, setRequestSupabaseClient, getSupabaseAdminClient } from '../lib/supabaseClient.js';
+import { supabaseAuthClient, supabaseEnv, createSupabaseClientForToken, setRequestSupabaseClient, getSupabaseAdminClient, getActiveSupabaseClient } from '../lib/supabaseClient.js';
 import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { getActiveOrgFromRequest, getAccessTokenFromRequest } from '../utils/authCookies.js';
@@ -218,6 +218,24 @@ export function isPlatformAdmin(user = {}) {
 
   return platformRole === 'platform_admin' || Boolean(user.isPlatformAdmin);
 };
+
+export function requireOrg(req, res, next) {
+  const user = getEffectiveUser(req);
+  if (!user?.id && !user?.userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const platformAdmin =
+    isPlatformAdmin(user) ||
+    user.role === 'platform_admin' ||
+    user.platformRole === 'platform_admin';
+
+  if (!req.organizationId && !platformAdmin) {
+    return res.status(403).json({ error: 'Organization context required' });
+  }
+
+  return next();
+}
 
 const resolveUserRole = (user = {}, memberships = []) => {
   const email = normalizeEmail(user.email || '');
@@ -715,6 +733,12 @@ async function loadMemberships(userId) {
   const rows = await getUserMemberships(userId, { logPrefix: '[auth-middleware]' });
   const diagnostics = getMembershipDiagnostics(rows);
   const mapped = mapMembershipRows(rows);
+  if (AUTH_VERBOSE_LOGGING) {
+    console.log('[ORG MEMBERSHIPS]', {
+      count: mapped?.length,
+      orgIds: mapped?.map(m => m.organization_id),
+    });
+  }
   if (diagnostics) {
     Object.defineProperty(mapped, '__diagnostics', {
       value: diagnostics,
@@ -1321,12 +1345,17 @@ export async function authenticate(req, res, next) {
 
 export async function requireAdmin(req, res, next) {
   const eff = getEffectiveUser(req) || {};
-  if (!eff || !eff.userId) {
-    console.warn('[requireAdmin] missing effective user');
+  const effectiveUserId = eff.userId || eff.id || null;
+  if (!eff || !effectiveUserId) {
+    console.warn('[requireAdmin] missing effective user', {
+      hasReqUser: !!req.user,
+      reqUserId: req.user?.id || req.user?.userId || null,
+      effectiveKeys: eff ? Object.keys(eff) : [],
+    });
     return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
-  const userId = typeof req.getUserId === 'function' ? req.getUserId() : (eff.userId || eff.id || null);
+  const userId = typeof req.getUserId === 'function' ? (req.getUserId() || effectiveUserId) : effectiveUserId;
   const role = typeof req.getUserRole === 'function' ? req.getUserRole() : (eff.role || null);
   if (process.env.NODE_ENV !== 'production') {
     console.log('[requireAdmin] context', { userId, role, platformRole: eff.platformRole, isPlatformAdmin: eff.isPlatformAdmin });
@@ -1730,27 +1759,106 @@ export async function optionalAuthenticate(req, res, next) {
   }
 }
 
-export function resolveOrganizationContext(req, res, next) {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
+export async function resolveOrganizationContext(req, res, next) {
+  const effectiveUser = getEffectiveUser(req);
+  if (AUTH_VERBOSE_LOGGING) {
+    console.log('[ORG RESOLUTION START]', {
+      userId: effectiveUser?.id || effectiveUser?.userId || null,
+    });
+    console.log('[ORG START]', {
+      userId: effectiveUser?.id || effectiveUser?.userId || null,
+    });
+  }
+
+  if (!effectiveUser) {
+    req.organizationId = req.organizationId ?? null;
+    req.activeOrgId = req.activeOrgId ?? null;
+    return next();
+  }
+
+  const userId = effectiveUser.userId || effectiveUser.id || null;
+  let memberships = [];
+  if (userId) {
+    try {
+      const supabase = getActiveSupabaseClient(req);
+      const { data, error } = await supabase
+        .from('organization_memberships')
+        .select('organization_id, role, status')
+        .eq('user_id', userId)
+        .eq('status', 'active');
+      if (error) {
+        console.error('[ORG MEMBERSHIPS ERROR]', {
+          userId,
+          message: error?.message || String(error),
+          code: error?.code || null,
+        });
+      } else {
+        memberships = Array.isArray(data) ? data : [];
+      }
+    } catch (error) {
+      console.error('[ORG MEMBERSHIPS ERROR]', {
+        userId,
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  if (AUTH_VERBOSE_LOGGING) {
+    console.log('[ORG MEMBERSHIPS]', {
+      count: memberships?.length,
+      orgIds: memberships?.map((m) => m.organization_id),
+    });
   }
 
   const requestedOrgId = getRequestedOrgId(req);
-  const orgIds = Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [];
+  const membershipOrgIds = memberships.map((m) => m.organization_id).filter(Boolean);
+  const existingOrgIds = Array.isArray(effectiveUser.organizationIds) ? effectiveUser.organizationIds : [];
+  const orgIds = membershipOrgIds.length > 0 ? membershipOrgIds : existingOrgIds;
   const singleOrgId = orgIds.length === 1 ? orgIds[0] : null;
+  const requestedMembership = requestedOrgId
+    ? memberships.find((m) => String(m.organization_id) === String(requestedOrgId))
+    : null;
   const inferredOrgId =
-    requestedOrgId ||
+    requestedMembership?.organization_id ||
     req.activeOrgId ||
-    req.user.activeOrgId ||
-    // Only allow implicit orgId when the user is single-org.
+    effectiveUser.activeOrgId ||
     singleOrgId ||
+    memberships[0]?.organization_id ||
     null;
 
-  req.activeOrgId = inferredOrgId;
+  if (!memberships || memberships.length === 0) {
+    req.organizationId = null;
+    req.activeOrgId = null;
+    req.orgMemberships = new Map();
+  } else {
+    req.organizationId = inferredOrgId;
+    req.activeOrgId = inferredOrgId;
+    req.orgMemberships = new Map(
+      memberships.map((m) => [
+        String(m.organization_id),
+        {
+          ...m,
+          orgId: m.organization_id,
+          organizationId: m.organization_id,
+        },
+      ]),
+    );
+  }
+  if (AUTH_VERBOSE_LOGGING) {
+    console.log('[ORG SELECTED]', {
+      activeOrgId: req.organizationId,
+      reqActiveOrgId: req.activeOrgId,
+    });
+    console.log('[ORG FINAL]', req.organizationId);
+  }
 
   // Enforce org scoping for non-platform admins: all admin endpoints should be bound to an org.
   const eff = getEffectiveUser(req) || {};
-  if (!eff?.isPlatformAdmin && !inferredOrgId) {
+  const platformAdmin =
+    eff?.isPlatformAdmin === true ||
+    eff?.role === 'platform_admin' ||
+    eff?.platformRole === 'platform_admin';
+  if (!platformAdmin && !req.organizationId) {
     const reason = orgIds.length > 1 ? 'org_selection_required' : 'org_scope_required';
     return res.status(403).json({
       error: reason,

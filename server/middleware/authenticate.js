@@ -2,13 +2,32 @@ import cookieParser from 'cookie-parser';
 import { finalizeUser } from '../lib/finalizeUser.js';
 import { supabaseAuthClient, createSupabaseClientForToken, setRequestSupabaseClient } from '../lib/supabaseClient.js';
 
+const isDev = process.env.NODE_ENV !== 'production';
+
 export async function authenticate(req, res, next) {
   try {
+    if (isDev) {
+      console.log('[AUTH START]', {
+        hasAuthHeader: !!req.headers.authorization,
+        hasCookie: !!req.cookies,
+      });
+      console.log('[AUTH CHECK]', {
+        hasHeader: !!req.headers.authorization,
+        hasCookie: !!req.cookies,
+      });
+    }
+
     // CRITICAL:
     // This middleware MUST NOT overwrite an existing req.user.
     // req.user may be set upstream (e.g., E2E bypass or future integrations).
     if (req.user) {
-      // CRITICAL: do not overwrite existing req.user; preserve silently.
+      if (isDev) {
+        console.log('[AUTH RESULT]', {
+          hasUser: true,
+          userId: req.user?.id || req.user?.userId || null,
+          preserved: true,
+        });
+      }
       return next();
     }
 
@@ -18,6 +37,16 @@ export async function authenticate(req, res, next) {
       (req.headers.authorization || '').replace('Bearer ', '');
 
     if (!token) {
+      console.warn('[AUTH MISSING TOKEN]', {
+        path: req.originalUrl || req.url || null,
+        hasHeader: !!req.headers.authorization,
+      });
+      if (isDev) {
+        console.log('[AUTH RESULT]', {
+          hasUser: false,
+          userId: null,
+        });
+      }
       return next(); // DO NOT set req.user = null
     }
 
@@ -45,8 +74,15 @@ export async function authenticate(req, res, next) {
     }
 
     if (error || !data?.user) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[AUTH FAIL]', error?.message);
+      console.warn('[AUTH INVALID TOKEN]', {
+        reason: error?.message || 'supabase_user_missing',
+        path: req.originalUrl || req.url || null,
+      });
+      if (isDev) {
+        console.log('[AUTH RESULT]', {
+          hasUser: false,
+          userId: null,
+        });
       }
       return next(); // DO NOT clear req.user
     }
@@ -65,14 +101,23 @@ export async function authenticate(req, res, next) {
 
     req.user = finalizeUser({
       id: user.id,
+      userId: user.id,
       email: user.email,
       role: user.app_metadata?.role || 'user',
       platformRole: user.app_metadata?.platform_role || null,
       isPlatformAdmin: user.app_metadata?.platform_role === 'platform_admin'
     });
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[AUTH SUCCESS]', req.user.id);
+    if (isDev) {
+      console.log('[AUTH TOKEN]', {
+        hasUser: !!req.user,
+        userId: req.user?.id,
+      });
+      console.log('[AUTH RESULT]', {
+        hasUser: !!req.user,
+        userId: req.user?.id || req.user?.userId || null,
+      });
+      console.log('[AUTH SUCCESS]', req.user?.id || req.user?.userId || null);
     }
 
     // req.user finalization (freeze) is handled by finalizeUser
@@ -80,7 +125,16 @@ export async function authenticate(req, res, next) {
     return next();
 
   } catch (err) {
-    console.error('[AUTH ERROR]', err);
+    console.error('[AUTH ERROR]', {
+      reason: err?.message || String(err),
+      path: req.originalUrl || req.url || null,
+    });
+    if (isDev) {
+      console.log('[AUTH RESULT]', {
+        hasUser: false,
+        userId: null,
+      });
+    }
     return next();
   }
 }
