@@ -52,7 +52,7 @@ import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
-import { apiRequestRaw } from '../../utils/apiClient';
+import { ApiError, apiRequestRaw } from '../../utils/apiClient';
 
 
 const AdminCourses = () => {
@@ -240,6 +240,7 @@ const AdminCourses = () => {
       const resp = await apiRequestRaw('/api/admin/courses/bulk-delete', {
         method: 'POST',
         body: { courseIds: selectedCourses },
+        noTransform: true,
       });
       const result = await resp.json();
       if (!resp.ok || !result.success) {
@@ -249,8 +250,12 @@ const AdminCourses = () => {
       showToast(`Deleted ${selectedCourses.length} course(s)`, 'success');
       setSelectedCourses([]);
       await courseStore.forceInit();
-    } catch {
-      showToast('Bulk delete failed', 'error');
+    } catch (error) {
+      const message =
+        error instanceof ApiError && error.body && typeof error.body === 'object' && 'error' in error.body
+          ? String((error.body as { error?: unknown }).error || 'Bulk delete failed')
+          : 'Bulk delete failed';
+      showToast(message, 'error');
     } finally {
       setDeleteLoading(false);
       setShowDeleteConfirm(false);

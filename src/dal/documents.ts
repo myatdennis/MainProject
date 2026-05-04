@@ -281,6 +281,9 @@ export const recordDownload = async (id: string) => {
   const path = isAdmin ? `/api/admin/documents/${id}/download` : `/api/client/documents/${id}/download`;
   const json = await request<{ data: any }>(path, {
     method: 'POST',
+    // Ensure cookies (session) are sent for same-origin API calls so the
+    // backend can resolve the user's session via auth cookies when needed.
+    credentials: 'include',
   });
   return mapDocumentRecord(json.data);
 };

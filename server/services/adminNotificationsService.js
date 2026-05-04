@@ -17,6 +17,18 @@ export const createAdminNotificationsService = ({
   parseFlag,
   coerceIdArray,
 } = {}) => {
+  // Defensive fallback: some callers in tests or during startup may not pass
+  // `buildDisabledNotificationsResponse`. Ensure we always have a callable
+  // function to avoid runtime "is not a function" errors.
+  if (typeof buildDisabledNotificationsResponse !== 'function') {
+    buildDisabledNotificationsResponse = (page = 1, pageSize = 25, requestId = null) => ({
+      ok: true,
+      data: [],
+      pagination: { page, pageSize, total: 0, hasMore: false },
+      notificationsDisabled: true,
+      requestId,
+    });
+  }
   const disabledResponse = (page, pageSize, requestId) => ({
     raw: true,
     status: 200,

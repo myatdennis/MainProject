@@ -58,7 +58,7 @@ describe('secureStorage', () => {
     setRefreshToken('refresh-456');
     setSessionMetadata({ accessExpiresAt: 100, refreshExpiresAt: 200 });
 
-    expect(getAccessToken()).toBe('access-123');
+    expect(getAccessToken()).toBeNull();
     expect(getRefreshToken()).toBe('refresh-456');
     expect(getSessionMetadata()).toMatchObject({ accessExpiresAt: 100, refreshExpiresAt: 200 });
   });
@@ -124,6 +124,6 @@ describe('secureStorage', () => {
     __dangerouslyResetSecureStorageStateForTests();
 
     setAccessToken('memory-only-token');
-    expect(getAccessToken()).toBe('memory-only-token');
+    expect(getAccessToken()).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { getAccessToken, getUserSession, type UserSession } from './secureStorage';
+import { getUserSession, type UserSession } from './secureStorage';
 
 const PRIVILEGED_ENDPOINT_PATTERNS: RegExp[] = [
   /^\/?api\/admin\b/i,
@@ -54,9 +54,8 @@ export const hasAuthSession = (): boolean => {
   }
 
   try {
-    const token = getAccessToken();
     const session = getUserSession();
-    return Boolean(token || session?.id);
+    return Boolean(session?.id);
   } catch (error) {
     console.warn('[sessionGate] Failed to read secure session context:', error);
     return false;

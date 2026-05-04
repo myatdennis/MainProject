@@ -1,4 +1,4 @@
-import { useEffect, Suspense, lazy, useRef, useContext, type ReactNode } from 'react';
+import { useEffect, Suspense, lazy, useRef, useContext, useState, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { isAdminSurface } from './utils/surface';
 import { courseStore } from './store/courseStore';
@@ -17,6 +17,7 @@ import ClientRequireAuth from './components/routing/ClientRequireAuth';
 import DevDebugPanel from './components/DevDebugPanel';
 import { useSecureAuth } from './context/SecureAuthContext';
 import ToastContext from './context/ToastContext';
+import { getSupabase } from './lib/supabaseClient';
 
 // Import components used in routes/layout
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
@@ -207,8 +208,9 @@ function App() {
  *  4. No other hooks exist in this component — there is nothing after the return.
  */
 const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
-  const { authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus } = useSecureAuth();
+  const { authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus, activeOrgId } = useSecureAuth();
   const location = useLocation();
+  const [hasLiveToken, setHasLiveToken] = useState(false);
 
   const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
   const isPublicAuthPath =
@@ -226,13 +228,49 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
   const blocking =
     isProtectedSurface &&
     !isPublicAuthPath &&
-    (!authReady || authInitializing || sessionStatus === 'loading' || orgResolutionStatus === 'resolving');
+    (!authReady ||
+      !hasLiveToken ||
+      !activeOrgId ||
+      authInitializing ||
+      sessionStatus === 'loading' ||
+      orgResolutionStatus === 'resolving');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isProtectedSurface || isPublicAuthPath) {
+      setHasLiveToken(false);
+      return;
+    }
+    const verifyLiveSession = async () => {
+      try {
+        const supabase = getSupabase();
+        const {
+          data: { session },
+        } = supabase && typeof supabase.auth?.getSession === 'function'
+          ? await supabase.auth.getSession()
+          : { data: { session: null } };
+        if (!cancelled) {
+          setHasLiveToken(Boolean(session?.access_token));
+        }
+      } catch {
+        if (!cancelled) {
+          setHasLiveToken(false);
+        }
+      }
+    };
+    void verifyLiveSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, sessionStatus, location.pathname, isProtectedSurface, isPublicAuthPath]);
 
   if (import.meta.env.DEV) {
     console.debug('[AUTH ROOT GATE]', {
       pathname: location.pathname,
       authInitializing,
       authStatus,
+      hasToken: hasLiveToken,
+      activeOrgId,
       blocking,
     });
   }
@@ -259,7 +297,7 @@ export function AppContent() {
   useViewportHeight();
   const location = useLocation();
   const surface = isAdminSurface(location.pathname) ? 'admin' : 'client';
-  const { sessionStatus, user, activeOrgId, orgResolutionStatus } = useSecureAuth();
+  const { authReady, sessionStatus, user, activeOrgId, orgResolutionStatus } = useSecureAuth();
   const toastContext = useContext(ToastContext);
   const showCatalogToast = toastContext?.showToast;
   const courseInitKeyRef = useRef<string | null>(null);
@@ -301,6 +339,9 @@ export function AppContent() {
     // async auth bootstrap completes). This makes init resilient to small
     // snapshot races without changing production behavior.
     const bridgeSnapshot = resolveOrgContextFromBridge();
+    if (!authReady || !activeOrgId) {
+      return;
+    }
     if (sessionStatus !== 'authenticated' && !(bridgeSnapshot && bridgeSnapshot.userId)) {
       return;
     }
@@ -347,14 +388,14 @@ export function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId, surface]);
+  }, [authReady, sessionStatus, orgResolutionStatus, user?.id, activeOrgId, surface]);
 
   // Initialize realtime handlers when session is ready. Keeps learner/admin
   // surfaces in sync by subscribing to assignment/org topics and triggering
   // cache invalidation + background refreshes on events.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (sessionStatus !== 'authenticated') return;
+    if (!authReady || sessionStatus !== 'authenticated' || !activeOrgId) return;
     try {
       initRealtimeHandlers();
     } catch (err) {
@@ -362,14 +403,14 @@ export function AppContent() {
       // Keep a lightweight console warning for diagnostics.
       console.warn('[App] initRealtimeHandlers failed', err);
     }
-  }, [sessionStatus]);
+  }, [authReady, sessionStatus, activeOrgId]);
 
   // Auth-ready deterministic re-init: guarantee a fresh init once the
   // auth session and org resolution are both ready. This ensures any
   // unauthenticated early inits are followed by a final authenticated
   // init that will run assignment hydration and write the learner catalog.
   useEffect(() => {
-    if (sessionStatus === 'authenticated' && orgResolutionStatus === 'ready') {
+    if (authReady && activeOrgId && sessionStatus === 'authenticated' && orgResolutionStatus === 'ready') {
       try {
   console.info('[COURSE INIT TRIGGER]', { reason: 'auth_ready', userId: user?.id, activeOrgId });
   const targetKey = buildCourseInitTargetKey(user?.id, activeOrgId, surface);
@@ -381,7 +422,7 @@ export function AppContent() {
         console.warn('[COURSE INIT TRIGGER] failed', e);
       }
     }
-  }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId, surface]);
+  }, [authReady, sessionStatus, orgResolutionStatus, user?.id, activeOrgId, surface]);
 
   // ── Catalog warning toast handler ─────────────────────────────────────────
   // Declared here (before useLocation / any conditional) so hook call count

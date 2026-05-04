@@ -1,12 +1,10 @@
-import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
-import { getCanonicalAccessToken, waitForAuthReady } from './canonicalAuth';
 import { getSupabase } from './supabaseClient';
-import { REFRESH_MANAGER_ACTIVE } from '../context/tokenRefresh';
 import { resolveOrgHeaderForRequest, getGlobalActiveOrgIdForApi } from './orgContext';
 import { GLOBAL_ORG_ID } from '../constants/org';
 import { resolveApiUrl } from '../config/apiBase';
 import { API_BASE } from '../config/api';
 import { getNativeFetch } from './nativeFetch';
+import { assertApiReady, ApiReadinessError } from './apiReadiness';
 
 const isTest = process.env.NODE_ENV === 'test';
 
@@ -96,13 +94,7 @@ const isPublicEndpoint = (target: string): boolean => {
 
 const isAuthEndpoint = (target: string): boolean => extractPathname(target).startsWith('/api/auth');
 
-const readCookieSnapshot = (): string => {
-  try {
-    return typeof document !== 'undefined' ? document.cookie : '';
-  } catch {
-    return '';
-  }
-};
+// intentionally omitted cookie snapshot helper — not used anymore
 
 const isE2EBypassActive = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -123,78 +115,27 @@ const inferE2EBypassRole = (): 'admin' | 'learner' => {
   return pathname.startsWith('/admin') ? 'admin' : 'learner';
 };
 
-// --- Durable refresh deduplication and request queue ---
-let refreshInFlight: Promise<boolean> | null = null;
-let lastRefreshToken: string | null = null;
-let lastRefreshResult: boolean | null = null;
-const refreshWaiters: Array<() => void> = [];
-
-const refreshAuthToken = async (): Promise<boolean> => {
-  // Only allow one refresh in flight at a time
-  if (refreshInFlight) {
-    await refreshInFlight;
-    return lastRefreshResult === true;
-  }
-  refreshInFlight = (async () => {
-    try {
-      const refreshToken = getRefreshToken();
-      if (refreshToken && refreshToken === lastRefreshToken && lastRefreshResult !== null) {
-        // Prevent using a stale/used refresh token again
-        return lastRefreshResult;
-      }
-      lastRefreshToken = refreshToken;
-      const hasRefreshToken = Boolean(refreshToken);
-      if (!hasRefreshToken && devMode) {
-        console.warn('[authorizedFetch] no refresh token in secureStorage; attempting cookie-based refresh fallback');
-      }
-  // In test runs prefer the global fetch so test spies/mocks observe calls.
-  const native = getNativeFetch();
-  const fetchImpl = (isTest ? (globalThis as any).fetch : undefined) ?? native ?? fetch;
-      const refreshResponse = await fetchImpl(normalizeUrl('/api/auth/refresh'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: hasRefreshToken ? JSON.stringify({ refreshToken }) : JSON.stringify({}),
-        credentials: 'include',
-      });
-      if (!refreshResponse.ok) {
-        if (devMode) {
-          console.warn('[authorizedFetch] refresh request failed', { status: refreshResponse.status });
-        }
-        lastRefreshResult = false;
-        return false;
-      }
-      const json = await refreshResponse.json();
-      if (!json || !json.accessToken) {
-        lastRefreshResult = false;
-        return false;
-      }
-      setAccessToken(json.accessToken, 'authorizedFetch:refresh');
-      if (json.refreshToken) {
-        setRefreshToken(json.refreshToken, 'authorizedFetch:refresh');
-      }
-      lastRefreshResult = true;
-      return true;
-    } catch (error) {
-      console.warn('[authorizedFetch] token refresh failed', error);
-      lastRefreshResult = false;
-      return false;
-    } finally {
-      refreshInFlight = null;
-      while (refreshWaiters.length) refreshWaiters.pop()?.();
-    }
-  })();
-  return refreshInFlight;
-};
-
-// Queue requests during refresh
-const waitForRefresh = async () => {
-  if (!refreshInFlight) return;
-  await new Promise<void>((resolve) => refreshWaiters.push(resolve));
-};
-
 const DEFAULT_TIMEOUT_MS = 12_000;
+let requestSequence = 0;
+
+const nextRequestId = () => {
+  requestSequence += 1;
+  return `req-${requestSequence.toString(36)}`;
+};
+
+const requireSupabaseSessionToken = async (): Promise<string> => {
+  const supabase = getSupabase();
+  if (!supabase || typeof supabase.auth?.getSession !== 'function') {
+    throw new NotAuthenticatedError('No session');
+  }
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new NotAuthenticatedError('No session');
+  }
+  return session.access_token;
+};
 
 export type AuthorizedFetchOptions = {
   requireAuth?: boolean;
@@ -252,8 +193,7 @@ export default async function authorizedFetch(
   init: RequestInit = {},
   options: AuthorizedFetchOptions = {},
 ): Promise<Response> {
-  // Unique request id for instrumentation and tracing
-  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const requestId = nextRequestId();
   const requireAuth =
     options.requireAuth === true
       ? true
@@ -289,54 +229,22 @@ export default async function authorizedFetch(
       headers.delete('Authorization');
     }
 
-  if (shouldRequireAuth && !allowE2EBypass) {
-      // Wait for any in-flight refresh to finish before using token
-      await waitForRefresh();
-      // Prefer explicit Supabase session token when available (ensures token
-      // is current and matches client session). Fall back to canonical in-memory
-      // token, then persisted secureStorage value if needed.
-      try {
-        const supabase = getSupabase();
-        if (supabase && typeof supabase.auth?.getSession === 'function') {
-          const { data } = await supabase.auth.getSession();
-          token = data?.session?.access_token ?? null;
-        }
-      } catch (err) {
-        // ignore and fallback
+    let readiness;
+    try {
+      readiness = await assertApiReady({
+        requireAuth: shouldRequireAuth && !allowE2EBypass,
+        requireOrg: shouldRequireAuth && !allowE2EBypass,
+      });
+    } catch (error) {
+      if (error instanceof ApiReadinessError) {
+        throw new NotAuthenticatedError(error.message);
       }
-      if (!token) token = getCanonicalAccessToken() ?? getStoredAccessToken();
-      if (!token) {
-        // If canonical auth isn't yet set, wait briefly for auth ready event
-        // (use a short timeout so public endpoints are not blocked long).
-        try {
-          const cs = await waitForAuthReady(2000).catch(() => null);
-          if (cs && cs.accessToken) token = cs.accessToken;
-        } catch {
-          // ignore timeout/fail
-        }
-      }
-      // Diagnostic: surface whether we found a usable auth token for this request
-      try {
-          // keep this log lightweight and safe for CI/dev
-           
-          if (import.meta.env?.DEV) {
-            console.log('AUTH TOKEN', token ? 'present' : 'missing');
-          }
-        } catch (e) {
-          // ignore logging failures
-        }
+      throw error;
+    }
 
-      // If auth is required for this request but we couldn't resolve a token,
-      // do not call out to the API (prevents 401s that bypass client-side
-      // handling). Signal the caller via NotAuthenticatedError so higher-level
-      // logic can trigger login flow / redirect.
-      if (!token) {
-        throw new NotAuthenticatedError('No Supabase session/access_token available');
-      }
-
-      if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
-      }
+    if (shouldRequireAuth && !allowE2EBypass) {
+      token = readiness.session?.access_token ?? await requireSupabaseSessionToken();
+      headers.set('Authorization', `Bearer ${token}`);
     }
 
     // Resolve org header; if an org id is returned, attach it to requests so
@@ -439,19 +347,21 @@ export default async function authorizedFetch(
       const isRefreshEndpoint = extractPathname(url).startsWith('/api/auth/refresh');
 
       if (!isRefreshEndpoint) {
-        // If a central refresh manager (SecureAuthContext) is active, do not
-        // initiate a refresh here to avoid duplicate concurrent refresh calls.
-        // Let the auth context manage refresh and retry logic.
-        if (!REFRESH_MANAGER_ACTIVE) {
-          // Always attempt a refresh on first 401 for authenticated requests.
-          const refreshed = await refreshAuthToken();
-          if (refreshed) {
-            attempt += 1;
-            console.info('[authorizedFetch] token refreshed after 401, retrying request', { url: extractPathname(url) });
-            continue;
+        try {
+          const supabase = getSupabase();
+          if (supabase && typeof supabase.auth?.refreshSession === 'function') {
+            const {
+              data: { session },
+              error,
+            } = await supabase.auth.refreshSession();
+            if (!error && session?.access_token) {
+              attempt += 1;
+              console.info('[authorizedFetch] supabase.refreshSession succeeded after 401; retrying', { url: extractPathname(url) });
+              continue;
+            }
           }
-        } else {
-          if (devMode) console.debug('[authorizedFetch] refresh manager active — deferring refresh to auth context');
+        } catch (err) {
+          // Return the original 401 when refresh fails.
         }
       }
 

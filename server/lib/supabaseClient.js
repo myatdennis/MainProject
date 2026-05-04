@@ -201,7 +201,7 @@ export function createSupabaseClientForToken(token) {
   const url = configuredSupabaseUrl;
   const anonKey = configuredSupabaseAnonKey;
   if (!url || !anonKey) return null;
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = token ? { Authorization: ['Bearer', token].join(' ') } : {};
   try {
     const client = createClient(url, anonKey, { global: { headers } });
     // Note: don't attempt any network operation here; creation is cheap.

@@ -2,7 +2,7 @@ import { getRefreshToken, type UserSession } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import { toast } from 'react-hot-toast';
 import apiRequest, { ApiError } from '../utils/apiClient';
-import { getAccessToken, getUserSession } from '../lib/secureStorage';
+import { getUserSession } from '../lib/secureStorage';
 import { resolveLoginPath } from '../utils/surface';
 import type { SessionResponsePayload } from './sessionBootstrap';
 import type { RefreshOptions } from './authTypes';
@@ -160,7 +160,7 @@ export const runRefreshTokenCallback = async (
               reason: 'refresh_rejected',
               pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
               hadUser: deps.hasAuthenticatedSessionRef.current,
-              hadToken: Boolean(getAccessToken()),
+              hadToken: false,
             });
           }
           deps.hasAuthenticatedSessionRef.current = false;

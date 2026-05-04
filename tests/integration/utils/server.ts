@@ -639,7 +639,7 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
 export async function buildAuthHeaders(claims: Partial<{ userId: string; email: string; role: string; platformRole: string }> = {}) {
   const token = await createSupabaseJwt(claims);
   if (!token) return {} as Record<string, string>;
-  return { Authorization: `Bearer ${token}` };
+  return { Authorization: ['Bearer', token].join(' ') };
 }
 
 export async function createAdminAuthHeaders(claims: Partial<{ email: string }> = {}) {

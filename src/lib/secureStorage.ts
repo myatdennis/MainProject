@@ -157,7 +157,7 @@ const getLocalStorageOnly = (): StorageLike | null => {
     return window.localStorage;
   } catch (error) {
     if (!warningFlags.persistentUnavailable) {
-      warn('[secureStorage] localStorage is not accessible; attempting sessionStorage fallback.', error);
+      warn('[secureStorage] persistent browser storage unavailable; attempting sessionStorage fallback.', error);
       warningFlags.persistentUnavailable = true;
     }
     recordStorageProbe('localStorage-failed', error);
@@ -429,20 +429,14 @@ const removeFromSecondaryStorage = (key: string) => {
   }
 };
 
-type TokenCacheKey = typeof ACCESS_TOKEN_LOCAL_KEY | typeof REFRESH_TOKEN_LOCAL_KEY;
+type TokenStorageKey = typeof ACCESS_TOKEN_LOCAL_KEY | typeof REFRESH_TOKEN_LOCAL_KEY;
 
-const tokenCache: Record<TokenCacheKey, string | null | undefined> = {
-  [ACCESS_TOKEN_LOCAL_KEY]: undefined,
-  [REFRESH_TOKEN_LOCAL_KEY]: undefined,
-};
-
-const secureTokenKeyMap: Record<TokenCacheKey, typeof ACCESS_TOKEN_KEY | typeof REFRESH_TOKEN_KEY> = {
+const secureTokenKeyMap: Record<TokenStorageKey, typeof ACCESS_TOKEN_KEY | typeof REFRESH_TOKEN_KEY> = {
   [ACCESS_TOKEN_LOCAL_KEY]: ACCESS_TOKEN_KEY,
   [REFRESH_TOKEN_LOCAL_KEY]: REFRESH_TOKEN_KEY,
 };
 
-const persistTokenValue = (key: TokenCacheKey, value: string | null) => {
-  tokenCache[key] = value ?? null;
+const persistTokenValue = (key: TokenStorageKey, value: string | null) => {
   const secureKey = secureTokenKeyMap[key];
   if (!secureKey) return;
 
@@ -463,26 +457,15 @@ const persistTokenValue = (key: TokenCacheKey, value: string | null) => {
   }
 };
 
-const readTokenValue = (key: TokenCacheKey): string | null => {
-  if (tokenCache[key] !== undefined) {
-    return tokenCache[key] ?? null;
-  }
-
+const readTokenValue = (key: TokenStorageKey): string | null => {
   const secureKey = secureTokenKeyMap[key];
   if (!secureKey) {
-    tokenCache[key] = null;
     return null;
   }
 
   const stored = secureGet<string>(secureKey);
   const normalized = stored && stored.trim().length > 0 ? stored : null;
-  if (normalized) {
-    tokenCache[key] = normalized;
-    return normalized;
-  }
-
-  tokenCache[key] = null;
-  return null;
+  return normalized;
 };
 
 type TokenTelemetryEvent =
@@ -502,7 +485,7 @@ const shouldLogTokenTelemetry = (): boolean => {
 const readTokenPresenceSnapshot = () => {
   try {
     return {
-      accessTokenPresent: Boolean(getAccessToken()),
+      accessTokenPresent: false,
       refreshTokenPresent: Boolean(getRefreshToken()),
     };
   } catch (error) {
@@ -537,26 +520,12 @@ const logTokenPreview = (label: string, token: string | null) => {
 // ============================================================================
 
 export function setAccessToken(token: string | null, reason?: string): void {
-  if (!token) {
-    persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, null);
-    logTokenTelemetry('clear_access_token', reason ?? 'set_access_token:null');
-    return;
-  }
-  logTokenPreview('access_token_set', token);
-  persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, token);
-  logTokenTelemetry('set_access_token', reason);
+  persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, null);
+  logTokenTelemetry('clear_access_token', reason ?? (token ? 'set_access_token:ignored' : 'set_access_token:null'));
 }
 
 export function getAccessToken(): string | null {
-  const cached = readTokenValue(ACCESS_TOKEN_LOCAL_KEY);
-  if (cached) {
-    return cached;
-  }
-  const legacy = secureGet<string>(ACCESS_TOKEN_KEY);
-  if (legacy) {
-    persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, legacy);
-  }
-  return legacy;
+  return null;
 }
 
 export function clearAccessToken(reason?: string): void {
@@ -801,7 +770,6 @@ export function migrateFromLocalStorage(): void {
     // Remove legacy auth token storage entirely
     const oldToken = window.localStorage.getItem('authToken');
     if (oldToken) {
-      setAccessToken(oldToken, 'legacy_migration');
       window.localStorage.removeItem('authToken');
       removedKeys.push('authToken');
     }

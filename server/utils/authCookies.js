@@ -173,7 +173,7 @@ export const clearAuthCookies = (req, res) => {
 
 
 export const getAccessTokenFromRequest = (req) =>
-  req?.cookies?.[ACCESS_TOKEN_COOKIE] || req?.cookies?.sb_access_token || null;
+  req?.cookies?.[ACCESS_TOKEN_COOKIE] ?? req?.cookies?.sb_access_token ?? null;
 export const getRefreshTokenFromRequest = (req) => req?.cookies?.[REFRESH_TOKEN_COOKIE] || null;
 export const getActiveOrgFromRequest = (req) => {
   const candidate = req?.cookies?.[ACTIVE_ORG_COOKIE];

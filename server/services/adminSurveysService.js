@@ -108,9 +108,26 @@ export const createAdminSurveysService = ({
       return { status: 200, data: demoData };
     }
 
-    const { data } = await runSupabaseReadQueryWithRetry('admin.surveys.list', () =>
-      supabase.from('surveys').select('*').order('updated_at', { ascending: false }),
-    );
+    let data = null;
+    try {
+      const result = await runSupabaseReadQueryWithRetry('admin.surveys.list', () =>
+        supabase.from('surveys').select('*').order('updated_at', { ascending: false }),
+      );
+      data = result?.data ?? null;
+    } catch (err) {
+      try {
+        logger.error('admin_surveys_query_failed', {
+          requestId: req.requestId ?? null,
+          message: err?.message ?? String(err),
+          code: err?.code ?? null,
+          stack: err?.stack ?? null,
+        });
+      } catch (logErr) {
+        // swallow logging failure
+        console.error('[admin_surveys_query_failed][log_error]', logErr);
+      }
+      throw err;
+    }
 
     const ids = (data || []).map((survey) => survey.id).filter(Boolean);
     const assignmentMap = await fetchSurveyAssignmentsMap(ids);

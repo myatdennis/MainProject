@@ -3,8 +3,8 @@ import { supabaseAuthClient } from '../lib/supabaseClient.js';
 // Single-source-of-truth Supabase session middleware
 export default async function supabaseSessionAuth(req, res, next) {
   try {
-    const token =
-      req.cookies?.access_token || req.cookies?.sb_access_token || (req.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim() || null;
+    const headerToken = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const token = (req.cookies?.access_token ?? req.cookies?.sb_access_token ?? headerToken) || null;
 
     if (!token) return next();
 
