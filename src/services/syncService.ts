@@ -1,7 +1,7 @@
 import { courseStore } from '../store/courseStore';
 import { Course } from '../types/courseTypes';
 import { getSupabase } from '../lib/supabaseClient';
-import { getCanonicalSession, subscribeCanonicalAuth, waitForAuthReady } from '../lib/canonicalAuth';
+import { subscribeCanonicalAuth } from '../lib/canonicalAuth';
 import type { CourseAssignment } from '../types/assignment';
 import { CourseValidationError } from '../dal/adminCourses';
 import { wsClient } from './wsClient';
@@ -215,18 +215,15 @@ class SyncService {
         this.cleanupRealtimeChannels();
         return;
       }
-      // Check canonical session first, then wait briefly for auth ready
-      // before deciding whether to enable realtime.
-      const cs = getCanonicalSession();
-      if (!cs?.accessToken) {
-        const ready = await waitForAuthReady(2000).catch(() => null);
-        if (!ready?.accessToken) {
-          if (import.meta.env.DEV) {
-            logSyncDebug('[SyncService] Skipping realtime setup until session is available.');
-          }
-          this.cleanupRealtimeChannels();
-          return;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        if (import.meta.env.DEV) {
+          logSyncDebug('[SyncService] Skipping realtime setup until session is available.');
         }
+        this.cleanupRealtimeChannels();
+        return;
       }
       this.cleanupRealtimeChannels();
 

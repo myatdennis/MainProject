@@ -95,11 +95,12 @@ export const createTeamHuddleRouter = ({
 
     const reactionByPost = new Map();
     if (postIds.length) {
-      const { data: reactionRows, error: reactionError } = await supabase
+      let reactionQuery = supabase
         .from(TEAM_HUDDLE_TABLES.reactions)
         .select('post_id,user_id,reaction_type')
-    .in('post_id', postIds);
-    if (!isPlatformAdmin && orgScope.orgId) reactionQuery = reactionQuery.eq('organization_id', orgScope.orgId);
+        .in('post_id', postIds);
+      if (!isPlatformAdmin && orgScope.orgId) reactionQuery = reactionQuery.eq('organization_id', orgScope.orgId);
+      const { data: reactionRows, error: reactionError } = await reactionQuery;
       if (reactionError) throw reactionError;
       (reactionRows || []).forEach((reaction) => {
         if (!reaction || !reaction.post_id) return;
@@ -118,12 +119,13 @@ export const createTeamHuddleRouter = ({
 
     const commentCountByPost = new Map();
     if (postIds.length) {
-      const { data: commentRows, error: commentError } = await supabase
+      let commentQuery = supabase
         .from(TEAM_HUDDLE_TABLES.comments)
         .select('post_id')
-    .in('post_id', postIds)
-    if (!isPlatformAdmin && orgScope.orgId) commentQuery = commentQuery.eq('organization_id', orgScope.orgId)
+        .in('post_id', postIds)
         .is('deleted_at', null);
+      if (!isPlatformAdmin && orgScope.orgId) commentQuery = commentQuery.eq('organization_id', orgScope.orgId);
+      const { data: commentRows, error: commentError } = await commentQuery;
       if (commentError) throw commentError;
       (commentRows || []).forEach((comment) => {
         const count = commentCountByPost.get(comment.post_id) || 0;

@@ -1,6 +1,6 @@
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import type { AnalyticsEvent, LearnerJourney } from '../analyticsService';
-import { getAccessToken, getUserSession } from '../../lib/secureStorage';
+import { getUserSession } from '../../lib/secureStorage';
 // buildOrgHeaders/resolveActiveOrgId intentionally unused: frontend must not set org headers
 
 const parseEnvAnalyticsFlag = (): boolean => {
@@ -103,9 +103,11 @@ if (typeof window !== 'undefined') {
 const hasAuthSession = () => {
   if (typeof window === 'undefined') return false;
   try {
-    const token = getAccessToken();
     const session = getUserSession();
-    return Boolean(token || session?.id);
+    // Rely on the canonical in-memory session rather than persisted tokens
+    // which may have expired. This keeps analytics from sending stale auth
+    // headers while preserving deterministic behavior in tests.
+    return Boolean(session?.id);
   } catch {
     return false;
   }

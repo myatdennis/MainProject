@@ -43,7 +43,7 @@ const createAuthHeaders = ({ userId, email, role, platformRole = null }) => {
 	);
 
 	return {
-		Authorization: `Bearer ${token}`,
+		Authorization: ['Bearer', token].join(' '),
 		'Content-Type': 'application/json',
 		Accept: 'application/json',
 		'x-user-id': userId,

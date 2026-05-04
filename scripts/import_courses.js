@@ -68,7 +68,7 @@ async function loginAndFetchToken() {
     console.error('[auth] Login failed:', typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2));
     throw new Error('Unable to obtain admin access token. Check credentials or ADMIN_TOKEN.');
   }
-  const token = payload?.accessToken || payload?.session?.access_token || null;
+  const token = payload?.accessToken ?? payload?.session?.access_token ?? null;
   if (!token) {
     console.error('[auth] Login response missing accessToken:', JSON.stringify(payload, null, 2));
     throw new Error('Login succeeded but no access token was returned.');
@@ -88,7 +88,7 @@ async function resolveAdminToken() {
 async function buildAuthHeaders(extra = {}) {
   const token = await resolveAdminToken();
   return {
-    Authorization: `Bearer ${token}`,
+    Authorization: ['Bearer', token].join(' '),
     ...extra,
   };
 }

@@ -1,7 +1,5 @@
 import { supabase } from './supabaseClient';
-import { getAccessToken as getStoredAccessToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
-import { GLOBAL_ORG_ID } from '../constants/org';
 import { buildApiUrl } from '../config/apiBase';
 import buildAuthHeaders from '../utils/requestContext';
 
@@ -73,33 +71,15 @@ const createAbortController = (timeoutMs?: number, upstream?: AbortSignal | null
 };
 
 export async function getAccessToken(): Promise<string | null> {
-  const isE2EBypass =
-    typeof window !== 'undefined' &&
-    (Boolean((window as any).__E2E_BYPASS) ||
-      Boolean((window as any).__E2E_SUPABASE_CLIENT));
-  const storedToken = getStoredAccessToken() ?? null;
-  if (isE2EBypass || storedToken) {
-    return storedToken;
-  }
   try {
-    const { getCanonicalSession, waitForAuthReady } = await import('./canonicalAuth');
-    const cs = getCanonicalSession();
-    if (cs && cs.accessToken) return cs.accessToken;
-    const ready = await waitForAuthReady(2000).catch(() => null);
-    return ready?.accessToken ?? null;
-  } catch (e) {
-    // If canonicalAuth isn't available, treat as unauthenticated.
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  } catch {
     return null;
   }
 }
-
-const ensureAccessToken = async (): Promise<string> => {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new NotAuthenticatedError();
-  }
-  return token;
-};
 
 const shouldStringifyBody = (body: any): boolean => {
   if (body == null) return false;
@@ -167,76 +147,38 @@ const stripProductionOverrideHeaders = (init: RequestInit): RequestInit => {
 export async function apiFetchRaw(path: string, init: RequestInit = {}, options: ApiFetchOptions = {}) {
   const scopedPath = appendAdminOrgQueryIfNeeded(path);
   const url = buildApiUrl(scopedPath);
-  let attempt = 0;
-  // buildAuthHeaders may perform async session resolution
-  let authHeaders = await buildAuthHeaders();
-  let token: string | null = (authHeaders.Authorization?.replace(/^Bearer\s+/i, '') ?? null) as string | null;
-  if (!token) {
-    // As a final fallback, ensure access token via canonical/session storage
-    token = await ensureAccessToken().catch(() => null);
-    if (token) {
-      authHeaders = {
-        ...authHeaders,
-        Authorization: `Bearer ${token}`,
-      };
-    }
-  }
+  const authHeaders = await buildAuthHeaders();
+  const token = authHeaders.Authorization?.replace(/^Bearer\s+/i, '') ?? null;
+  let requestInit: RequestInit = {
+    ...init,
+    headers: new Headers({
+      ...(authHeaders as Record<string, string>),
+      ...(init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : (init.headers as Record<string, string> | undefined) ?? {}),
+    }),
+  };
+  requestInit = withAuthHeaders(requestInit, token);
+  requestInit = applyOrgHeadersIfNeeded(requestInit, scopedPath);
+  requestInit = stripProductionOverrideHeaders(requestInit);
+  const { controller, cleanup } = createAbortController(options.timeoutMs, init.signal ?? null);
 
-  while (attempt < 2) {
-    let requestInit: RequestInit = {
-      ...init,
-      headers: new Headers({
-        ...(authHeaders as Record<string, string>),
-        ...(init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : (init.headers as Record<string, string> | undefined) ?? {}),
-      }),
-    };
-    requestInit = withAuthHeaders(requestInit, token);
-    requestInit = applyOrgHeadersIfNeeded(requestInit, scopedPath);
-    requestInit = stripProductionOverrideHeaders(requestInit);
-    const { controller, cleanup } = createAbortController(options.timeoutMs, init.signal ?? null);
-
-    let response: Response;
-    try {
-      // Use centralized authorizedFetch so Authorization and cookie forwarding
-      // are handled consistently for API calls.
-      response = await (await import('../lib/authorizedFetch')).default(url, { ...requestInit, credentials: requestInit.credentials ?? 'include', signal: controller.signal });
-    } catch (error: any) {
-      cleanup();
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw error;
-      }
-      throw error;
-    }
-    cleanup();
-
-    if (response.status !== 401) {
-      return response;
-    }
-
-    if (attempt === 1) {
+  try {
+    const response = await (await import('../lib/authorizedFetch')).default(url, {
+      ...requestInit,
+      credentials: requestInit.credentials ?? 'include',
+      signal: controller.signal,
+    });
+    if (response.status === 401) {
       throw new AuthExpiredError('[apiFetch] API still 401 after refresh; treating as logged-out');
     }
-
-    const { data, error } = await supabase.auth.refreshSession();
-    attempt += 1;
-    if (error) {
-      throw new AuthExpiredError(`[apiFetch] refreshSession failed: ${error.message}`);
+    return response;
+  } catch (error: any) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
     }
-    token = data?.session?.access_token ?? null;
-    if (!token) {
-      throw new AuthExpiredError('[apiFetch] refreshSession returned no access_token');
-    }
-    setAccessToken(token, 'libApiClient:refresh');
-    if (data?.session?.refresh_token) {
-      setRefreshToken(data.session.refresh_token, 'libApiClient:refresh');
-    }
-    authHeaders = {
-      ...authHeaders,
-      Authorization: `Bearer ${token}`,
-    };
+    throw error;
+  } finally {
+    cleanup();
   }
-
-  throw new AuthExpiredError('[apiFetch] Unable to satisfy request');
 }
 
 export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}, options: ApiFetchOptions = {}) {

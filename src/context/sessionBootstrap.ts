@@ -1,8 +1,4 @@
-import {
-  getAccessToken,
-  getRefreshToken,
-  type UserSession,
-} from '../lib/secureStorage';
+import type { UserSession } from '../lib/secureStorage';
 import { getSupabase, AUTH_STORAGE_MODE } from '../lib/supabaseClient';
 import { normalizeMembershipStatusFlag } from './organizationResolution';
 
@@ -65,8 +61,10 @@ export const isSupabaseSessionLike = (value: unknown): value is SupabaseSessionL
 export const readSupabaseSessionTokens = async (
   options: { refreshIfMissing?: boolean } = {},
 ): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
-  let accessToken = getAccessToken() ?? null;
-  let refreshToken = getRefreshToken() ?? null;
+  // Prefer live Supabase client session tokens when available to avoid
+  // reusing expired persisted tokens.
+  let accessToken: string | null = null;
+  let refreshToken: string | null = null;
   const authStorageMode = (() => {
     try {
       return AUTH_STORAGE_MODE;
@@ -84,18 +82,16 @@ export const readSupabaseSessionTokens = async (
     });
   }
 
-  if (options.refreshIfMissing !== false && (!accessToken || !refreshToken)) {
-    try {
-      const supabase = getSupabase();
-      const sessionResult = await supabase?.auth?.getSession();
-      const supabaseSession = sessionResult?.data?.session as SupabaseSessionLike | null;
-      if (supabaseSession) {
-        accessToken = accessToken || supabaseSession.access_token || supabaseSession.accessToken || null;
-        refreshToken = refreshToken || supabaseSession.refresh_token || supabaseSession.refreshToken || null;
-      }
-    } catch (sessionError) {
-      console.warn('[SecureAuth] readSupabaseSessionTokens fallback failed', sessionError);
+  try {
+    const supabase = getSupabase();
+    const sessionResult = await supabase?.auth?.getSession();
+    const supabaseSession = sessionResult?.data?.session as SupabaseSessionLike | null;
+    if (supabaseSession) {
+      accessToken = supabaseSession.access_token ?? supabaseSession.accessToken ?? null;
+      refreshToken = supabaseSession.refresh_token ?? supabaseSession.refreshToken ?? null;
     }
+  } catch (sessionError) {
+    console.warn('[SecureAuth] readSupabaseSessionTokens failed to read supabase session', sessionError);
   }
 
   return { accessToken, refreshToken };

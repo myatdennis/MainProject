@@ -31,10 +31,8 @@ export async function authenticate(req, res, next) {
       return next();
     }
 
-    const token =
-      req.cookies?.access_token ||
-      req.cookies?.['sb-access-token'] ||
-      (req.headers.authorization || '').replace('Bearer ', '');
+    const headerToken = (req.headers.authorization || '').replace('Bearer ', '');
+    const token = (req.cookies?.access_token ?? req.cookies?.['sb-access-token'] ?? headerToken) || '';
 
     if (!token) {
       console.warn('[AUTH MISSING TOKEN]', {

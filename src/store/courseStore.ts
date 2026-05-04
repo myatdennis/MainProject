@@ -7,7 +7,7 @@ import {
 import { fetchPublishedCourses } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
-import { getAccessToken as getStoredAccessToken, getActiveOrgPreference, getUserSession } from '../lib/secureStorage';
+import { getActiveOrgPreference, getUserSession } from '../lib/secureStorage';
 import { getAssignmentsForUserWithOutcome } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
@@ -1548,14 +1548,15 @@ const waitForLearnerApiSession = async (userId: string | null, reason: string): 
     const userMatches =
       !normalizedUserId || normalizedUserId === sessionId || normalizedUserId === sessionEmail;
 
-    let token = getStoredAccessToken();
-    if (!token) {
-      try {
-        token = await instrumentStep('getApiAccessToken', { attempt, userId: normalizedUserId }, () => getApiAccessToken());
-      } catch (error) {
-        if (import.meta.env?.DEV) {
-          console.debug('[courseStore] learner_session_token_probe_failed', { reason, attempt, error });
-        }
+    // Always fetch an up-to-date API access token rather than relying on a
+    // persisted/stored token which may have expired. getApiAccessToken will
+    // consult the Supabase client or canonical session as needed.
+    let token: string | null = null;
+    try {
+      token = await instrumentStep('getApiAccessToken', { attempt, userId: normalizedUserId }, () => getApiAccessToken());
+    } catch (error) {
+      if (import.meta.env?.DEV) {
+        console.debug('[courseStore] learner_session_token_probe_failed', { reason, attempt, error });
       }
     }
 

@@ -26,10 +26,6 @@ export function getCanonicalSession(): SessionSnapshot {
   return { ...snapshot };
 }
 
-export function getCanonicalAccessToken(): string | null {
-  return snapshot.accessToken;
-}
-
 export function isCanonicalAuthenticated(): boolean {
   return snapshot.authenticated === true;
 }
@@ -109,7 +105,6 @@ export function waitForAuthReady(timeoutMs = 10000): Promise<SessionSnapshot> {
 
 export default {
   getCanonicalSession,
-  getCanonicalAccessToken,
   isCanonicalAuthenticated,
   setCanonicalSession,
   clearCanonicalSession,

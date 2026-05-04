@@ -109,6 +109,10 @@ try {
   // non-fatal
 }
 
+// Early diagnostic endpoint removed from top-level bootstrap to avoid
+// referencing `app` before it's created. A diagnostic route is registered
+// later after app instantiation at the intended location.
+
 // Fail-fast: require SUPABASE_SERVICE_ROLE_KEY in non-demo, non-dev production runs.
 try {
   const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
@@ -311,6 +315,7 @@ import { assertAdminQueryColumns, logAdminQuery } from './utils/adminSchemaGuard
 import mfaRoutes from './routes/mfa.js';
 import { attachRequestId, apiErrorHandler, createHttpError, withHttpError } from './middleware/apiErrorHandler.js';
 import adminCoursesRouter from './routes/admin-courses.js';
+import { registerAdminCoursesRoutes } from './routes/admin/adminCourses.js';
 import { createWorkspaceRouter } from './routes/workspace.js';
 import adminOrganizationsRouter from './routes/adminOrganizations.js';
 import {
@@ -559,10 +564,8 @@ console.info('[startup] Token expiration times:', {
 
 // Log cache configuration
 const MEMBERSHIP_CACHE_MS = Number(process.env.MEMBERSHIP_CACHE_MS || 60000);
-const TOKEN_CACHE_LIMIT = Number(process.env.TOKEN_CACHE_LIMIT || 10000);
 console.info('[startup] Cache configuration:', {
   membershipCacheTtl: `${MEMBERSHIP_CACHE_MS} ms`,
-  tokenCacheLimit: TOKEN_CACHE_LIMIT,
 });
 
 if (process.env.NODE_ENV !== 'production') {
@@ -1352,6 +1355,22 @@ import createApp from './app.js';
 // the factory can mount routers/middleware onto the same app object.
 let app = express();
 
+// Diagnostic endpoint registered immediately after app creation to avoid
+// being shadowed by other middleware or SPA fallbacks. Temporary helper
+// for local debugging only — remove after issue is resolved.
+app.get('/internal/_diag/memberships/:orgId/:userId', async (req, res) => {
+  try {
+    const admin = getSupabaseAdminClient();
+    if (!admin) return res.status(500).json({ error: 'admin_client_unavailable' });
+    const { orgId, userId } = req.params;
+    const selectResult = await admin.from('organization_memberships').select('id,role,status').eq('organization_id', orgId).eq('user_id', userId).limit(5);
+    const rpcResult = await admin.rpc('is_org_admin_for', { target_organization_id: orgId }).catch((e) => ({ rpcError: e?.message || String(e) }));
+    return res.json({ select: selectResult.error ? { message: selectResult.error.message, code: selectResult.error.code } : { rows: selectResult.data?.length ?? null }, rpc: rpcResult });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 // -- Diagnostic helpers --------------------------------------------------
 // Wrap a promise and reject if it doesn't settle within `ms` milliseconds.
 const withTimeoutMs = (promise, ms, label = 'operation') => {
@@ -1707,11 +1726,8 @@ app.get('/api/admin/me', ...withAuth((req, res) => {
 // responds with a 503 if downstream handlers do not finish in time.
 // admin courses routes moved to server/routes/admin/adminCourses.js
 app.use('/api', (req, _res, next) => {
-  const token =
-    String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() ||
-    req.cookies?.accessToken ||
-    req.cookies?.sb_access_token ||
-    null;
+  const headerToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const token = headerToken || (req.cookies?.accessToken ?? req.cookies?.sb_access_token ?? null);
   if (isDevRuntime) {
     console.log('TOKEN FOUND:', !!req.headers.authorization || !!req.cookies);
   }
@@ -3189,6 +3205,7 @@ app.get(
 
 // /api/admin/courses/import/template and /api/admin/courses/bulk-delete moved to
 // `server/routes/admin/adminCourses.js`
+registerAdminCoursesRoutes(app);
 
 app.get('/api/admin/diagnostics/memberships', requireAdminAccess, asyncHandler(async (req, res) => {
   const context = requireUserContext(req, res);
@@ -7441,6 +7458,25 @@ app = createApp(deps, app);
 // read req.app.locals. This will be removed after migrating routers.
 app.locals = Object.assign({}, deps);
 
+// API-scoped diagnostic route (temporary)
+app.get('/api/internal/diag/memberships/:orgId/:userId', async (req, res) => {
+  try {
+    const admin = getSupabaseAdminClient();
+    if (!admin) return res.status(500).json({ error: 'admin_client_unavailable' });
+    const { orgId, userId } = req.params;
+    const selectResult = await admin.from('organization_memberships').select('id,role,status').eq('organization_id', orgId).eq('user_id', userId).limit(5);
+    let rpcResult;
+    try {
+      rpcResult = await admin.rpc('is_org_admin_for', { target_organization_id: orgId });
+    } catch (e) {
+      rpcResult = { error: e?.message || String(e) };
+    }
+    return res.json({ select: selectResult.error ? { message: selectResult.error.message, code: selectResult.error.code } : { rows: selectResult.data || [] }, rpc: rpcResult });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 // DEBUG: dump middleware stack to verify E2E bypass ordering
 try {
   const stack = (app && app._router && app._router.stack) || [];
@@ -7725,7 +7761,13 @@ const resolveOrgMembership = async (req, orgId, userId) => {
     return req.orgMemberships.get(orgId);
   }
 
-  const { data, error } = await supabase
+  // Prefer the admin client for membership resolution to avoid RLS policies
+  // being evaluated as anon (which can call is_org_admin_for and cause
+  // permission denied errors). Fall back to request-scoped client only if
+  // admin client is not available.
+  const admin = getSupabaseAdminClient();
+  const runtimeClient = admin || getActiveSupabaseClient(req);
+  const { data, error } = await runtimeClient
     .from('organization_memberships')
     .select(buildMembershipSelect('role', 'status', 'invited_by'))
     .eq('organization_id', orgId)
@@ -7885,6 +7927,22 @@ app.use(
     ensureSupabase,
   }),
 );
+
+// Temporary diagnostic route: check membership/table/function access via admin client
+app.get('/api/_diag/memberships/:orgId/:userId', async (req, res) => {
+  try {
+    const admin = getSupabaseAdminClient();
+    if (!admin) return res.status(500).json({ error: 'admin_client_unavailable' });
+    const { orgId, userId } = req.params;
+    const selectResult = await admin.from('organization_memberships').select('id,role,status').eq('organization_id', orgId).eq('user_id', userId).limit(5);
+    const rpcResult = await admin.rpc('is_org_admin_for', { target_organization_id: orgId }).catch((e) => ({ rpcError: e?.message || String(e) }));
+    return res.json({ select: selectResult.error ? { message: selectResult.error.message, code: selectResult.error.code } : { rows: selectResult.data?.length ?? null }, rpc: rpcResult });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
+// NOTE: legacy non-API diag path intentionally left commented out to avoid SPA fallback
 
 const verifyMediaAssetAccess = async (req, res, asset, context) => {
   if (!asset) return false;

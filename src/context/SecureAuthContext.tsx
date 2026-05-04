@@ -8,8 +8,6 @@ import {
   getActiveOrgPreference,
   setActiveOrgPreference,
   clearActiveOrgPreference,
-  getAccessToken,
-  setAccessToken,
   setRefreshToken,
   type UserSession,
   type UserMembership,
@@ -60,6 +58,7 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { setCanonicalSession } from '../lib/canonicalAuth';
 import { isAdminSurface, isLoginPath, resolveLoginPath } from '../utils/surface';
 import { setAuthState } from '../store/authStore';
+import { setRuntimeAuthReady } from '../lib/apiReadiness';
 
 const logAuthSessionState = () => {};
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
@@ -220,6 +219,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const authReadyRef = useRef<boolean>(false);
   useEffect(() => {
     authReadyRef.current = authReady;
+    setRuntimeAuthReady(authReady);
   }, [authReady]);
   // If we need to defer showing a bootstrap error until auth subsystem reports, store the reason here
   const [pendingBootstrapReason, setPendingBootstrapReason] = useState<string | null>(null);
@@ -530,6 +530,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setOrganizationIds(orgIds);
       // Resolve active org deterministically and ensure platform_admin gets a special ALL_ORGS flag
       const resolveActiveOrg = (sess: UserSession | null) => {
+        if (resolvedState.activeOrgId) return resolvedState.activeOrgId;
+        if (sess?.activeOrgId) return sess.activeOrgId;
         const membershipsList = sess?.memberships || [];
         if (membershipsList.length > 0) {
           const m = membershipsList[0] as any;
@@ -616,9 +618,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       if (persistTokens) {
-        if (payload.accessToken !== undefined) {
-          setAccessToken(payload.accessToken, tokenReason);
-        }
         if (payload.refreshToken !== undefined) {
           setRefreshToken(payload.refreshToken, tokenReason);
         }
@@ -638,7 +637,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         // querying Supabase directly.
         try {
           setCanonicalSession({
-            accessToken: payload.accessToken ?? getAccessToken() ?? null,
+            accessToken: payload.accessToken ?? null,
             refreshToken: payload.refreshToken ?? null,
             userId: session.id ?? null,
             userEmail: session.email ?? null,
@@ -652,7 +651,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
              
             console.debug('[AUTH DEBUG] canonical session set', {
               userId: session.id ?? null,
-              accessTokenPresent: Boolean(payload.accessToken ?? getAccessToken()),
+              accessTokenPresent: Boolean(payload.accessToken),
               activeOrgId: resolvedState.activeOrgId ?? null,
             });
           }
@@ -683,7 +682,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             reason,
             pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
             hadUser: hadSession,
-            hadToken: Boolean(getAccessToken()),
+            hadToken: false,
           });
         }
         return;
@@ -695,7 +694,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           reason,
           pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
           hadUser: hadSession,
-          hadToken: Boolean(getAccessToken()),
+          hadToken: false,
         });
       }
 
@@ -895,7 +894,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             reason,
             pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
             hadUser: true,
-            hadToken: Boolean(getAccessToken()),
+            hadToken: false,
           });
         }
         return;
@@ -907,7 +906,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           reason,
           pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
           hadUser: hasAuthenticatedSessionRef.current,
-          hadToken: Boolean(getAccessToken()),
+          hadToken: false,
         });
       }
 

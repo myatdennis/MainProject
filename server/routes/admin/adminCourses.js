@@ -91,7 +91,7 @@ async function bulkDeleteHandler(req, res) {
     return res.status(500).json({ error: 'Supabase not configured' });
   }
 
-  const { courseIds } = req.body || {};
+  const courseIds = req.body?.courseIds || req.body?.course_ids || [];
   if (!Array.isArray(courseIds) || courseIds.length === 0) {
     logger.warn('bulk_delete_courses_invalid_payload', { courseIds });
     return res.status(400).json({ error: 'courseIds array is required' });

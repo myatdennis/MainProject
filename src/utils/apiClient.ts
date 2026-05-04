@@ -4,7 +4,6 @@ import { getActiveSession, shouldRequireSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import authorizedFetch, { NotAuthenticatedError } from '../lib/authorizedFetch';
-import { getAccessToken } from '../lib/apiClient';
 import {
   hasAdminPortalAccess,
   getAdminAccessSnapshot,
@@ -21,6 +20,7 @@ import { getGlobalActiveOrgIdForApi, pathRequiresOrgHeader } from '../lib/orgCon
 import { waitForOrgReady } from '../lib/readiness';
 import { GLOBAL_ORG_ID } from '../constants/org';
 import { startApiRequest, endApiRequest } from './apiInstrumentation';
+import { assertApiReady, ApiReadinessError } from '../lib/apiReadiness';
 import axios from 'axios';
 
 export class ApiError extends Error {
@@ -689,10 +689,24 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
 
-  // Build auth headers for EVERY request
-  const authHeaders = await buildAuthHeaders();
   const publicEndpoint = isPublicEndpoint(path);
   const attachAuth = !publicEndpoint;
+  let readinessSessionToken: string | null = null;
+  try {
+    const readiness = await assertApiReady({
+      requireAuth: attachAuth && requiresSession && !isE2EBypassActive(),
+      requireOrg: attachAuth && requiresSession && !isE2EBypassActive(),
+    });
+    readinessSessionToken = readiness.session?.access_token ?? null;
+  } catch (error) {
+    if (error instanceof ApiReadinessError) {
+      throw buildNotAuthenticatedError(url);
+    }
+    throw error;
+  }
+
+  // Build auth headers for EVERY request
+  const authHeaders = await buildAuthHeaders();
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
@@ -721,9 +735,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   }
 
   if (attachAuth && requiresSession && !headers.Authorization) {
-    const token = await getAccessToken();
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
+    if (readinessSessionToken) {
+      headers.Authorization = `Bearer ${readinessSessionToken}`;
     }
   }
 
@@ -800,7 +813,14 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     console.debug('[apiRequest][auth-debug]', debugPayload);
   }
 
-  const credentialMode: RequestCredentials = shouldAttachCredentials(url) ? 'include' : 'omit';
+  // Allow callers to explicitly request a credentials mode (e.g. 'include')
+  // by passing `credentials` in options. Otherwise fall back to the heuristic
+  // that enables credentials for same-origin / relative API calls.
+  const credentialMode: RequestCredentials = (options as any)?.credentials
+    ? (options as any).credentials
+    : shouldAttachCredentials(url)
+    ? 'include'
+    : 'omit';
 
   const preparedRequest: PreparedRequest = {
     url,
@@ -1129,21 +1149,18 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
   }
   const promise = (async () => {
     try {
-      // Use canonical session snapshot rather than querying Supabase directly.
-      const { getCanonicalSession, waitForAuthReady } = await import('../lib/canonicalAuth');
-      const cs = getCanonicalSession();
-      let accessToken: string | null = null;
-      if (cs && cs.accessToken) {
-        accessToken = cs.accessToken;
-      } else {
-        const ready = await waitForAuthReady(2000).catch(() => null);
-        if (!ready || !ready.accessToken) {
-          if (import.meta.env?.DEV) {
-            console.debug('[apiClient] Skipping admin access gate because session is unavailable');
-          }
-          return null;
+      const supabase = getSupabase();
+      if (!supabase) {
+        return null;
+      }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        if (import.meta.env?.DEV) {
+          console.debug('[apiClient] Skipping admin access gate because session is unavailable');
         }
-        accessToken = ready.accessToken;
+        return null;
       }
 
       const res = await authorizedFetch(
@@ -1151,9 +1168,6 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
         {
           method: 'GET',
           credentials: 'include',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
         },
         {
           requestLabel: '/api/admin/me',

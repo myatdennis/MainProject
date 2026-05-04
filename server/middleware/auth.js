@@ -34,21 +34,19 @@ const ADMIN_EMAIL_ALLOWLIST = new Set(
     .filter(Boolean),
 );
 const STRICT_AUTH = String(process.env.STRICT_AUTH || 'false').toLowerCase() === 'true';
-// PRODUCTION NOTE: membershipCache and tokenCache are in-process Maps.
+// PRODUCTION NOTE: membershipCache is an in-process Map.
 // In a multi-instance deployment (e.g. Railway), cache invalidation via
 // invalidateMembershipCache() only clears the local instance's cache.
 // TTL is reduced to 5s to minimize stale-role windows; role/membership changes
 // are also actively invalidated so the effective window is near-zero on single-instance.
 // TODO: Replace with Redis/distributed cache before scaling past 2 instances.
 const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 5_000);
-const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
 
 import cacheClient from '../lib/cacheClient.js';
 import { getEffectiveUser } from '../utils/getEffectiveUser.js';
 
 // Cache abstraction: in-memory for local dev, Redis-backed in production when REDIS_URL is set.
 const membershipCache = cacheClient;
-const tokenCache = cacheClient;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
@@ -713,14 +711,10 @@ const determineActiveOrgId = (req, memberships = []) => {
 
 async function loadSupabaseUser(token) {
   if (!token || !supabaseAuthClient) return null;
-  const cached = await tokenCache.get(token);
-  if (cached) return cached;
-
   const { data, error } = await supabaseAuthClient.auth.getUser(token);
   if (error || !data?.user) {
     return null;
   }
-  await tokenCache.set(token, data.user, MEMBERSHIP_CACHE_MS);
   return data.user;
 }
 
@@ -1780,20 +1774,53 @@ export async function resolveOrganizationContext(req, res, next) {
   let memberships = [];
   if (userId) {
     try {
-      const supabase = getActiveSupabaseClient(req);
-      const { data, error } = await supabase
-        .from('organization_memberships')
-        .select('organization_id, role, status')
-        .eq('user_id', userId)
-        .eq('status', 'active');
-      if (error) {
-        console.error('[ORG MEMBERSHIPS ERROR]', {
-          userId,
-          message: error?.message || String(error),
-          code: error?.code || null,
-        });
+      // Prefer the admin client for membership lookups. If the admin client
+      // is not available (e.g. service role key not configured locally), only
+      // attempt the lookup with a request-bound client when we have a token.
+      // Running this query as the anon role is unsafe because the RLS policy
+      // on organization_memberships calls public.is_org_admin_for(...) which
+      // is not executable by anon and will trigger a 42501 permission error.
+      const admin = getSupabaseAdminClient();
+      if (admin) {
+        const { data, error } = await admin
+          .from('organization_memberships')
+          .select('organization_id, role, status')
+          .eq('user_id', userId)
+          .eq('status', 'active');
+        if (error) {
+          console.error('[ORG MEMBERSHIPS ERROR]', {
+            userId,
+            message: error?.message || String(error),
+            code: error?.code || null,
+            source: 'admin_select',
+          });
+        } else {
+          memberships = Array.isArray(data) ? data : [];
+        }
       } else {
-        memberships = Array.isArray(data) ? data : [];
+        // No admin client available — only proceed if a request token exists so
+        // the per-request client will evaluate RLS as `authenticated` rather
+        // than `anon`. The variable `token` is in scope in buildAuthContext.
+        if (!token) {
+          console.warn('[ORG MEMBERSHIPS SKIPPED] no admin client and no request token - skipping membership lookup', { userId });
+        } else {
+          const runtimeSupabase = getActiveSupabaseClient(req);
+          const { data, error } = await runtimeSupabase
+            .from('organization_memberships')
+            .select('organization_id, role, status')
+            .eq('user_id', userId)
+            .eq('status', 'active');
+          if (error) {
+            console.error('[ORG MEMBERSHIPS ERROR]', {
+              userId,
+              message: error?.message || String(error),
+              code: error?.code || null,
+              source: 'request_client_select',
+            });
+          } else {
+            memberships = Array.isArray(data) ? data : [];
+          }
+        }
       }
     } catch (error) {
       console.error('[ORG MEMBERSHIPS ERROR]', {
