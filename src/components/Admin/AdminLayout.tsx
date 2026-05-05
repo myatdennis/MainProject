@@ -338,6 +338,23 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     // RequireAuth is the primary auth gate; this is a safety net for the layout
     // shell only.
     if (!hasSession && authStatus === 'unauthenticated') {
+      if (hasSession) {
+        console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+          pathname: window.location.pathname,
+        });
+        return;
+      }
+      console.log('[AUTH CHECK]', {
+        hasSession,
+        hasToken: hasSession,
+        pathname: window.location.pathname,
+        reason: 'redirect decision',
+      });
+      console.log('[AUTH REDIRECT]', {
+        target: '/admin/login',
+        reason: 'admin_layout_missing_session',
+        pathname: window.location.pathname,
+      });
       logAuthDiagnostic('AdminLayout.auth_guard', {
         path: location.pathname,
         reason: 'missing_session',

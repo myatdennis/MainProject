@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { isLoginPath, resolveLoginPath } from '../utils/surface';
 
@@ -10,6 +11,7 @@ export const renderAuthState = ({
   onGoToLogin,
   children,
   shouldRedirectToLogin,
+  session,
 }: {
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   authInitializing: boolean;
@@ -18,10 +20,12 @@ export const renderAuthState = ({
   onGoToLogin: () => void;
   children: ReactNode;
   shouldRedirectToLogin: boolean;
+  session?: Session | null;
 }) => {
   const pathname =
     typeof window !== 'undefined' && window.location ? window.location.pathname || '' : '';
   const isAuthenticatedUser = authStatus === 'authenticated';
+  const hasToken = Boolean(session?.access_token);
   const isPublicAuthPath =
     isLoginPath(pathname) ||
     pathname.startsWith('/auth/callback') ||
@@ -60,6 +64,9 @@ export const renderAuthState = ({
   }
 
   if (authStatus === 'unauthenticated') {
+    if (hasToken) {
+      return <>{children}</>;
+    }
     if (!isAuthenticatedUser && (isPublicAuthPath || isMarketingLanding)) {
       return <>{children}</>;
     }
@@ -72,6 +79,23 @@ export const renderAuthState = ({
     if (!onLoginRoute && shouldRedirectToLogin) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
+        if (session?.access_token) {
+          console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+            pathname: window.location.pathname,
+          });
+          return null;
+        }
+        console.log('[AUTH CHECK]', {
+          hasSession: Boolean(session),
+          hasToken,
+          pathname: window.location.pathname,
+          reason: 'redirect decision',
+        });
+        console.log('[AUTH REDIRECT]', {
+          target,
+          reason: 'render_auth_state_unauthenticated',
+          pathname,
+        });
         console.debug('[AUTH REDIRECT DECISION]', {
           decision: 'redirecting',
           authStatus,

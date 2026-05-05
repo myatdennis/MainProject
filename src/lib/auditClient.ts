@@ -1,5 +1,6 @@
 import authorizedFetch from './authorizedFetch';
 import { API_BASE } from '../config/api';
+import { getSessionCached } from './sessionCache';
 
 export type AuditEvent = {
   action: string;
@@ -64,15 +65,8 @@ export const flushAuditQueue = async (): Promise<void> => {
 
   let sessionReady = false;
   try {
-    const { getSupabase } = await import('./supabaseClient');
-    const supabase = getSupabase();
-    if (!supabase) {
-      return;
-    }
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    sessionReady = Boolean(session?.access_token);
+    const session = await getSessionCached();
+    sessionReady = Boolean((session as any)?.access_token);
   } catch {
     sessionReady = false;
   }

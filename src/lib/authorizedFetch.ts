@@ -1,4 +1,5 @@
 import { getSupabase } from './supabaseClient';
+import { getSessionCached } from './sessionCache';
 import { resolveOrgHeaderForRequest, getGlobalActiveOrgIdForApi } from './orgContext';
 import { GLOBAL_ORG_ID } from '../constants/org';
 import { resolveApiUrl } from '../config/apiBase';
@@ -123,13 +124,7 @@ const nextRequestId = () => {
 };
 
 const requireSupabaseSessionToken = async (): Promise<string> => {
-  const supabase = getSupabase();
-  if (!supabase || typeof supabase.auth?.getSession !== 'function') {
-    throw new NotAuthenticatedError('No session');
-  }
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const session = await getSessionCached();
   if (!session?.access_token) {
     throw new NotAuthenticatedError('No session');
   }

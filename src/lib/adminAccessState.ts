@@ -15,7 +15,7 @@ export const getCurrentAdminAccessState = () => {
 const getSnapshot = () => getAdminAccessSnapshot();
 
 export const useAdminAccessState = () => {
-  const { isAuthenticated, sessionStatus, authInitializing, user } = useSecureAuth();
+  const { isAuthenticated, session, sessionStatus, authInitializing } = useSecureAuth();
   const snapshot = useSyncExternalStore(subscribeAdminAccessSnapshot, getSnapshot, getSnapshot);
 
   const adminPortalAllowed = useMemo(() => {
@@ -28,7 +28,7 @@ export const useAdminAccessState = () => {
   return {
     adminPortalAllowed,
     snapshot,
-    hasSession: Boolean(user),
+    hasSession: Boolean(session?.access_token),
     sessionStatus,
     authInitializing,
   };

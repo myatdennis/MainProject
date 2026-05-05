@@ -218,9 +218,8 @@ class SyncService {
         this.cleanupRealtimeChannels();
         return;
       }
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { getSessionCached } = await import('../lib/sessionCache');
+      const session = await getSessionCached();
       if (!session?.access_token) {
         if (import.meta.env.DEV) {
           logSyncDebug('[SyncService] Skipping realtime setup until session is available.');

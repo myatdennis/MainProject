@@ -1,6 +1,6 @@
 import type { Session } from '@supabase/supabase-js';
 import { getGlobalActiveOrgIdForApi } from './orgContext';
-import { getSupabase } from './supabaseClient';
+import { getSessionCached } from './sessionCache';
 
 let runtimeAuthReady = false;
 
@@ -45,13 +45,8 @@ export const getRuntimeAuthReady = (): boolean => {
 export const resolveApiReadinessSnapshot = async (): Promise<ApiReadinessSnapshot> => {
   let session: Session | null = null;
   try {
-    const supabase = getSupabase();
-    if (supabase && typeof supabase.auth?.getSession === 'function') {
-      const {
-        data: { session: currentSession },
-      } = await supabase.auth.getSession();
-      session = currentSession ?? null;
-    }
+    // Use cached session lookup to avoid repeated supabase.getSession() calls
+    session = (await getSessionCached()) ?? null;
   } catch {
     session = null;
   }

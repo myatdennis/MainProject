@@ -231,13 +231,8 @@ export function debugAuthStorage(label: string) {
 async function logSupabaseSessionStatus(label: string) {
   if (!import.meta.env.DEV) return;
   try {
-    const supabase = getSupabase();
-    if (!supabase) {
-      return;
-    }
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const { getSessionCached } = await import('./sessionCache');
+    const session = await getSessionCached();
     console.info('[supabaseClient] session snapshot', {
       label,
       sessionHasAccessToken: Boolean(session?.access_token),
