@@ -59,7 +59,8 @@ describe('secureStorage', () => {
     setSessionMetadata({ accessExpiresAt: 100, refreshExpiresAt: 200 });
 
     expect(getAccessToken()).toBeNull();
-    expect(getRefreshToken()).toBe('refresh-456');
+    // refresh tokens are no longer persisted client-side
+    expect(getRefreshToken()).toBeNull();
     expect(getSessionMetadata()).toMatchObject({ accessExpiresAt: 100, refreshExpiresAt: 200 });
   });
 

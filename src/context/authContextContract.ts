@@ -6,6 +6,8 @@ import type { AuthState, SessionSurface, SurfaceAuthStatus } from './surfaceAcce
 
 export interface AuthContextType {
   isAuthenticated: AuthState;
+  // Indicates the Supabase client has completed its initial session check
+  authInitialized?: boolean;
   authInitializing: boolean;
   authReady?: boolean;
   session?: Session | null;
@@ -41,6 +43,7 @@ export interface AuthContextType {
 
 export const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false, client: false },
+  authInitialized: false,
   authInitializing: true,
   authReady: false,
   session: null,

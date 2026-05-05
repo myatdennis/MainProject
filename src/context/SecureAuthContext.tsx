@@ -9,7 +9,6 @@ import {
   getActiveOrgPreference,
   setActiveOrgPreference,
   clearActiveOrgPreference,
-  setRefreshToken,
   type UserSession,
   type UserMembership,
   type SessionMetadata,
@@ -29,7 +28,6 @@ import { courseStore } from '../store/courseStore';
 import { setAuthBootstrapping } from '../lib/authBootstrapState';
 import {
   normalizeSessionResponsePayload,
-  readSupabaseSessionTokens,
   type SessionResponsePayload,
 } from './sessionBootstrap';
 import {
@@ -81,9 +79,6 @@ let warnedMissingProvider = false;
 // ============================================================================
 // Provider
 // ============================================================================
-
-
-
 
 interface AuthProviderProps {
   children: ReactNode;
@@ -214,27 +209,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   // Hoist authInitializing and setAuthInitializing to top-level scope
   const [authInitializing, setAuthInitializing] = useState(true);
+  // Whether the Supabase client has completed its initial session check
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const authReadyRef = useRef<boolean>(false);
+  const authInitializedRef = useRef<boolean>(false);
   useEffect(() => {
-    if (session?.access_token && !authReady) {
-      setAuthReady(true);
-      return;
-    }
-    if (!session?.access_token && authReady) {
-      setAuthReady(false);
-    }
-  }, [authReady, session?.access_token]);
-  useEffect(() => {
-    authReadyRef.current = authReady;
-    setRuntimeAuthReady(authReady);
+    authInitializedRef.current = authInitialized;
+    // Mirror authInitialized into runtime readiness so API layer can check
+    // readiness without inferring authentication from other heuristics.
+    setRuntimeAuthReady(Boolean(authInitialized));
     console.log('[AUTH STATE]', {
-      authReady,
+      authInitialized,
       hasSession: Boolean(session),
       hasToken: Boolean(session?.access_token),
     });
-  }, [authReady, session]);
+  }, [authInitialized, session]);
   // If we need to defer showing a bootstrap error until auth subsystem reports, store the reason here
   const [pendingBootstrapReason, setPendingBootstrapReason] = useState<string | null>(null);
   type AuthBootstrapState =
@@ -536,7 +525,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       try {
          
         if (import.meta.env.DEV) {
-          console.log('AUTH STATE', { authReady: authReadyRef.current, hasSession: !!session });
+          console.log('AUTH STATE', { authInitialized: authInitializedRef.current, hasSession: !!session });
         }
       } catch (e) {
         // ignore
@@ -631,10 +620,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
 
+      // Do NOT persist raw tokens manually. Supabase client is the single
+      // source-of-truth for token persistence (persistSession: true).
+      // We may store non-sensitive session metadata (expiry timestamps) for
+      // diagnostics, but avoid writing raw refresh/access tokens here.
       if (persistTokens) {
-        if (payload.refreshToken !== undefined) {
-          setRefreshToken(payload.refreshToken, tokenReason);
-        }
         if (payload.expiresAt || payload.refreshExpiresAt) {
           const issuedAt = getSkewedNow();
           const metadata: SessionMetadata = {
@@ -908,14 +898,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // already reported its readiness. Otherwise defer until onAuthStateChange
   // arrives so we avoid false negatives during init races.
   if (reason.startsWith('bootstrap_')) {
-    if (authReadyRef.current) {
-      setBootstrapError('Session bootstrap failed. Please log in.');
-    } else {
-      setPendingBootstrapReason(reason);
-      // clear any visible error for now
-      setBootstrapError(null);
-      console.warn('[AUTH] deferred bootstrap error until authReady', { reason });
-    }
+                    if (authInitializedRef.current) {
+                      setBootstrapError('Session bootstrap failed. Please log in.');
+                    } else {
+                      setPendingBootstrapReason(reason);
+                      // clear any visible error for now
+                      setBootstrapError(null);
+                      console.warn('[AUTH] deferred bootstrap error until authInitialized', { reason });
+                    }
   } else {
     setBootstrapError(null);
   }
@@ -960,12 +950,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       allowRefresh?: boolean;
       skipMembershipSelfHeal?: boolean;
     } = {}): Promise<boolean> => {
+      // Always consult the Supabase client for current session tokens.
       let storedAccessToken: string | null = null;
       let storedRefreshToken: string | null = null;
       try {
-        const { accessToken, refreshToken } = await readSupabaseSessionTokens({ refreshIfMissing: true });
-        storedAccessToken = accessToken;
-        storedRefreshToken = refreshToken;
+        const supabaseClient = getSupabase();
+        if (supabaseClient) {
+          const sessionResult = await supabaseClient.auth.getSession();
+          const current = (sessionResult as any)?.data?.session ?? null;
+          if (current) {
+            storedAccessToken = current.access_token ?? current.accessToken ?? null;
+            storedRefreshToken = current.refresh_token ?? current.refreshToken ?? null;
+          }
+        }
       } catch (tokenError) {
         console.warn('[SecureAuth] Failed to inspect Supabase session for fetch', tokenError);
       }
@@ -1266,15 +1263,20 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // First: proactively query Supabase for current session to hydrate
       // immediately on startup. This ensures the client-side Supabase
       // subsystem has had a chance to restore and report session state.
-      (async () => {
+  // Initialize a fallback timer handle so we can clear it from the
+  // cleanup path below.
+  let initFallback: ReturnType<typeof setTimeout> | null = null;
+
+  (async () => {
         try {
           const {
             data: { session: currentSession },
           } = await client.auth.getSession();
           setSession(currentSession ?? null);
-          setAuthReady(Boolean(currentSession?.access_token));
+          // Mark that the initial supabase getSession() check completed
+          setAuthInitialized(true);
           console.log('[AUTH STATE]', {
-            authReady: Boolean(currentSession?.access_token),
+            authInitialized: Boolean(currentSession),
             hasSession: Boolean(currentSession),
             hasToken: Boolean(currentSession?.access_token),
           });
@@ -1301,16 +1303,25 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
         } catch (e) {
           setSession(null);
-          setAuthReady(false);
-          console.warn('AUTH STATE: getSession failed, marking not ready', e);
+          console.warn('AUTH STATE: getSession failed', e);
+        }
+        // Fail-safe: ensure authInitialized is set after 2s even if getSession/onAuth events
+        // are delayed (prevents indefinite boot spinner when browser delays events)
+        try {
+          initFallback = setTimeout(() => {
+            setAuthInitialized(true);
+          }, 2000);
+        } catch (e) {
+          // ignore timer failures in non-browser environments
         }
       })();
 
       const { data: sub } = client.auth.onAuthStateChange((event: any, authSession: any) => {
         setSession(authSession ?? null);
-        setAuthReady(Boolean(authSession?.access_token));
+        // Ensure the initialized flag is set when onAuthStateChange fires
+        setAuthInitialized(true);
         console.log('[AUTH STATE]', {
-          authReady: Boolean(authSession?.access_token),
+          authInitialized: Boolean(authSession),
           hasSession: Boolean(authSession),
           hasToken: Boolean(authSession?.access_token),
         });
@@ -1342,6 +1353,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       });
       return () => {
         try {
+          if (initFallback) clearTimeout(initFallback);
           // handle multiple client library return shapes
           if (!sub) return;
           // supabase-js v2 sometimes returns { data: { subscription } }
@@ -1415,12 +1427,22 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       try {
         // STEP 1: Load local Supabase session tokens.
               try {
-                // Read any locally persisted Supabase tokens.
-                const { accessToken: _localAccess, refreshToken: _localRefresh } = await readSupabaseSessionTokens({ refreshIfMissing: true });
-                // If no local session is present and we're running in DEV (not E2E),
+                // Read the Supabase client session (do not read persisted tokens).
+                const supabaseClient = getSupabase();
+                let _localAccess: string | null = null;
+                let _localRefresh: string | null = null;
+                if (supabaseClient) {
+                  try {
+                    const sessionResult = await supabaseClient.auth.getSession();
+                    const current = (sessionResult as any)?.data?.session ?? null;
+                    _localAccess = current?.access_token ?? null;
+                    _localRefresh = current?.refresh_token ?? null;
+                  } catch (err) {
+                    // ignore
+                  }
+                }
+                // If no client session is present and we're running in DEV (not E2E),
                 // attempt a non-interactive debug login to auto-bootstrap a session.
-                // This calls the server's dev-only /api/auth/_debug/demo-login endpoint
-                // which is enabled when ALLOW_DEBUG_LOGIN=true on the backend.
                 const hasLocalToken = Boolean(_localAccess || _localRefresh);
                 const debugAutoLoginEnabled = String((import.meta as any)?.env?.VITE_ENABLE_DEBUG_LOGIN ?? '').toLowerCase() === 'true';
                 if (debugAutoLoginEnabled && !hasLocalToken && import.meta.env?.DEV && !(typeof window !== 'undefined' && (window as any).__E2E_BYPASS)) {
@@ -1473,7 +1495,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                           // Debug log for presence
                            
                           if (import.meta.env.DEV) {
-                            console.log('AUTH STATE (bootstrap timeout check)', { authReady: authReadyRef.current, hasSession: !!session });
+                            console.log('AUTH STATE (bootstrap timeout check)', { authInitialized: authInitializedRef.current, hasSession: !!session });
                           }
                         } catch (e) {
                           // ignore getSession errors and treat as no session for now
@@ -1482,7 +1504,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                       if (!sessionExists) {
                         // Only set a blocking bootstrap error if the auth subsystem
                         // has already reported (authReady) and there's no session.
-                        if (authReadyRef.current) {
+                        if (authInitializedRef.current) {
                           console.error('AUTH BOOTSTRAP FAILED: no session');
                           setAuthInitializing(false);
                           setAuthStatus('unauthenticated', 'bootstrap:timeout');
@@ -1490,7 +1512,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                           setBootstrapError('Session bootstrap failed. Please log in.');
                         } else {
                           // Otherwise, defer and wait for onAuth events to arrive.
-                          console.warn('[AUTH] bootstrap timeout occurred but auth subsystem not ready; deferring error until authReady');
+                          console.warn('[AUTH] bootstrap timeout occurred but auth subsystem not ready; deferring error until authInitialized');
                           setPendingBootstrapReason('bootstrap:timeout');
                         }
                       } else {
@@ -2059,9 +2081,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Context Value
   // ============================================================================
 
+  // Backwards-compatibility: some callers still read `authReady`.
+  // Compute it from the current Supabase session presence (access token).
+  const authReady = Boolean(session?.access_token);
+
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
+    authInitialized,
     authReady,
     session,
     authStatus,

@@ -1,43 +1,17 @@
-import { getRefreshToken, type UserSession } from '../lib/secureStorage';
+import { type UserSession } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import { toast } from 'react-hot-toast';
-import apiRequest, { ApiError } from '../utils/apiClient';
-import { getUserSession } from '../lib/secureStorage';
+import { ApiError } from '../utils/apiClient';
 import { resolveLoginPath } from '../utils/surface';
 import type { SessionResponsePayload } from './sessionBootstrap';
 import type { RefreshOptions } from './authTypes';
 
-export const resolveRefreshTokenForRequest = async (sessionSnapshot: UserSession | null): Promise<string | null> => {
-  let refreshToken: string | null =
-    (sessionSnapshot as any)?.session?.refresh_token ??
-    (sessionSnapshot as any)?.session?.refreshToken ??
-    (sessionSnapshot as any)?.refresh_token ??
-    (sessionSnapshot as any)?.refreshToken ??
-    null;
-
-  if (!refreshToken) {
-    try {
-      refreshToken = getRefreshToken();
-    } catch (storageError) {
-      console.warn('[SecureAuth] Failed to read stored refresh token', storageError);
-    }
-  }
-
-  try {
-    const supabaseClient = getSupabase();
-    if (supabaseClient) {
-      const { data } = await supabaseClient.auth.getSession();
-      const supabaseRefreshToken =
-        (data as any)?.session?.refresh_token ?? (data as any)?.session?.refreshToken ?? null;
-      if (supabaseRefreshToken) {
-        refreshToken = supabaseRefreshToken;
-      }
-    }
-  } catch (supabaseError) {
-    console.warn('[SecureAuth] Unable to read Supabase session for refresh token', supabaseError);
-  }
-
-  return refreshToken;
+// Removed manual refresh-token resolution. The Supabase client is the
+// authoritative source for tokens. Callers should use `supabase.auth.getSession()`
+// or `supabase.auth.refreshSession()` directly.
+export const resolveRefreshTokenForRequest = async (_sessionSnapshot: UserSession | null): Promise<string | null> => {
+  // Deprecated shim: do not rely on persisted refresh tokens.
+  return null;
 };
 
 type RefreshDeps = {
@@ -112,45 +86,66 @@ export const runRefreshTokenCallback = async (
 
     deps.lastRefreshAttemptRef.current = now;
 
-    try {
-      let sessionSnapshot: UserSession | null = null;
       try {
-        sessionSnapshot = getUserSession();
-      } catch (sessionError) {
-        console.warn('[SecureAuth] Failed to read cached user session for refresh payload', sessionError);
-      }
+        const supabaseClient = getSupabase();
+        if (!supabaseClient) {
+          console.warn('[SecureAuth] No Supabase client available for refresh');
+          refreshStatus = 'error';
+          return false;
+        }
 
-      const refreshToken = await resolveRefreshTokenForRequest(sessionSnapshot);
-      if (!refreshToken) {
-        console.warn('[SecureAuth] No refresh token available for /api/auth/refresh request');
-        refreshStatus = 'unauthenticated';
-        return false;
-      }
+        // Ask Supabase client to refresh its session using the embedded
+        // refresh token. This is the canonical client-side refresh.
+        try {
+          // supabase.auth.refreshSession() will instruct the client to refresh
+          // using its stored refresh token. It may be a no-op if the session is
+          // already fresh.
+          // Note: some supabase client versions may not expose refreshSession on
+          // the client; in that case, we fall back to getSession() which may
+          // also trigger auto-refresh when configured with autoRefreshToken.
+          if (typeof (supabaseClient.auth as any).refreshSession === 'function') {
+            await (supabaseClient.auth as any).refreshSession();
+          }
+        } catch (refreshErr) {
+          // Non-fatal: continue to attempt to read session below.
+          console.warn('[SecureAuth] supabase refreshSession() failed', refreshErr);
+        }
 
-      const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: {
-          ...deps.buildSessionAuditHeaders(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ refreshToken }),
-      });
+        // Re-query the Supabase session after attempting refresh.
+        const { data } = await supabaseClient.auth.getSession();
+        const currentSession = (data as any)?.session ?? null;
+        if (!currentSession) {
+          console.warn('[SecureAuth] No Supabase session present after refresh attempt');
+          refreshStatus = 'unauthenticated';
+          return false;
+        }
 
-      if (payload?.user) {
-        deps.applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
-        deps.setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
-        deps.setSessionStatus('authenticated', 'refreshTokenCallback:refresh_success');
+        // Retrieve server-side enriched session (memberships, orgs).
+        const serverApplied = await deps.fetchServerSession({ silent: true });
+        if (serverApplied) {
+          deps.setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
+          deps.setSessionStatus('authenticated', 'refreshTokenCallback:refresh_success');
+          refreshStatus = 'success';
+          deps.lastRefreshSuccessRef.current = deps.getSkewedNow();
+          return true;
+        }
+
+        // Fallback: apply the minimal Supabase session payload so UI reflects
+        // the refreshed user object even if server enrichment failed.
+        const minimalPayload: SessionResponsePayload = {
+          user: (currentSession as any).user ?? null,
+          accessToken: (currentSession as any).access_token ?? null,
+          refreshToken: (currentSession as any).refresh_token ?? null,
+          expiresAt: (currentSession as any).expires_at ?? null,
+          refreshExpiresAt: (currentSession as any).refresh_expires_at ?? null,
+        };
+        deps.applySessionPayload(minimalPayload, { persistTokens: false, reason: 'supabase_refresh_fallback' });
+        deps.setAuthStatus('authenticated', 'refreshTokenCallback:refresh_fallback');
+        deps.setSessionStatus('authenticated', 'refreshTokenCallback:refresh_fallback');
         refreshStatus = 'success';
         deps.lastRefreshSuccessRef.current = deps.getSkewedNow();
         return true;
-      }
-
-      await deps.fetchServerSession({ silent: true });
-      refreshStatus = 'success';
-      deps.lastRefreshSuccessRef.current = deps.getSkewedNow();
-      return true;
-    } catch (error) {
+      } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 401 || error.status === 403) {
           console.warn('[SecureAuth] Refresh token rejected, clearing session');
