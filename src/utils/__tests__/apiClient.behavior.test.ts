@@ -532,13 +532,17 @@ describe('apiClient', () => {
     expect(String(fetchSpy.mock.calls[0]?.[0] ?? '')).toContain('/api/admin/courses');
   });
 
-  it('falls back to assign/href when window.location.replace is missing', async () => {
+  it('does not force a login redirect from the API layer when no Supabase session exists', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     __setTestOrgContext('org-1');
     shouldRequireSessionSpy.mockReturnValue(true);
     authBootstrapSpy.mockReturnValue(false);
     mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer active-token' });
+    supabaseGetSessionSpy.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    } as any);
 
     const locationWithAssignOnly = {
       ...window.location,
@@ -557,7 +561,7 @@ describe('apiClient', () => {
       const { apiRequest } = await loadApiClient();
 
       await expect(apiRequest('/api/client/data')).rejects.toMatchObject({ status: 401 });
-      expect(locationWithAssignOnly.assign).toHaveBeenCalledWith(expect.stringContaining('/login'));
+      expect(locationWithAssignOnly.assign).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(window, 'location', {
         configurable: true,

@@ -262,11 +262,34 @@ const handleAuthFailure = async () => {
     }
   }
   if (typeof window !== 'undefined' && window.location) {
+    try {
+      const { getSessionCached } = await import('../lib/sessionCache');
+      const session = await getSessionCached();
+      if ((session as any)?.access_token) {
+        console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+          pathname: window.location.pathname,
+        });
+        return;
+      }
+    } catch {
+      // Continue with the auth failure redirect if Supabase cannot report a session.
+    }
     logAuthRedirect('apiClient.handleAuthFailure', {
       pathname: window.location.pathname,
       reason: 'api_auth_failure',
     });
     const target = resolveLoginPath();
+    console.log('[AUTH CHECK]', {
+      hasSession: false,
+      hasToken: false,
+      pathname: window.location.pathname,
+      reason: 'redirect decision',
+    });
+    console.log('[AUTH REDIRECT]', {
+      target,
+      reason: 'api_auth_failure',
+      pathname: window.location.pathname,
+    });
     if (typeof window.location.replace === 'function') {
       window.location.replace(target);
     } else if (typeof window.location.assign === 'function') {
@@ -1148,13 +1171,8 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
   }
   const promise = (async () => {
     try {
-      const supabase = getSupabase();
-      if (!supabase) {
-        return null;
-      }
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { getSessionCached } = await import('../lib/sessionCache');
+      const session = await getSessionCached();
       if (!session?.access_token) {
         if (import.meta.env?.DEV) {
           console.debug('[apiClient] Skipping admin access gate because session is unavailable');

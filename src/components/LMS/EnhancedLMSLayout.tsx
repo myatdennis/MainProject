@@ -25,7 +25,7 @@ interface EnhancedLMSLayoutProps {
 }
 
 const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
-  const { logout, isAuthenticated, user, authInitializing } = useSecureAuth();
+  const { logout, isAuthenticated, user, authInitializing, authInitialized, session } = useSecureAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,10 +50,31 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
 
   // Check authentication
   useEffect(() => {
-    if (!isAuthenticated.lms) {
+    if (!authInitialized) {
+      return;
+    }
+    const hasToken = Boolean(session?.access_token);
+    if (!hasToken) {
+      if (session?.access_token) {
+        console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+          pathname: window.location.pathname,
+        });
+        return;
+      }
+      console.log('[AUTH CHECK]', {
+        hasSession: Boolean(session),
+        hasToken,
+        pathname: window.location.pathname,
+        reason: 'redirect decision',
+      });
+      console.log('[AUTH REDIRECT]', {
+        target: '/login',
+        reason: 'enhanced_lms_missing_session',
+        pathname: window.location.pathname,
+      });
       navigate('/login');
     }
-  }, [isAuthenticated.lms, navigate]);
+  }, [authInitialized, navigate, session]);
 
   const navigation = [
     { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },

@@ -1,20 +1,15 @@
 import type { Session } from '@supabase/supabase-js';
 import { getAuthState } from '../store/authStore';
 import { resolveOrgContextFromBridge, BRIDGE_SNAPSHOT_EVENT } from '../store/courseStoreOrgBridge';
-import { getSupabase } from './supabaseClient';
+import { getSessionCached } from './sessionCache';
 
 export async function waitForAuthReady(timeoutMs = 5000): Promise<Session> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     try {
-      const supabase = getSupabase();
-      if (supabase?.auth?.getSession) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          return session;
-        }
+      const session = await getSessionCached();
+      if (session?.access_token) {
+        return session;
       }
     } catch {
       // keep polling until timeout

@@ -1,7 +1,7 @@
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { getUserSession, secureGet } from '../lib/secureStorage';
 import { buildScopedApiUrl } from '../lib/orgContext';
-import { getSupabase } from '../lib/supabaseClient';
+// import { getSupabase } from '../lib/supabaseClient';
 
 // In-flight dedupe cache for identical assignment reads
 const IN_FLIGHT = new Map<string, Promise<any>>();
@@ -57,12 +57,10 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null) {
   const looksLikeEmail = typeof userIdOrEmail === 'string' && userIdOrEmail.includes && userIdOrEmail.includes('@');
   if (looksLikeEmail) {
     try {
-      const supabase = getSupabase();
-      const {
-        data: { session: supabaseSession },
-      } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
+      const { getSessionCached } = await import('../lib/sessionCache');
+      const supabaseSession = await getSessionCached();
       if (supabaseSession?.user?.email === userIdOrEmail) {
-        queryUserId = supabaseSession.user.id ?? null;
+        queryUserId = (supabaseSession as any).user.id ?? null;
       } else {
         return [];
       }
@@ -163,12 +161,10 @@ export async function getAssignmentsForUserWithOutcome(
     let queryUserId: string | null = null;
     if (looksLikeEmail) {
       try {
-        const supabase = getSupabase();
-        const {
-          data: { session: supabaseSession },
-        } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
+        const { getSessionCached } = await import('../lib/sessionCache');
+        const supabaseSession = await getSessionCached();
         if (supabaseSession?.user?.email === userId) {
-          queryUserId = supabaseSession.user.id ?? null;
+          queryUserId = (supabaseSession as any).user.id ?? null;
         } else {
           return { outcome: 'empty', assignments: [], error: null };
         }

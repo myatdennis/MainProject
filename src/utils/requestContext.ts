@@ -13,12 +13,9 @@ const resolveSupabaseSessionSnapshot = async (): Promise<SupabaseSessionSnapshot
   if (!hasSupabaseConfig()) return null;
 
   try {
-    const { getSupabase } = await import('../lib/supabaseClient');
-    const supabase = getSupabase();
-    if (supabase && typeof supabase.auth?.getSession === 'function') {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    const { getSessionCached } = await import('../lib/sessionCache');
+    const session = await getSessionCached();
+    if (session) {
       return {
         token: session?.access_token ?? null,
         userId: session?.user?.id ?? null,

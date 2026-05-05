@@ -18,6 +18,7 @@ import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase } from '../lib/supabaseClient';
+import { getSessionCached } from '../lib/sessionCache';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
 import { GLOBAL_ORG_ID } from '../constants/org';
@@ -954,14 +955,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       let storedAccessToken: string | null = null;
       let storedRefreshToken: string | null = null;
       try {
-        const supabaseClient = getSupabase();
-        if (supabaseClient) {
-          const sessionResult = await supabaseClient.auth.getSession();
-          const current = (sessionResult as any)?.data?.session ?? null;
-          if (current) {
-            storedAccessToken = current.access_token ?? current.accessToken ?? null;
-            storedRefreshToken = current.refresh_token ?? current.refreshToken ?? null;
-          }
+        const session = await getSessionCached();
+        if (session) {
+          storedAccessToken = (session as any).access_token ?? null;
+          storedRefreshToken = (session as any).refresh_token ?? null;
         }
       } catch (tokenError) {
         console.warn('[SecureAuth] Failed to inspect Supabase session for fetch', tokenError);
@@ -1269,9 +1266,28 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   (async () => {
         try {
-          const {
-            data: { session: currentSession },
-          } = await client.auth.getSession();
+          // DEV-only slow-auth simulation: enable by adding ?debug_slow_auth=1 to URL
+          // or by setting window.__DEBUG_SLOW_AUTH = '1'. This helps reproduce
+          // delayed Supabase readiness without changing production behavior.
+          try {
+            if (import.meta.env.DEV && typeof window !== 'undefined') {
+              const params = new URLSearchParams(window.location.search || '');
+              const slow = params.get('debug_slow_auth') === '1' || (window as any).__DEBUG_SLOW_AUTH === '1';
+              if (slow) {
+                console.log('[AUTH CHECK]', { note: 'debug_slow_auth enabled - sleeping 3000ms before getSession' });
+                await new Promise((res) => setTimeout(res, 3000));
+              }
+            }
+          } catch (e) {
+            // ignore debug errors
+          }
+
+          console.log('[AUTH CHECK]', { step: 'before_getSession' });
+          // Use cached session lookup to avoid duplicate network calls during
+          // application bootstrap. getSessionCached delegates to Supabase but
+          // coalesces near-simultaneous callers.
+          const currentSession = await getSessionCached();
+          console.log('[AUTH CHECK]', { step: 'after_getSession', hasSession: Boolean(currentSession) });
           setSession(currentSession ?? null);
           // Mark that the initial supabase getSession() check completed
           setAuthInitialized(true);
@@ -1840,14 +1856,31 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, [startBootstrap]);
 
   const onGoToLogin = useCallback(() => {
+    if (session?.access_token) {
+      console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+        pathname: window.location.pathname,
+      });
+      return;
+    }
     applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error_redirect' });
     setBootstrapError(null);
     const fallbackPath = resolveLoginPath();
     if (typeof window !== 'undefined') {
+      console.log('[AUTH CHECK]', {
+        hasSession: Boolean(session),
+        hasToken: Boolean(session?.access_token),
+        pathname: window.location.pathname,
+        reason: 'redirect decision',
+      });
+      console.log('[AUTH REDIRECT]', {
+        target: fallbackPath,
+        reason: 'secure_auth_context_go_to_login',
+        pathname: window.location.pathname,
+      });
       logAuthRedirect('SecureAuthContext.onGoToLogin', { target: fallbackPath });
       window.location.assign(fallbackPath);
     }
-  }, [applySessionPayload]);
+  }, [applySessionPayload, session]);
 
   useEffect(() => {
     if (bootstrappedRef.current) {
@@ -2139,6 +2172,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         onGoToLogin,
         children,
         shouldRedirectToLogin,
+        session,
       })}
     </AuthContext.Provider>
   );

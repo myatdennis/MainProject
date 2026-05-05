@@ -1,5 +1,6 @@
 import { type UserSession } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
+import { getSessionCached } from '../lib/sessionCache';
 import { toast } from 'react-hot-toast';
 import { ApiError } from '../utils/apiClient';
 import { resolveLoginPath } from '../utils/surface';
@@ -112,8 +113,7 @@ export const runRefreshTokenCallback = async (
         }
 
         // Re-query the Supabase session after attempting refresh.
-        const { data } = await supabaseClient.auth.getSession();
-        const currentSession = (data as any)?.session ?? null;
+        const currentSession = await getSessionCached();
         if (!currentSession) {
           console.warn('[SecureAuth] No Supabase session present after refresh attempt');
           refreshStatus = 'unauthenticated';
@@ -162,6 +162,28 @@ export const runRefreshTokenCallback = async (
           deps.applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
           deps.setAuthStatus('unauthenticated', 'refreshTokenCallback:refresh_rejected');
           if (typeof window !== 'undefined') {
+            try {
+              const liveSession = await getSessionCached();
+              if (liveSession?.access_token) {
+                console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+                  pathname: window.location.pathname,
+                });
+                return false;
+              }
+            } catch {
+              // If Supabase cannot answer, continue with the rejected-refresh path.
+            }
+            console.log('[AUTH CHECK]', {
+              hasSession: false,
+              hasToken: false,
+              pathname: window.location.pathname,
+              reason: 'redirect decision',
+            });
+            console.log('[AUTH REDIRECT]', {
+              target: resolveLoginPath(),
+              reason: 'refresh_rejected',
+              pathname: window.location.pathname,
+            });
             toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
             window.location.assign(resolveLoginPath());
           }

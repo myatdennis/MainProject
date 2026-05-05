@@ -40,7 +40,7 @@ const navigation = [
 ];
 
 const LMSLayout = ({ children }: LMSLayoutProps) => {
-  const { logout, isAuthenticated, user, authInitializing, authStatus } = useSecureAuth();
+  const { logout, isAuthenticated, user, authInitializing, authStatus, session } = useSecureAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -70,7 +70,25 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
     if (authInitializing || authStatus === 'booting') {
       return;
     }
-    if (!isAuthenticated.lms && authStatus === 'unauthenticated') {
+    const hasToken = Boolean(session?.access_token);
+    if (!hasToken && authStatus === 'unauthenticated') {
+      if (session?.access_token) {
+        console.error('[AUTH VIOLATION] Redirect attempted while session exists', {
+          pathname: window.location.pathname,
+        });
+        return;
+      }
+      console.log('[AUTH CHECK]', {
+        hasSession: Boolean(session),
+        hasToken,
+        pathname: window.location.pathname,
+        reason: 'redirect decision',
+      });
+      console.log('[AUTH REDIRECT]', {
+        target: '/login',
+        reason: 'lms_layout_missing_session',
+        pathname: window.location.pathname,
+      });
       console.debug('[AUTH_GATE_DECISION]', {
         source: 'LMSLayout.auth_guard',
         decision: 'redirect_login',
@@ -79,7 +97,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
       });
       navigate('/login');
     }
-  }, [isAuthenticated.lms, authInitializing, authStatus, navigate, supabaseConfigured]);
+  }, [authInitializing, authStatus, navigate, session, supabaseConfigured]);
 
   // Show spinner only during the initial cold-start bootstrap, not on every
   // re-render.  Once authInitializing is false the layout commits immediately.
