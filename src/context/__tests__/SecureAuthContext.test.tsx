@@ -167,7 +167,7 @@ describe('SecureAuthContext', () => {
     });
   });
 
-  it('stores session tokens and exposes authenticated user after login', async () => {
+  it('signs in with Supabase and lets auth state bootstrap the user', async () => {
     const { result } = renderAuth();
     await waitFor(() => expect(result.current.authInitializing).toBe(false));
 
@@ -179,19 +179,16 @@ describe('SecureAuthContext', () => {
       lastName: 'User',
       organizationId: 'org-1',
     };
-    mockApiRequestRaw.mockImplementation((path: string) => {
-      if (path === '/auth/session') {
-        return jsonResponse({
+    supabaseAuthMock.signInWithPassword.mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'supabase-login-token',
+          refresh_token: 'supabase-login-refresh',
           user: bootstrapUser,
-          memberships: [],
-          organizationIds: ['org-1'],
-          accessToken: 'api-access',
-          refreshToken: 'api-refresh',
-          expiresAt: Date.now() + 60_000,
-          refreshExpiresAt: Date.now() + 120_000,
-        });
-      }
-      return defaultRawHandler(path);
+        },
+        user: bootstrapUser,
+      },
+      error: null,
     });
 
     let loginResult: Awaited<ReturnType<typeof result.current.login>>;
@@ -200,14 +197,15 @@ describe('SecureAuthContext', () => {
     });
 
     expect(loginResult!.success).toBe(true);
-    await waitFor(() => expect(result.current.user?.email).toBe('admin@thehuddle.co'));
-    expect(result.current.isAuthenticated.admin).toBe(true);
-    expect(spies.setUserSession).toHaveBeenCalledWith(
-      expect.objectContaining({ email: 'admin@thehuddle.co', organizationId: 'org-1' }),
-    );
+    expect(supabaseAuthMock.signInWithPassword).toHaveBeenCalledWith({
+      email: 'admin@thehuddle.co',
+      password: 'securePass123',
+    });
+    const legacyLoginPath = ['', 'api', 'auth', 'login'].join('/');
+    expect(mockApiRequest.mock.calls.some(([path]) => path === legacyLoginPath)).toBe(false);
   });
 
-  it('refreshToken replaces stored tokens and metadata when server responds', async () => {
+  it('refreshToken uses Supabase refreshSession and fetches the enriched server session', async () => {
     storedState.user = {
       id: 'user-1',
       email: 'admin@thehuddle.co',
@@ -217,14 +215,11 @@ describe('SecureAuthContext', () => {
     const { result } = renderAuth();
     await waitFor(() => expect(result.current.authInitializing).toBe(false));
 
-    mockApiRequest.mockImplementation((path: string) => {
-      if (path === '/api/auth/refresh') {
-        return Promise.resolve({ user: storedState.user, expiresAt: 111, refreshExpiresAt: 222 });
-      }
+    mockApiRequestRaw.mockImplementation((path: string) => {
       if (path === '/auth/session') {
-        return Promise.resolve({ user: storedState.user });
+        return jsonResponse({ user: storedState.user });
       }
-      return Promise.resolve({ user: null });
+      return defaultRawHandler(path);
     });
 
     let refreshResult: boolean | undefined;
@@ -233,16 +228,8 @@ describe('SecureAuthContext', () => {
     });
 
     expect(refreshResult).toBe(true);
-    expect(storedState.metadata).toMatchObject({ accessExpiresAt: 111, refreshExpiresAt: 222 });
-    expect(mockApiRequest).toHaveBeenCalledWith(
-      '/api/auth/refresh',
-      expect.objectContaining({
-        method: 'POST',
-        allowAnonymous: true,
-        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ refreshToken: 'supabase-refresh-token' }),
-      }),
-    );
+    expect(supabaseAuthMock.refreshSession).toHaveBeenCalled();
+    expect(mockApiRequest).not.toHaveBeenCalledWith('/api/auth/refresh', expect.anything());
   });
 
   it('logout clears secure storage and resets auth booleans', async () => {

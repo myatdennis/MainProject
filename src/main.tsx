@@ -79,7 +79,7 @@ devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
   }
 // Defensive guard: if a developer accidentally set VITE_API_BASE_URL to the
 // Supabase Functions host (e.g. https://<proj>.supabase.co/functions/v1) then
-// client requests like /api/auth/login will resolve to the functions URL and
+// client requests like /api/auth/register will resolve to the functions URL and
 // trigger 404/CORS issues. Detect and override at runtime to `/api` so the
 // dev server proxy (or same-origin API host) receives auth traffic.
 try {

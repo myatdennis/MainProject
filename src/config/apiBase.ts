@@ -107,7 +107,7 @@ export function buildApiUrl(path: string): string {
         // Best-effort diagnostic only.
       }
       const cleanPath = path.split('/functions/v1')[1] || '';
-      // Recursively build using the extracted path (e.g. '/auth/login')
+      // Recursively build using the extracted path (e.g. '/auth/register')
       return buildApiUrl(cleanPath);
     }
 

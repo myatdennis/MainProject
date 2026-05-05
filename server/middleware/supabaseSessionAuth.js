@@ -4,7 +4,13 @@ import { supabaseAuthClient } from '../lib/supabaseClient.js';
 export default async function supabaseSessionAuth(req, res, next) {
   try {
     const headerToken = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim();
-    const token = (req.cookies?.access_token ?? req.cookies?.sb_access_token ?? headerToken) || null;
+    const cookieToken = (req.cookies?.access_token ?? req.cookies?.sb_access_token ?? '').trim();
+    const token = headerToken || cookieToken || null;
+    console.log('[AUTH SOURCE]', {
+      hasBearer: Boolean(headerToken),
+      hasCookie: Boolean(cookieToken),
+      selected: headerToken ? 'bearer' : cookieToken ? 'cookie' : 'none',
+    });
 
     if (!token) return next();
 

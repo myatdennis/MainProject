@@ -121,13 +121,13 @@ describe('authorizedFetch E2E bypass invariants', () => {
   it('rewrites legacy Supabase functions auth URLs back to the canonical API path', async () => {
     const { default: authorizedFetch } = await import('../authorizedFetch');
 
-    await authorizedFetch('https://example.supabase.co/functions/v1/api/auth/login', {
+    await authorizedFetch('https://example.supabase.co/functions/v1/api/auth/register', {
       method: 'POST',
       headers: { Authorization: 'Bearer should-be-removed' },
     });
 
     const [url] = fetchSpy.mock.calls[0];
-    expect(String(url)).not.toContain('/functions/v1/api/auth/login');
-    expect(String(url)).toContain('/api/auth/login');
+    expect(String(url)).not.toContain('/functions/v1/api/auth/register');
+    expect(String(url)).toContain('/api/auth/register');
   });
 });

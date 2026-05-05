@@ -207,7 +207,7 @@ function App() {
  *  4. No other hooks exist in this component — there is nothing after the return.
  */
 const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
-  const { authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus, activeOrgId, session } = useSecureAuth();
+  const { authInitialized, authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus, activeOrgId, session } = useSecureAuth();
   const location = useLocation();
 
   const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
@@ -217,25 +217,24 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
     location.pathname === '/lms/login' ||
     location.pathname.startsWith('/auth/') ||
     location.pathname.startsWith('/invite/');
-  // Block protected surfaces until the auth bootstrap reaches a stable state.
-  // This prevents any protected UI from rendering before auth/org resolution
-  // which was the root cause of numerous flaky E2E races.
-  // Block protected surfaces until the auth subsystem reports ready and
-  // bootstrap has settled. This prevents races where components assume a
-  // session that hasn't been established yet.
+  // Wait only for Supabase's initial session check. Once initialized, logged-out
+  // users must render the normal public/login routes instead of staying on the
+  // bootstrap spinner forever.
   const blocking =
     isProtectedSurface &&
     !isPublicAuthPath &&
-    (!authReady ||
-      !session?.access_token ||
-      !activeOrgId ||
-      authInitializing ||
-      sessionStatus === 'loading' ||
-      orgResolutionStatus === 'resolving');
+    (!authInitialized ||
+      (Boolean(session?.access_token) &&
+        (!authReady ||
+          !activeOrgId ||
+          authInitializing ||
+          sessionStatus === 'loading' ||
+          orgResolutionStatus === 'resolving')));
 
   if (import.meta.env.DEV) {
     console.debug('[AUTH ROOT GATE]', {
       pathname: location.pathname,
+      authInitialized,
       authInitializing,
       authStatus,
       hasSession: Boolean(session),

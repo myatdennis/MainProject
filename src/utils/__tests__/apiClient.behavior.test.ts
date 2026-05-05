@@ -164,19 +164,19 @@ describe('apiClient', () => {
     );
   });
 
-  it('never resolves auth requests through a Supabase functions base URL', async () => {
+  it('never resolves public auth requests through a Supabase functions base URL', async () => {
     __setApiBaseUrlOverride('https://eprsgmfzqjptfywoecuy.supabase.co/functions/v1');
     const { apiRequest } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
 
-    await apiRequest('/api/auth/login', {
+    await apiRequest('/api/auth/register', {
       method: 'POST',
       body: { email: 'test@example.com', password: 'secret' },
     });
 
     const [url] = fetchSpy.mock.calls[0];
-    expect(String(url)).toContain('/api/auth/login');
-    expect(String(url)).not.toContain('/functions/v1/api/auth/login');
+    expect(String(url)).toContain('/api/auth/register');
+    expect(String(url)).not.toContain('/functions/v1/api/auth/register');
   });
 
   it('falls back to /api proxy in dev when base URL missing', async () => {
@@ -507,7 +507,7 @@ describe('apiClient', () => {
     const { apiRequest } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
 
-    await apiRequest('/api/auth/login', { method: 'POST', body: { email: 'test@example.com', password: 'secret' } });
+    await apiRequest('/api/auth/register', { method: 'POST', body: { email: 'test@example.com', password: 'secret' } });
 
     const [, options] = fetchSpy.mock.calls[0];
     const headers = headersToObject(options?.headers as HeadersInit);

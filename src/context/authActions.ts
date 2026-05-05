@@ -2,7 +2,6 @@ import { emailSchema, loginSchema, registerSchema } from '../utils/validators';
 import apiRequest from '../utils/apiClient';
 import { ApiError } from '../utils/apiClient';
 import { getSupabase } from '../lib/supabaseClient';
-import { getUserSession } from '../lib/secureStorage';
 import type { SessionResponsePayload } from './sessionBootstrap';
 import { normalizeSessionResponsePayload } from './sessionBootstrap';
 import type { LoginResult, RegisterField, RegisterInput, RegisterResult } from './authTypes';
@@ -23,9 +22,9 @@ type AuthActionsDependencies = {
   ) => void;
   setAuthStatus: (status: 'booting' | 'authenticated' | 'unauthenticated' | 'error', reason?: string) => void;
   setSessionStatus: (status: 'loading' | 'authenticated' | 'unauthenticated', reason?: string) => void;
-  logAuthSessionState: (contextLabel: string, session: any) => void;
-  enqueueAudit: (entry: { action: string; details?: Record<string, unknown> }) => void;
-  flushAuditQueue: () => Promise<unknown>;
+  logAuthSessionState?: (contextLabel: string, session: any) => void;
+  enqueueAudit?: (entry: { action: string; details?: Record<string, unknown> }) => void;
+  flushAuditQueue?: () => Promise<unknown>;
 };
 
 export const createAuthActions = ({
@@ -34,11 +33,8 @@ export const createAuthActions = ({
   applySessionPayload,
   setAuthStatus,
   setSessionStatus,
-  logAuthSessionState,
-  enqueueAudit,
-  flushAuditQueue,
 }: AuthActionsDependencies) => ({
-  async login(email: string, password: string, type: 'lms' | 'admin', mfaCode?: string): Promise<LoginResult> {
+  async login(email: string, password: string, _type: 'lms' | 'admin', _mfaCode?: string): Promise<LoginResult> {
     try {
       const validation = loginSchema.safeParse({ email, password });
       if (!validation.success) {
@@ -50,173 +46,32 @@ export const createAuthActions = ({
       }
 
       const normalizedEmail = email.toLowerCase().trim();
-      console.log('[LOGIN REQUEST]', {
-        email,
-        url: `/api/auth/login`,
-      });
+      console.log('[LOGIN REQUEST]', { email, via: 'supabase' });
 
-      // Use requestJsonWithClock so tests can mock the API layer without performing real network fetches.
-      const data = await requestJsonWithClock<any>('/api/auth/login', {
-        method: 'POST',
-        allowAnonymous: true,
-        headers: { 'Content-Type': 'application/json' },
-        body: { email: normalizedEmail, password, mfaCode },
-      });
-
-      console.log('[LOGIN RESPONSE]', { data });
-
-      // Explicit success envelope handling: many backends return { ok: true, data: { user, ... } }
-      // If we see that envelope with a user present, apply it immediately and return the user.
-      try {
-        const envelope = data as any;
-        if ((envelope && envelope.data && envelope.data.user) || envelope?.ok === true) {
-          const payload = normalizeSessionResponsePayload(envelope.data) ?? null;
-          applySessionPayload(payload, {
-            surface: type,
-            persistTokens: true,
-            reason: `${type}_login_success`,
-          });
-          // Dev-only debug: log full login result (no persistent localStorage writes)
-          try {
-            if (import.meta.env?.DEV) {
-              console.log('[LOGIN RESULT]', { user: envelope.data.user ?? null });
-            }
-          } catch (e) {
-            /* ignore debug logging failures */
-          }
-          setAuthStatus('authenticated', `login:${type}_success`);
-          setSessionStatus('authenticated', `login:${type}_success`);
-          logAuthSessionState(`${type}-login_success`, null);
-          if (type === 'admin') {
-            enqueueAudit({ action: 'admin_login', details: { email: envelope.data.user?.email ?? null, id: envelope.data.user?.id ?? null } });
-            void flushAuditQueue();
-          }
-          return { success: true, user: envelope.data.user } as any;
-        }
-      } catch (e) {
-        // ignore envelope parse errors and continue with existing flow
-      }
-
-      if (data.mfaRequired) {
+      const supabase = getSupabase();
+      if (!supabase?.auth?.signInWithPassword) {
+        // If Supabase client isn't available, do not attempt legacy API login.
         return {
           success: false,
-          mfaRequired: true,
-          mfaEmail: email,
-          error: 'Multi-factor authentication required',
+          error: 'Authentication service is not configured. Please try again later.',
+          errorType: 'network_error',
         };
       }
 
-      const normalizedPayload = normalizeSessionResponsePayload(data);
-      let payloadFromFallback: SessionResponsePayload | null = normalizedPayload;
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      } as any);
 
-      if (!payloadFromFallback) {
-        const supabase = getSupabase();
-        if (supabase?.auth?.signInWithPassword) {
-          const signInResult = await supabase.auth.signInWithPassword({
-            email: normalizedEmail,
-            password,
-          } as any);
-
-          if (signInResult.error) {
-            if (signInResult.error.status === 400) {
-              return {
-                success: false,
-                error: 'Invalid email or password',
-                errorType: 'invalid_credentials',
-              };
-            }
-            return {
-              success: false,
-              error: signInResult.error.message || 'Login failed. Please try again.',
-              errorType: 'unknown_error',
-            };
-          }
-
-          try {
-            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
-              method: 'GET',
-              requireAuth: true,
-              credentials: 'include',
-            });
-            payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
-          } catch (sessionError) {
-            console.warn('[SecureAuth] login fallback /auth/session failed', sessionError);
-            payloadFromFallback = null;
-          }
-        } else {
-          try {
-            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
-              method: 'GET',
-              requireAuth: true,
-              credentials: 'include',
-            });
-            payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
-          } catch {
-            payloadFromFallback = null;
-          }
-        }
+      if (error) {
+        throw error;
       }
 
-      if (!payloadFromFallback) {
-        console.debug('[SecureAuth] login fallback failed', {
-          hasNormalizedPayload: Boolean(normalizedPayload),
-          supabaseSignInAvailable: Boolean(getSupabase()?.auth?.signInWithPassword),
-        });
-        return {
-          success: false,
-          error: 'Authentication failed. Please try again.',
-          errorType: 'unknown_error',
-        };
-      }
-
-      if (!payloadFromFallback.activeOrgId && !(payloadFromFallback.memberships?.length)) {
-        try {
-          const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
-            method: 'GET',
-            requireAuth: true,
-            credentials: 'include',
-          });
-          const sessionPayload = normalizeSessionResponsePayload(sessionPayloadRaw);
-          if (sessionPayload?.user) {
-            payloadFromFallback = {
-              ...payloadFromFallback,
-              ...sessionPayload,
-              accessToken: payloadFromFallback.accessToken ?? sessionPayload.accessToken,
-              refreshToken: payloadFromFallback.refreshToken ?? sessionPayload.refreshToken,
-            };
-          }
-        } catch (sessionError) {
-          console.warn('[SecureAuth] post-login organization bootstrap failed', sessionError);
-        }
-      }
-
-      applySessionPayload(payloadFromFallback, {
-        surface: type,
-        persistTokens: true,
-        reason: `${type}_login_success`,
-      });
-      setAuthStatus('authenticated', `login:${type}_success`);
-      setSessionStatus('authenticated', `login:${type}_success`);
-      logAuthSessionState(`${type}-login_success`, getUserSession());
-      console.info('[LOGIN SUCCESS]', {
-        surface: type,
-        userId: payloadFromFallback.user?.id ?? null,
-        membershipCount: payloadFromFallback.memberships?.length ?? 0,
-      });
-
-      if (type === 'admin') {
-        enqueueAudit({
-          action: 'admin_login',
-          details: {
-            email: payloadFromFallback.user?.email ?? normalizedEmail,
-            id: payloadFromFallback.user?.id ?? null,
-          },
-        });
-        void flushAuditQueue();
-      }
-
-      // Return user payload to callers (tests expect user in response)
-      return { success: true, user: payloadFromFallback.user ?? null };
+      // Do NOT manually set tokens or mutate session state here. The Supabase
+      // client will persist the session and fire onAuthStateChange; the
+      // provider will pick it up and apply server-side enrichment.
+      const user = data?.user ?? null;
+      return { success: true, user } as any;
     } catch (error: any) {
       if (isApiErrorLike(error)) {
         const body = (error.body as { message?: string; mfaRequired?: boolean } | undefined) ?? {};
@@ -265,6 +120,9 @@ export const createAuthActions = ({
       const errMsg = (apiBodyMsg as string) || String(error?.message ?? error);
       if (typeof errMsg === 'string' && /invalid login/i.test(errMsg)) {
         return { success: false, error: errMsg, errorType: 'invalid_credentials' };
+      }
+      if (typeof errMsg === 'string' && /invalid.*credentials|invalid.*password|invalid.*email/i.test(errMsg)) {
+        return { success: false, error: 'Invalid email or password', errorType: 'invalid_credentials' };
       }
 
       // Additional check: sometimes supabase or other clients return 'Invalid login' inside nested objects

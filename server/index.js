@@ -1690,36 +1690,7 @@ app.use(authCompat);
 app.use(resolveOrganizationContext);
 app.use(['/api/admin', '/api/client'], requireOrg);
 
-// Safe, minimal admin identity endpoint that returns the canonical user shape (req.user).
 import { withAuth } from './middleware/withAuth.js';
-app.get('/api/admin/me', ...withAuth((req, res) => {
-  if (isDevRuntime) {
-    console.log('[ROUTE ENTRY]', {
-      route: '/api/admin/me',
-      hasUser: !!req.user,
-      userId: req.user?.id || req.user?.userId || null,
-      orgId: req.organizationId,
-    });
-    console.log('[ADMIN ME ENTRY]', {
-      hasUser: !!req.user,
-      userId: req.user?.id,
-      orgId: req.organizationId,
-      activeOrgId: req.activeOrgId,
-    });
-  }
-
-  try {
-    const user = getEffectiveUser(req);
-    if (!user?.id && !user?.userId) {
-      return res.status(401).json({ ok: false, error: 'unauthenticated' });
-    }
-    return res.json({ ok: true, data: { user: req.user } });
-  } catch (e) {
-    console.error('[admin.me] unexpected error', e);
-    return res.status(401).json({ ok: false, error: 'unauthenticated' });
-  }
-}));
-// ...moved above...
 
 // Admin courses guard: add early logging and a timeout guard to ensure
 // stalled handlers cannot hang E2E runs. This middleware intentionally
