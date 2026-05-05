@@ -457,16 +457,6 @@ const persistTokenValue = (key: TokenStorageKey, value: string | null) => {
   }
 };
 
-const readTokenValue = (key: TokenStorageKey): string | null => {
-  const secureKey = secureTokenKeyMap[key];
-  if (!secureKey) {
-    return null;
-  }
-
-  const stored = secureGet<string>(secureKey);
-  const normalized = stored && stored.trim().length > 0 ? stored : null;
-  return normalized;
-};
 
 type TokenTelemetryEvent =
   | 'set_access_token'
@@ -486,7 +476,9 @@ const readTokenPresenceSnapshot = () => {
   try {
     return {
       accessTokenPresent: false,
-      refreshTokenPresent: Boolean(getRefreshToken()),
+      // We no longer persist refresh tokens client-side; always report false
+      // to avoid inference of a stored token.
+      refreshTokenPresent: false,
     };
   } catch (error) {
     return { accessTokenPresent: false, refreshTokenPresent: false };
@@ -507,13 +499,8 @@ const logTokenTelemetry = (event: TokenTelemetryEvent, reason?: string) => {
   });
 };
 
-const logTokenPreview = (label: string, token: string | null) => {
-  if (!shouldLogTokenTelemetry()) return;
-  console.debug('[SecureAuth] ' + label, {
-    length: token ? token.length : 0,
-    suffix: token ? token.slice(-6) : null,
-  });
-};
+// Note: token preview and direct token reads have been removed. Tokens are
+// no longer persisted client-side — Supabase is the source of truth.
 
 // ============================================================================
 // Token Helpers
@@ -534,31 +521,26 @@ export function clearAccessToken(reason?: string): void {
 }
 
 export function setRefreshToken(token: string | null, reason?: string): void {
-  if (!token) {
-    persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, null);
-    logTokenTelemetry('clear_refresh_token', reason ?? 'set_refresh_token:null');
-    return;
+  // Deprecated: do not persist refresh tokens client-side. Kept as a no-op
+  // for backward compatibility with older modules/tests.
+  if (import.meta.env?.DEV) {
+     console.warn('[secureStorage] setRefreshToken called — no-op', { token: token ? '***REDACTED***' : null, reason });
+     // reference parameters to avoid unused variable lint
+     void token;
+     void reason;
   }
-  logTokenPreview('refresh_token_set', token);
-  persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, token);
-  logTokenTelemetry('set_refresh_token', reason);
 }
 
 export function getRefreshToken(): string | null {
-  const cached = readTokenValue(REFRESH_TOKEN_LOCAL_KEY);
-  if (cached) {
-    return cached;
-  }
-  const legacy = secureGet<string>(REFRESH_TOKEN_KEY);
-  if (legacy) {
-    persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, legacy);
-  }
-  return legacy;
+  // Deprecated: refresh tokens are no longer stored client-side.
+  return null;
 }
 
 export function clearRefreshToken(reason?: string): void {
-  persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, null);
-  logTokenTelemetry('clear_refresh_token', reason ?? 'clear_refresh_token');
+  if (import.meta.env?.DEV) {
+     console.warn('[secureStorage] clearRefreshToken called — no-op', { reason });
+     void reason;
+  }
 }
 
 export function setSessionMetadata(metadata: SessionMetadata): void {

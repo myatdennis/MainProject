@@ -294,10 +294,15 @@ const rootElement = document.getElementById('root');
 function AuthRootGuard({ children }: { children: React.ReactNode }) {
   // Block rendering until the auth subsystem indicates readiness so no API
   // requests fire before auth is available.
-  const { authReady, authInitializing } = useSecureAuth();
-  if (!authReady || authInitializing) {
-    return <Loading />;
-  }
+  const { authInitialized, session, activeOrgId } = useSecureAuth();
+  // Follow the stricter gating rules:
+  // 1) If the Supabase client hasn't completed its initial session check, show Loading
+  if (!authInitialized) return <Loading />;
+  // 2) If there's no session token, show public routes (children are public)
+  if (!session?.access_token) return <>{children}</>;
+  // 3) If authenticated but activeOrgId not resolved, show Loading while org resolves
+  if (!activeOrgId) return <Loading />;
+  // 4) Authenticated and org resolved — allow protected routes to render
   return <>{children}</>;
 }
 

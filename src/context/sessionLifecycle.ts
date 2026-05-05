@@ -1,9 +1,5 @@
 import { clearAdminAccessSnapshot } from '../lib/adminAccess';
-import {
-  clearActiveOrgPreference,
-  clearAuth,
-  getRefreshToken,
-} from '../lib/secureStorage';
+import { clearActiveOrgPreference, clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import apiRequest from '../utils/apiClient';
 
@@ -27,10 +23,11 @@ export const performLogout = async (
   deps: LogoutDeps,
 ): Promise<void> => {
   try {
-    const refreshToken = getRefreshToken();
+    // Do not read refresh token from storage. Inform the server to clear
+    // any server-side session using the request context (cookies) only.
     await apiRequest('/api/auth/logout', {
       method: 'POST',
-      body: refreshToken ? { refreshToken } : {},
+      body: {},
       headers: deps.buildSessionAuditHeaders(),
     });
   } catch (error) {

@@ -67,6 +67,7 @@ describe('authorizedFetch E2E bypass invariants', () => {
     mockGetStoredAccessToken.mockReset();
     mockGetStoredAccessToken.mockReturnValue('stored-access-token');
     mockGetRefreshToken.mockReset();
+  mockGetRefreshToken.mockReturnValue(null);
     mockSetAccessToken.mockReset();
     mockSetRefreshToken.mockReset();
     mockGetSupabase.mockReset();

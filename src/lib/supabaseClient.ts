@@ -1,19 +1,9 @@
 import { createClient, type SupabaseClient, type AuthChangeEvent, type Session } from '@supabase/supabase-js';
-import { secureGet, secureSet, secureRemove } from './secureStorage';
-
-type SupabaseStorageAdapter = {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-};
+// Note: no manual storage adapters — rely on Supabase client's default persistence.
 
 const AUTH_KEYS = ['thc-supabase-auth', 'thc-supabase-auth:thc-supabase-auth'];
 
 export const AUTH_STORAGE_MODE = (import.meta.env.VITE_AUTH_STORAGE_MODE || 'secure').toLowerCase();
-const supabaseAuthStorage: SupabaseStorageAdapter =
-  AUTH_STORAGE_MODE === 'plain' ? createPlainSupabaseAuthStorage() : createSecureSupabaseAuthStorage();
-const SUPABASE_PERSIST_SESSION =
-  (import.meta.env.VITE_SUPABASE_PERSIST_SESSION || 'true').toLowerCase() === 'true';
 
 const _supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const _supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -30,11 +20,11 @@ const realSupabase = createClient(
   _supabaseConfigured ? _supabaseAnonKey : 'placeholder-anon-key',
   {
     auth: {
-      persistSession: SUPABASE_PERSIST_SESSION,
-      autoRefreshToken: _supabaseConfigured,
-      detectSessionInUrl: _supabaseConfigured,
-      storageKey: 'thc-supabase-auth',
-      storage: SUPABASE_PERSIST_SESSION ? supabaseAuthStorage : undefined,
+      // Production-grade configuration: rely on Supabase client for session
+      // persistence and automatic token refresh. Do not override storage.
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
   },
 );
@@ -169,103 +159,8 @@ supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null
   }
 });
 
-function createSecureSupabaseAuthStorage(): SupabaseStorageAdapter {
-  const legacyPrefix = 'thc-supabase-auth:';
-
-  const migrateLegacyKey = (key: string): string | null => {
-    const legacyValue = secureGet<string>(`${legacyPrefix}${key}`);
-    if (typeof legacyValue === 'string') {
-      secureSet(key, legacyValue);
-      secureRemove(`${legacyPrefix}${key}`);
-      return legacyValue;
-    }
-    return null;
-  };
-
-  const readValue = (key: string): string | null => {
-    const current = secureGet<string>(key);
-    if (typeof current === 'string') {
-      return current;
-    }
-    if (current !== null && typeof current !== 'undefined') {
-      try {
-        return typeof current === 'string' ? current : JSON.stringify(current);
-      } catch {
-        return null;
-      }
-    }
-    return migrateLegacyKey(key);
-  };
-
-  return {
-    getItem(key: string) {
-      try {
-        return readValue(key);
-      } catch (error) {
-        console.warn('[supabaseClient] secure storage getItem failed', key, error);
-        return null;
-      }
-    },
-    setItem(key: string, value: string) {
-      try {
-        secureSet(key, value);
-      } catch (error) {
-        console.warn('[supabaseClient] secure storage setItem failed', { key, error });
-      }
-    },
-    removeItem(key: string) {
-      try {
-        secureRemove(key);
-        secureRemove(`${legacyPrefix}${key}`);
-      } catch (error) {
-        console.warn('[supabaseClient] secure storage removeItem failed', { key, error });
-      }
-    },
-  };
-}
-
-function createPlainSupabaseAuthStorage(): SupabaseStorageAdapter {
-  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
-    const memory = new Map<string, string>();
-    return {
-      getItem(key: string) {
-        return memory.get(key) ?? null;
-      },
-      setItem(key: string, value: string) {
-        memory.set(key, value);
-      },
-      removeItem(key: string) {
-        memory.delete(key);
-      },
-    };
-  }
-
-  const storage = window.localStorage;
-  return {
-    getItem(key: string) {
-      try {
-        return storage.getItem(key);
-      } catch (error) {
-        console.warn('[supabaseClient] plain storage getItem failed', key, error);
-        return null;
-      }
-    },
-    setItem(key: string, value: string) {
-      try {
-        storage.setItem(key, value);
-      } catch (error) {
-        console.warn('[supabaseClient] plain storage setItem failed', { key, error });
-      }
-    },
-    removeItem(key: string) {
-      try {
-        storage.removeItem(key);
-      } catch (error) {
-        console.warn('[supabaseClient] plain storage removeItem failed', { key, error });
-      }
-    },
-  };
-}
+// Custom storage factories removed: production-grade system relies on
+// Supabase client's default persistence (no manual storage overrides).
 
 function collectKeys(storage: Storage | null | undefined, predicate: (key: string) => boolean): string[] {
   if (!storage) return [];

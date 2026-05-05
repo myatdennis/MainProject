@@ -29,6 +29,8 @@ describe('tokenRefresh', () => {
       data: { session: { refresh_token: 'supabase-refresh' } },
     });
 
-    await expect(resolveRefreshTokenForRequest(null as any)).resolves.toBe('supabase-refresh');
+    // Function is deprecated and returns null; Supabase client should be used
+    // directly by caller to obtain tokens. Ensure it returns null.
+    await expect(resolveRefreshTokenForRequest(null as any)).resolves.toBeNull();
   });
 });

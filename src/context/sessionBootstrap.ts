@@ -1,5 +1,5 @@
 import type { UserSession } from '../lib/secureStorage';
-import { getSupabase, AUTH_STORAGE_MODE } from '../lib/supabaseClient';
+import { getSupabase } from '../lib/supabaseClient';
 import { normalizeMembershipStatusFlag } from './organizationResolution';
 
 export interface SessionResponsePayload {
@@ -58,43 +58,24 @@ export const isSupabaseSessionLike = (value: unknown): value is SupabaseSessionL
   return 'access_token' in value || 'accessToken' in value || 'refresh_token' in value || 'refreshToken' in value;
 };
 
-export const readSupabaseSessionTokens = async (
-  options: { refreshIfMissing?: boolean } = {},
-): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
-  // Prefer live Supabase client session tokens when available to avoid
-  // reusing expired persisted tokens.
-  let accessToken: string | null = null;
-  let refreshToken: string | null = null;
-  const authStorageMode = (() => {
-    try {
-      return AUTH_STORAGE_MODE;
-    } catch {
-      return 'unknown';
-    }
-  })();
-
-  if (import.meta.env?.DEV) {
-    console.info('[SecureAuth] boot', {
-      storageMode: authStorageMode,
-      hasAccessToken: Boolean(accessToken),
-      hasRefreshToken: Boolean(refreshToken),
-      refreshIfMissing: options.refreshIfMissing !== false,
-    });
-  }
-
+export const readSupabaseSessionTokens = async (): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
+  // Strictly read the live Supabase client session. Never read persisted
+  // tokens from local/session storage — Supabase is the single source of truth.
   try {
     const supabase = getSupabase();
-    const sessionResult = await supabase?.auth?.getSession();
-    const supabaseSession = sessionResult?.data?.session as SupabaseSessionLike | null;
-    if (supabaseSession) {
-      accessToken = supabaseSession.access_token ?? supabaseSession.accessToken ?? null;
-      refreshToken = supabaseSession.refresh_token ?? supabaseSession.refreshToken ?? null;
+  const sessionResult = await supabase?.auth?.getSession();
+  const session = (sessionResult as any)?.data?.session ?? null;
+    if (session) {
+      return {
+        accessToken: session.access_token ?? session.accessToken ?? null,
+        refreshToken: session.refresh_token ?? session.refreshToken ?? null,
+      };
     }
   } catch (sessionError) {
     console.warn('[SecureAuth] readSupabaseSessionTokens failed to read supabase session', sessionError);
   }
 
-  return { accessToken, refreshToken };
+  return { accessToken: null, refreshToken: null };
 };
 
 export const normalizeSessionResponsePayload = (payload: unknown): SessionResponsePayload | null => {
