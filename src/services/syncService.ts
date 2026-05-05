@@ -1,7 +1,6 @@
 import { courseStore } from '../store/courseStore';
 import { Course } from '../types/courseTypes';
 import { getSupabase } from '../lib/supabaseClient';
-import { subscribeCanonicalAuth } from '../lib/canonicalAuth';
 import type { CourseAssignment } from '../types/assignment';
 import { CourseValidationError } from '../dal/adminCourses';
 import { wsClient } from './wsClient';
@@ -102,20 +101,8 @@ class SyncService {
 
     // Initialize real-time Supabase listeners
     void this.initializeRealtimeSync();
-    // Subscribe to canonical auth snapshot changes so we can initialize or
-    // teardown realtime channels according to the canonical session state.
+    // Subscribe to Supabase auth changes so realtime channels follow the live session.
     try {
-      const unsub = subscribeCanonicalAuth((next) => {
-        if (next && next.accessToken) {
-          void this.initializeRealtimeSync();
-        } else {
-          this.cleanupRealtimeChannels();
-        }
-      });
-      this.authSubscription = { unsubscribe: unsub };
-    } catch (e) {
-      // If subscribing fails, fall back to Supabase onAuthStateChange when
-      // available.
       const supabaseClient = getSupabase();
       if (supabaseClient) {
         const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
@@ -126,6 +113,22 @@ class SyncService {
           }
         });
         this.authSubscription = data?.subscription ?? null;
+      }
+    } catch (e) {
+      try {
+        const supabaseClient = getSupabase();
+        if (supabaseClient) {
+          const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
+            if (session?.access_token) {
+              void this.initializeRealtimeSync();
+            } else if (event === 'SIGNED_OUT') {
+              this.cleanupRealtimeChannels();
+            }
+          });
+          this.authSubscription = data?.subscription ?? null;
+        }
+      } catch {
+        this.authSubscription = null;
       }
     }
     if (typeof window !== 'undefined') {

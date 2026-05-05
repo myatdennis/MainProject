@@ -13,7 +13,6 @@ import {
   normalizeAdminAccessPayload,
   type AdminAccessPayload,
 } from '../../lib/adminAccess';
-import { getCanonicalSession } from '../../lib/canonicalAuth';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 type AuthMode = 'admin' | 'lms' | 'client';
@@ -59,6 +58,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     loadSession,
     reloadSession,
     user,
+    session,
     organizationIds,
     logout,
     authReady,
@@ -490,10 +490,9 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       return;
     }
     try {
-      const cs = getCanonicalSession();
       const payload = {
-        id: cs.userId ?? user?.id ?? 'unknown',
-        email: cs.userEmail ?? user?.email ?? 'unknown',
+        id: session?.user?.id ?? user?.id ?? 'unknown',
+        email: session?.user?.email ?? user?.email ?? 'unknown',
       };
       await navigator.clipboard.writeText(`User ID: ${payload.id}\nEmail: ${payload.email}`);
       setCopyIdentityStatus('copied');
@@ -503,7 +502,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       setCopyIdentityStatus('error');
       setTimeout(() => setCopyIdentityStatus('idle'), 3000);
     }
-  }, [user?.email, user?.id]);
+  }, [session?.user?.email, session?.user?.id, user?.email, user?.id]);
 
   useEffect(() => {
     if (mode !== 'admin') {

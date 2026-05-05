@@ -1,8 +1,10 @@
  
 import { beforeEach, afterEach, test, expect, vi } from 'vitest';
-import { setCanonicalSession, clearCanonicalSession } from '../lib/canonicalAuth';
 import { writeBridgeSnapshot } from '../store/courseStoreOrgBridge';
 import { courseStore } from '../store/courseStore';
+import { supabase } from '../lib/supabaseClient';
+import { setRuntimeAuthReady } from '../lib/apiReadiness';
+import { __setTestOrgContext } from '../lib/orgContext';
 
 // Helper to create delayed fetch responses
 function delayedResponse(body: unknown, delayMs = 2000, ok = true) {
@@ -16,6 +18,7 @@ function delayedResponse(body: unknown, delayMs = 2000, ok = true) {
 
 let originalFetch: typeof globalThis.fetch | undefined;
 let originalLocalStorageSet: ((key: string, value: string) => void) | undefined;
+const supabaseGetSessionSpy = vi.spyOn(supabase.auth, 'getSession');
 
 beforeEach(() => {
   originalFetch = globalThis.fetch;
@@ -27,7 +30,9 @@ afterEach(() => {
   try {
     if (originalLocalStorageSet) window.localStorage.setItem = originalLocalStorageSet;
   } catch (e) { void e; }
-  clearCanonicalSession();
+  supabaseGetSessionSpy.mockReset();
+  setRuntimeAuthReady(false);
+  __setTestOrgContext(null);
 });
   
 
@@ -59,8 +64,12 @@ test('ADMIN_STARTUP_STABILITY loads admin workspace safely under slow APIs and s
     throw new Error('Storage disabled');
   };
 
-  // Set canonical session and bridge snapshot as if login happened
-  setCanonicalSession({ accessToken: 'test-token', refreshToken: 'r', userId: 'admin-1', userEmail: 'admin@example.com', activeOrgId: 'o1', authenticated: true });
+  supabaseGetSessionSpy.mockResolvedValue({
+    data: { session: { access_token: 'test-token', user: { id: 'admin-1', email: 'admin@example.com' } } },
+    error: null,
+  } as any);
+  setRuntimeAuthReady(true);
+  __setTestOrgContext('o1');
   writeBridgeSnapshot({ status: 'ready', membershipStatus: 'ready', activeOrgId: 'o1', orgId: 'o1', role: 'admin', userId: 'admin-1' });
 
   // Trigger admin workspace load

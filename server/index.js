@@ -9285,10 +9285,10 @@ async function fetchOrgMembersWithProfiles(orgId) {
     return [];
   }
 
+  const orgColumnName = await getOrganizationMembershipsOrgColumnName();
   const membershipSelect = buildMembershipSelect(
     'id',
-    'organization_id',
-    'org_id',
+    orgColumnName,
     'user_id',
     'role',
     'status',
@@ -9299,31 +9299,24 @@ async function fetchOrgMembersWithProfiles(orgId) {
   let memberships = null;
   let membershipError = null;
 
-  for (const orgColumn of ['organization_id', 'org_id']) {
-    const statusColumn = await getOrganizationMembershipsStatusColumnName();
+  const statusColumn = await getOrganizationMembershipsStatusColumnName();
+  let query = supabase
+    .from('organization_memberships')
+    .select(membershipSelect)
+    .eq(orgColumnName, orgId);
 
-    let query = supabase
-      .from('organization_memberships')
-      .select(membershipSelect)
-      .eq(orgColumn, orgId);
+  if (statusColumn === 'is_active') {
+    query = query.eq('is_active', true);
+  } else {
+    query = query.in('status', ['active', 'pending']);
+  }
 
-    if (statusColumn === 'is_active') {
-      query = query.eq('is_active', true);
-    } else {
-      query = query.in('status', ['active', 'pending']);
-    }
-
-    const result = await query;
-    if (result.error) {
-      if (isMissingColumnError(result.error)) {
-        membershipError = result.error;
-        continue;
-      }
-      throw result.error;
-    }
+  const result = await query;
+  if (result.error) {
+    membershipError = result.error;
+  } else {
     memberships = result.data || [];
     membershipError = null;
-    break;
   }
   if (membershipError) throw membershipError;
 
@@ -9349,8 +9342,8 @@ async function fetchOrgMembersWithProfiles(orgId) {
     return {
       ...profile,
       ...membership,
-      organization_id: membership.organization_id ?? membership.org_id ?? null,
-      org_id: membership.org_id ?? membership.organization_id ?? null,
+      organization_id: membership[orgColumnName] ?? null,
+      org_id: membership[orgColumnName] ?? null,
       user_id_uuid: membership.user_id ?? membership.user_id_uuid ?? null,
       profile,
       user: {
@@ -9358,7 +9351,7 @@ async function fetchOrgMembersWithProfiles(orgId) {
         email: profile?.email ?? null,
         first_name: profile?.first_name ?? null,
         last_name: profile?.last_name ?? null,
-        organization_id: profile?.organization_id ?? membership.organization_id ?? membership.org_id ?? null,
+        organization_id: profile?.organization_id ?? membership[orgColumnName] ?? null,
         role: profile?.role ?? null,
         is_active: profile?.is_active ?? true,
       },
@@ -9381,10 +9374,10 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
 
   // Single JOIN query — no per-org N+1 loop.
   // Fetches organization_memberships joined with user_profiles in one round-trip.
+  const orgColumnName = await getOrganizationMembershipsOrgColumnName();
   const membershipSelect = buildMembershipSelect(
     'id',
-    'organization_id',
-    'org_id',
+    orgColumnName,
     'user_id',
     'role',
     'status',
@@ -9409,21 +9402,7 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
 
   let { data, error } = await query;
 
-  if (error) {
-    // If organization_id column is missing, fall back to org_id column.
-    if (isMissingColumnError(error) && !orgId) {
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('organization_memberships')
-        .select(`id, org_id, user_id, role, status, invited_by, created_at, updated_at, user_profiles!organization_memberships_user_id_fkey (*)`)
-        .in('status', ['active', 'pending'])
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-      if (fallbackError) throw fallbackError;
-      data = fallbackData;
-    } else {
-      throw error;
-    }
-  }
+  if (error) throw error;
 
   const rows = Array.isArray(data) ? data : [];
 
@@ -9433,8 +9412,8 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
       ...(profile || {}),
       ...membership,
       user_profiles: undefined, // remove the nested join artifact
-      organization_id: membership.organization_id ?? membership.org_id ?? null,
-      org_id: membership.org_id ?? membership.organization_id ?? null,
+      organization_id: membership[orgColumnName] ?? null,
+      org_id: membership[orgColumnName] ?? null,
       user_id_uuid: membership.user_id ?? null,
       profile,
       user: {
@@ -9442,7 +9421,7 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
         email: profile?.email ?? null,
         first_name: profile?.first_name ?? null,
         last_name: profile?.last_name ?? null,
-        organization_id: profile?.organization_id ?? membership.organization_id ?? membership.org_id ?? null,
+        organization_id: profile?.organization_id ?? membership[orgColumnName] ?? null,
         role: profile?.role ?? null,
         is_active: profile?.is_active ?? true,
       },
@@ -14253,41 +14232,38 @@ const logUsersStageError = (stage, error, meta = {}) => {
   return normalized;
 };
 
-app.use(
-  '/api/admin/user-management',
-  ...withAuth(
-    requireAdmin,
-    createAdminUserManagementRouter({
-      // authenticate and requireAdmin are intentionally not passed into the router
-      // to keep auth enforcement at mount level only.
-      isDemoOrTestMode,
-      e2eStore,
-      normalizeOrgIdValue,
-      pickOrgId,
-      ensureSupabase,
-      requireUserContext,
-      requireOrgAccess,
-      runSupabaseTransientRetry,
-      fetchAllOrgMembersWithProfiles,
-      fetchOrgMembersWithProfiles,
-      logUsersStageError,
-      createOrProvisionOrganizationUser,
-      buildActorFromRequest: (req) => buildActorFromRequest(req),
-      logger,
-      supabase,
-      getSupabase: () => supabase,
-      sendEmail,
-      getOrganizationMembershipsOrgColumnName,
-      invalidateMembershipCache,
-      assignPublishedOrganizationContentToUser,
-      archiveOrganizationUserAccount,
-      permanentlyDeleteUserAccount,
-      normalizeOrgRole,
-      INVITE_PASSWORD_MIN_CHARS,
-      randomUUID,
-    }),
-  ),
-);
+const adminUserManagementRouter = createAdminUserManagementRouter({
+  // authenticate and requireAdmin are intentionally not passed into the router
+  // to keep auth enforcement at mount level only.
+  isDemoOrTestMode,
+  e2eStore,
+  normalizeOrgIdValue,
+  pickOrgId,
+  ensureSupabase,
+  requireUserContext,
+  requireOrgAccess,
+  runSupabaseTransientRetry,
+  fetchAllOrgMembersWithProfiles,
+  fetchOrgMembersWithProfiles,
+  logUsersStageError,
+  createOrProvisionOrganizationUser,
+  buildActorFromRequest: (req) => buildActorFromRequest(req),
+  logger,
+  supabase,
+  getSupabase: () => supabase,
+  sendEmail,
+  getOrganizationMembershipsOrgColumnName,
+  invalidateMembershipCache,
+  assignPublishedOrganizationContentToUser,
+  archiveOrganizationUserAccount,
+  permanentlyDeleteUserAccount,
+  normalizeOrgRole,
+  INVITE_PASSWORD_MIN_CHARS,
+  randomUUID,
+});
+
+app.use('/api/admin/user-management', ...withAuth(requireAdmin, adminUserManagementRouter));
+app.use('/api/admin/users', ...withAuth(requireAdmin, adminUserManagementRouter));
 if (!isDemoOrTestMode) {
   // Enforce admin auth at mount level only. The admin router should not
   // apply router-level or per-route authentication itself.

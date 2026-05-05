@@ -4,6 +4,7 @@ import * as sessionGate from '../../lib/sessionGate';
 import { supabase } from '../../lib/supabaseClient';
 import { __setTestOrgContext } from '../../lib/orgContext';
 import * as authBootstrapState from '../../lib/authBootstrapState';
+import { setRuntimeAuthReady } from '../../lib/apiReadiness';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
 const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
@@ -127,6 +128,7 @@ describe('apiClient', () => {
       error: null,
     } as any);
     supabaseSignOutSpy.mockResolvedValue({ error: null } as any);
+    setRuntimeAuthReady(true);
     debugSpy.mockClear();
     authBootstrapSpy.mockReturnValue(false);
     vi.unstubAllEnvs();
@@ -145,6 +147,7 @@ describe('apiClient', () => {
       delete (window as any).__E2E_BYPASS;
     }
     __setTestOrgContext(null);
+    setRuntimeAuthReady(false);
   });
 
   it('uses VITE_API_BASE_URL for absolute requests', async () => {
@@ -230,6 +233,8 @@ describe('apiClient', () => {
   it('blocks protected requests locally when no bearer token is available', async () => {
     shouldRequireSessionSpy.mockReturnValue(true);
     mockBuildAuthHeaders.mockResolvedValue({});
+    supabaseGetSessionSpy.mockResolvedValue({ data: { session: null }, error: null } as any);
+    setRuntimeAuthReady(false);
   const { apiRequest } = await loadApiClient();
 
     await expect(apiRequest('/api/learner/assignments?orgId=org-1')).rejects.toMatchObject({
@@ -363,6 +368,8 @@ describe('apiClient', () => {
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
     mockBuildAuthHeaders.mockResolvedValue({});
+    supabaseGetSessionSpy.mockResolvedValue({ data: { session: null }, error: null } as any);
+    setRuntimeAuthReady(false);
 
   const { apiRequest } = await loadApiClient();
 
@@ -439,7 +446,9 @@ describe('apiClient', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer admin-token' });
-    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+    fetchSpy
+      .mockResolvedValueOnce(createResponse({ data: [] }))
+      .mockResolvedValueOnce(createResponse({ data: [] }));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { apiRequest } = await loadApiClient();
 
@@ -547,7 +556,7 @@ describe('apiClient', () => {
       fetchSpy.mockResolvedValueOnce(createResponse({ error: 'refresh_failed' }, { status: 401 }));
       const { apiRequest } = await loadApiClient();
 
-      await expect(apiRequest('/api/admin/courses')).rejects.toMatchObject({ status: 401 });
+      await expect(apiRequest('/api/client/data')).rejects.toMatchObject({ status: 401 });
       expect(locationWithAssignOnly.assign).toHaveBeenCalledWith(expect.stringContaining('/login'));
     } finally {
       Object.defineProperty(window, 'location', {

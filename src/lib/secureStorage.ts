@@ -767,19 +767,10 @@ export function migrateFromLocalStorage(): void {
       removedKeys.push('huddle_user');
     }
     
-    // Remove legacy auth token storage entirely
-    const oldToken = window.localStorage.getItem('authToken');
-    if (oldToken) {
-      window.localStorage.removeItem('authToken');
-      removedKeys.push('authToken');
-    }
-
-    const oldRefreshToken = window.localStorage.getItem('refreshToken');
-    if (oldRefreshToken) {
-      setRefreshToken(oldRefreshToken, 'legacy_migration');
-      window.localStorage.removeItem('refreshToken');
-      removedKeys.push('refreshToken');
-    }
+    // Remove legacy auth token storage entirely without reading token values.
+    window.localStorage.removeItem('authToken');
+    window.localStorage.removeItem('refreshToken');
+    removedKeys.push('authToken', 'refreshToken');
 
     const legacyActiveOrg = window.localStorage.getItem('huddle_active_org');
     if (legacyActiveOrg) {

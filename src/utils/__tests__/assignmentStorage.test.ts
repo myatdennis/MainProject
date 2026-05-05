@@ -31,6 +31,15 @@ vi.mock('../../lib/secureStorage', () => ({
   secureRemove: secureRemoveMock,
 }));
 
+const mockSupabaseGetSession = vi.fn();
+vi.mock('../../lib/supabaseClient', () => ({
+  getSupabase: () => ({
+    auth: {
+      getSession: mockSupabaseGetSession,
+    },
+  }),
+}));
+
 vi.mock('../../dal/sync', () => ({
   syncService: {
     logSyncEvent: vi.fn(),
@@ -51,6 +60,8 @@ describe('assignmentStorage session enforcement', () => {
     secureGetMock.mockClear();
     secureSetMock.mockClear();
     secureRemoveMock.mockClear();
+    mockSupabaseGetSession.mockReset();
+    mockSupabaseGetSession.mockResolvedValue({ data: { session: null }, error: null });
     localStorage.clear();
   });
 
@@ -250,9 +261,10 @@ describe('assignmentStorage session enforcement', () => {
 
   it('fetches remote assignments when the requested user is email-based but the session is id-based', async () => {
     mockGetUserSession.mockReturnValue({ id: CANONICAL_UUID });
-    vi.doMock('../../lib/canonicalAuth', () => ({
-      waitForAuthReady: vi.fn(async () => ({ userId: CANONICAL_UUID, userEmail: 'learner@example.com' })),
-    }));
+    mockSupabaseGetSession.mockResolvedValue({
+      data: { session: { user: { id: CANONICAL_UUID, email: 'learner@example.com' } } },
+      error: null,
+    });
 
     const now = new Date().toISOString();
     mockApiRequest.mockResolvedValue({

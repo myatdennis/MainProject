@@ -1550,7 +1550,7 @@ const waitForLearnerApiSession = async (userId: string | null, reason: string): 
 
     // Always fetch an up-to-date API access token rather than relying on a
     // persisted/stored token which may have expired. getApiAccessToken will
-    // consult the Supabase client or canonical session as needed.
+    // consult the Supabase client as needed.
     let token: string | null = null;
     try {
       token = await instrumentStep('getApiAccessToken', { attempt, userId: normalizedUserId }, () => getApiAccessToken());

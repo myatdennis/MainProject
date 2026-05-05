@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 import {
@@ -55,7 +56,6 @@ import { performLogout } from './sessionLifecycle';
 import { renderAuthState } from './authRenderState';
 import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
-import { setCanonicalSession } from '../lib/canonicalAuth';
 import { isAdminSurface, isLoginPath, resolveLoginPath } from '../utils/surface';
 import { setAuthState } from '../store/authStore';
 import { setRuntimeAuthReady } from '../lib/apiReadiness';
@@ -214,13 +214,27 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   // Hoist authInitializing and setAuthInitializing to top-level scope
   const [authInitializing, setAuthInitializing] = useState(true);
-  // New: authReady indicates Supabase auth subsystem has reported a state (via getSession or onAuthStateChange)
+  const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const authReadyRef = useRef<boolean>(false);
   useEffect(() => {
+    if (session?.access_token && !authReady) {
+      setAuthReady(true);
+      return;
+    }
+    if (!session?.access_token && authReady) {
+      setAuthReady(false);
+    }
+  }, [authReady, session?.access_token]);
+  useEffect(() => {
     authReadyRef.current = authReady;
     setRuntimeAuthReady(authReady);
-  }, [authReady]);
+    console.log('[AUTH STATE]', {
+      authReady,
+      hasSession: Boolean(session),
+      hasToken: Boolean(session?.access_token),
+    });
+  }, [authReady, session]);
   // If we need to defer showing a bootstrap error until auth subsystem reports, store the reason here
   const [pendingBootstrapReason, setPendingBootstrapReason] = useState<string | null>(null);
   type AuthBootstrapState =
@@ -631,32 +645,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           };
           setSessionMetadata(metadata);
           setSessionMetaVersion((value) => value + 1);
-        }
-        // Update canonical (in-memory) session snapshot so all modules can
-        // synchronously read the live access token / session state without
-        // querying Supabase directly.
-        try {
-          setCanonicalSession({
-            accessToken: payload.accessToken ?? null,
-            refreshToken: payload.refreshToken ?? null,
-            userId: session.id ?? null,
-            userEmail: session.email ?? null,
-            activeOrgId: resolvedState.activeOrgId ?? null,
-            authenticated: true,
-          });
-          if (import.meta.env?.DEV) {
-            // Helpful debug trace when running locally so developers can see
-            // that the in-memory canonical session snapshot was populated.
-            // This log is intentionally verbose and only enabled in dev.
-             
-            console.debug('[AUTH DEBUG] canonical session set', {
-              userId: session.id ?? null,
-              accessTokenPresent: Boolean(payload.accessToken),
-              activeOrgId: resolvedState.activeOrgId ?? null,
-            });
-          }
-        } catch (e) {
-          console.warn('[SecureAuth] setCanonicalSession failed', e);
         }
       }
     },
@@ -1280,16 +1268,24 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // subsystem has had a chance to restore and report session state.
       (async () => {
         try {
-          const res = await client.auth.getSession();
-          const session = res?.data?.session ?? null;
+          const {
+            data: { session: currentSession },
+          } = await client.auth.getSession();
+          setSession(currentSession ?? null);
+          setAuthReady(Boolean(currentSession?.access_token));
+          console.log('[AUTH STATE]', {
+            authReady: Boolean(currentSession?.access_token),
+            hasSession: Boolean(currentSession),
+            hasToken: Boolean(currentSession?.access_token),
+          });
           // If a session was restored by Supabase, apply it via our
           // applySessionPayload flow so all derived state is consistent.
-          if (session) {
+          if (currentSession) {
             try {
               const normalizedPayload = normalizeSessionResponsePayload({
-                user: session.user,
-                accessToken: session.access_token,
-                refreshToken: session.refresh_token,
+                user: currentSession.user,
+                accessToken: currentSession.access_token,
+                refreshToken: currentSession.refresh_token,
               });
               if (normalizedPayload) {
                 applySessionPayload(normalizedPayload, { persistTokens: true, reason: 'supabase_getSession' });
@@ -1297,51 +1293,44 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             } catch (e) {
               // fallback: set minimal user state
               try {
-                setUser(session.user as any);
+                setUser(currentSession.user as any);
               } catch (_) {
                 /* ignore */
               }
             }
           }
-
-          // Now mark the Supabase auth subsystem as ready
-          if (!authReadyRef.current) {
-            setAuthReady(true);
-            if (import.meta.env.DEV) {
-              console.log('AUTH STATE', { authReady: true, hasSession: !!session });
-            }
-          }
         } catch (e) {
-          // Even if getSession() fails, consider auth subsystem ready to
-          // avoid blocking forever; the onAuthStateChange listener will
-          // still arrive and update state.
-          if (!authReadyRef.current) {
-            setAuthReady(true);
-            if (import.meta.env.DEV) {
-              console.warn('AUTH STATE: getSession failed, marking ready', e);
-            }
-          }
+          setSession(null);
+          setAuthReady(false);
+          console.warn('AUTH STATE: getSession failed, marking not ready', e);
         }
       })();
 
-      const { data: sub } = client.auth.onAuthStateChange((event: any, session: any) => {
+      const { data: sub } = client.auth.onAuthStateChange((event: any, authSession: any) => {
+        setSession(authSession ?? null);
+        setAuthReady(Boolean(authSession?.access_token));
+        console.log('[AUTH STATE]', {
+          authReady: Boolean(authSession?.access_token),
+          hasSession: Boolean(authSession),
+          hasToken: Boolean(authSession?.access_token),
+        });
         // Log the auth state change
         if (import.meta.env.DEV) {
-          console.log('[AUTH STATE CHANGE]', { event, hasSession: !!session });
+          console.log('[AUTH STATE CHANGE]', { event, hasSession: !!authSession });
         }
 
         // Keep our local session and user state in sync with Supabase
         try {
-          if (session) {
+          if (authSession) {
             const normalizedPayload = normalizeSessionResponsePayload({
-              user: session.user,
-              accessToken: session.access_token,
-              refreshToken: session.refresh_token,
+              user: authSession.user,
+              accessToken: authSession.access_token,
+              refreshToken: authSession.refresh_token,
             });
             if (normalizedPayload) {
               applySessionPayload(normalizedPayload, { persistTokens: true, reason: `onAuthStateChange:${event}` });
             } else {
-              setUser(session.user as any);
+              setUser(authSession.user as any);
             }
           } else {
             // No session — clear client state
@@ -1349,11 +1338,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
         } catch (e) {
           console.warn('[SecureAuth] onAuthStateChange handler error', e);
-        }
-
-        // Mark authReady on first arrival if not already done
-        if (!authReadyRef.current) {
-          setAuthReady(true);
         }
       });
       return () => {
@@ -1429,9 +1413,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   e2eLog('bootstrap_start', { ts: Date.now(), pathname: typeof window !== 'undefined' ? window.location?.pathname : '' });
 
       try {
-        // STEP 1: Load local session tokens (supabase/canonical)
+        // STEP 1: Load local Supabase session tokens.
               try {
-                // Read any locally persisted Supabase/canonical tokens.
+                // Read any locally persisted Supabase tokens.
                 const { accessToken: _localAccess, refreshToken: _localRefresh } = await readSupabaseSessionTokens({ refreshIfMissing: true });
                 // If no local session is present and we're running in DEV (not E2E),
                 // attempt a non-interactive debug login to auto-bootstrap a session.
@@ -2079,6 +2063,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     isAuthenticated,
     authInitializing,
     authReady,
+    session,
     authStatus,
     sessionStatus,
     membershipStatus,

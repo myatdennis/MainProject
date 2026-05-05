@@ -7,8 +7,7 @@ import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
-// supabase client intentionally not used here; use canonical session snapshot instead
-import { getCanonicalSession, waitForAuthReady } from '../../lib/canonicalAuth';
+import { getSupabase } from '../../lib/supabaseClient';
 import { flushAuditQueue } from '../../dal/auditLog';
 import {
   hasAdminPortalAccess,
@@ -124,13 +123,11 @@ const AdminLogin: React.FC = () => {
 
   const captureDeniedUserSnapshot = useCallback(async () => {
     try {
-      const cs = getCanonicalSession();
-      if (cs && cs.userId) {
-        setDeniedUserSnapshot({ id: cs.userId ?? null, email: cs.userEmail ?? null });
-      } else {
-        const ready = await waitForAuthReady(2000).catch(() => null);
-        setDeniedUserSnapshot(ready ? { id: ready.userId ?? null, email: ready.userEmail ?? null } : null);
-      }
+      const supabase = getSupabase();
+      const {
+        data: { session },
+      } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
+      setDeniedUserSnapshot(session?.user ? { id: session.user.id ?? null, email: session.user.email ?? null } : null);
     } catch (snapshotError) {
       console.warn('[AdminLogin] unable to capture denied user snapshot', snapshotError);
       setDeniedUserSnapshot(null);
@@ -161,8 +158,11 @@ const AdminLogin: React.FC = () => {
     async (label: string) => {
       if (!import.meta.env.DEV) return;
       try {
-        const cs = getCanonicalSession();
-        const token = cs?.accessToken ?? null;
+        const supabase = getSupabase();
+        const {
+          data: { session },
+        } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
+        const token = session?.access_token ?? null;
         let alg: string | null = null;
         let kid: string | null = null;
         if (token) {
@@ -530,11 +530,14 @@ const AdminLogin: React.FC = () => {
     if (result.success) {
       try {
         try {
-          const cs = getCanonicalSession();
+          const supabase = getSupabase();
+          const {
+            data: { session },
+          } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
           if (import.meta.env.DEV) {
             console.info('[AdminLogin] session_verified', {
-              sessionHasAccessToken: Boolean(cs?.accessToken),
-              sessionUserId: cs?.userId ?? null,
+              sessionHasAccessToken: Boolean(session?.access_token),
+              sessionUserId: session?.user?.id ?? null,
             });
           }
         } catch (e) {

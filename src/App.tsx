@@ -1,4 +1,4 @@
-import { useEffect, Suspense, lazy, useRef, useContext, useState, type ReactNode } from 'react';
+import { useEffect, Suspense, lazy, useRef, useContext, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { isAdminSurface } from './utils/surface';
 import { courseStore } from './store/courseStore';
@@ -17,7 +17,6 @@ import ClientRequireAuth from './components/routing/ClientRequireAuth';
 import DevDebugPanel from './components/DevDebugPanel';
 import { useSecureAuth } from './context/SecureAuthContext';
 import ToastContext from './context/ToastContext';
-import { getSupabase } from './lib/supabaseClient';
 
 // Import components used in routes/layout
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
@@ -208,9 +207,8 @@ function App() {
  *  4. No other hooks exist in this component — there is nothing after the return.
  */
 const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
-  const { authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus, activeOrgId } = useSecureAuth();
+  const { authInitializing, authReady, authStatus, sessionStatus, orgResolutionStatus, activeOrgId, session } = useSecureAuth();
   const location = useLocation();
-  const [hasLiveToken, setHasLiveToken] = useState(false);
 
   const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
   const isPublicAuthPath =
@@ -229,47 +227,19 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
     isProtectedSurface &&
     !isPublicAuthPath &&
     (!authReady ||
-      !hasLiveToken ||
+      !session?.access_token ||
       !activeOrgId ||
       authInitializing ||
       sessionStatus === 'loading' ||
       orgResolutionStatus === 'resolving');
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!isProtectedSurface || isPublicAuthPath) {
-      setHasLiveToken(false);
-      return;
-    }
-    const verifyLiveSession = async () => {
-      try {
-        const supabase = getSupabase();
-        const {
-          data: { session },
-        } = supabase && typeof supabase.auth?.getSession === 'function'
-          ? await supabase.auth.getSession()
-          : { data: { session: null } };
-        if (!cancelled) {
-          setHasLiveToken(Boolean(session?.access_token));
-        }
-      } catch {
-        if (!cancelled) {
-          setHasLiveToken(false);
-        }
-      }
-    };
-    void verifyLiveSession();
-    return () => {
-      cancelled = true;
-    };
-  }, [authReady, sessionStatus, location.pathname, isProtectedSurface, isPublicAuthPath]);
 
   if (import.meta.env.DEV) {
     console.debug('[AUTH ROOT GATE]', {
       pathname: location.pathname,
       authInitializing,
       authStatus,
-      hasToken: hasLiveToken,
+      hasSession: Boolean(session),
+      hasToken: Boolean(session?.access_token),
       activeOrgId,
       blocking,
     });

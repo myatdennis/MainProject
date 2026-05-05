@@ -1,4 +1,5 @@
 import type { UserMembership, UserSession } from '../lib/secureStorage';
+import type { Session } from '@supabase/supabase-js';
 import type { LoginResult, RefreshOptions, RegisterInput, RegisterResult } from './authTypes';
 import type { OrgResolutionStatus } from './organizationResolution';
 import type { AuthState, SessionSurface, SurfaceAuthStatus } from './surfaceAccess';
@@ -7,6 +8,7 @@ export interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
   authReady?: boolean;
+  session?: Session | null;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
   membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
@@ -41,6 +43,7 @@ export const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false, client: false },
   authInitializing: true,
   authReady: false,
+  session: null,
   authStatus: 'booting',
   sessionStatus: 'loading',
   membershipStatus: 'idle',

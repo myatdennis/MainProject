@@ -680,7 +680,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   // startup (fixes race where first request after refresh is anonymous).
   if (requiresSession && isAuthBootstrapping()) {
     try {
-      const { waitForAuthReady } = await import('../lib/canonicalAuth');
+      const { waitForAuthReady } = await import('../lib/readiness');
       // Wait up to 3s for auth bootstrap to complete — this keeps startup
       // responsive but prevents a whole-class of unauthenticated races.
       await waitForAuthReady(3000).catch(() => null);

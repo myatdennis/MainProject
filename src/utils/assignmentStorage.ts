@@ -1,6 +1,7 @@
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { getUserSession, secureGet } from '../lib/secureStorage';
 import { buildScopedApiUrl } from '../lib/orgContext';
+import { getSupabase } from '../lib/supabaseClient';
 
 // In-flight dedupe cache for identical assignment reads
 const IN_FLIGHT = new Map<string, Promise<any>>();
@@ -52,20 +53,17 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null) {
 
   if (!userIdOrEmail) return [];
 
-  // If caller passed an email, try to resolve via canonicalAuth to the current canonical session.
   let queryUserId: string | null = null;
   const looksLikeEmail = typeof userIdOrEmail === 'string' && userIdOrEmail.includes && userIdOrEmail.includes('@');
   if (looksLikeEmail) {
     try {
-      // Prefer the async ready helper so tests can mock waitForAuthReady before importing.
-      const canonical = await import('../lib/canonicalAuth');
-      const waitForAuthReady = canonical.waitForAuthReady ?? (canonical.getCanonicalSession ? async () => canonical.getCanonicalSession() : async () => null);
-      const cs = await waitForAuthReady();
-      if (cs && cs.userEmail === userIdOrEmail) {
-        queryUserId = cs.userId ?? null;
+      const supabase = getSupabase();
+      const {
+        data: { session: supabaseSession },
+      } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
+      if (supabaseSession?.user?.email === userIdOrEmail) {
+        queryUserId = supabaseSession.user.id ?? null;
       } else {
-        // If canonical session not present or email doesn't match, still attempt fetch
-        // against the provided email by returning empty (legacy behavior).
         return [];
       }
     } catch (e) {
@@ -78,10 +76,6 @@ export async function getAssignmentsForUser(userIdOrEmail?: string | null) {
   if (!queryUserId) return [];
 
   // Ensure the caller is asking for the current session's assignments only.
-  // If the caller passed an email (looksLikeEmail) and we resolved it via
-  // canonicalAuth, allow the fetch to proceed even if the session id does
-  // not strictly match the canonical id. This covers email-based callers
-  // where the runtime session id may be an alternate identifier (legacy).
   if (!looksLikeEmail && session.id !== queryUserId) return [];
 
   // We rely on headers for org scoping; avoid appending query params here.
@@ -169,10 +163,12 @@ export async function getAssignmentsForUserWithOutcome(
     let queryUserId: string | null = null;
     if (looksLikeEmail) {
       try {
-        const canonical = await import('../lib/canonicalAuth');
-        const cs = canonical.getCanonicalSession ? canonical.getCanonicalSession() : null;
-        if (cs && cs.userEmail === userId) {
-          queryUserId = cs.userId ?? null;
+        const supabase = getSupabase();
+        const {
+          data: { session: supabaseSession },
+        } = supabase ? await supabase.auth.getSession() : { data: { session: null } as any };
+        if (supabaseSession?.user?.email === userId) {
+          queryUserId = supabaseSession.user.id ?? null;
         } else {
           return { outcome: 'empty', assignments: [], error: null };
         }
