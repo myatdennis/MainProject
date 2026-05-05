@@ -21,8 +21,23 @@ const secureStorageMock = vi.hoisted(() => ({
   getUserSession: vi.fn(),
   getActiveOrgPreference: vi.fn(),
   getAccessToken: vi.fn(),
+  secureGet: vi.fn(),
+  secureSet: vi.fn(),
+  secureRemove: vi.fn(),
 }));
 vi.mock('../../lib/secureStorage', () => secureStorageMock);
+
+const supabaseClientMock = vi.hoisted(() => ({
+  auth: {
+    getSession: vi.fn(),
+    refreshSession: vi.fn(),
+    onAuthStateChange: vi.fn(),
+  },
+}));
+vi.mock('../../lib/supabaseClient', () => ({
+  getSupabase: vi.fn(() => supabaseClientMock),
+  supabase: supabaseClientMock,
+}));
 
 const apiAccessTokenMock = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/apiClient', () => ({
@@ -221,6 +236,32 @@ beforeEach(() => {
   secureStorageMock.getUserSession.mockReturnValue(adminSession);
   secureStorageMock.getActiveOrgPreference.mockReturnValue(null);
   secureStorageMock.getAccessToken.mockReturnValue('token-123');
+  secureStorageMock.secureGet.mockResolvedValue(null);
+  secureStorageMock.secureSet.mockResolvedValue(undefined);
+  secureStorageMock.secureRemove.mockResolvedValue(undefined);
+  supabaseClientMock.auth.getSession.mockResolvedValue({
+    data: {
+      session: {
+        access_token: 'token-123',
+        refresh_token: 'refresh-123',
+        user: { id: adminSession.id, email: 'admin@example.com' },
+      },
+    },
+    error: null,
+  });
+  supabaseClientMock.auth.refreshSession.mockResolvedValue({
+    data: {
+      session: {
+        access_token: 'token-456',
+        refresh_token: 'refresh-456',
+        user: { id: adminSession.id, email: 'admin@example.com' },
+      },
+    },
+    error: null,
+  });
+  supabaseClientMock.auth.onAuthStateChange.mockReturnValue({
+    data: { subscription: { unsubscribe: vi.fn() } },
+  });
   apiAccessTokenMock.mockResolvedValue('token-123');
   setRuntimeStatusSnapshot();
   setOrgContextSnapshot(buildOrgContextSnapshot());
