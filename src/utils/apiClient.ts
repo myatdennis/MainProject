@@ -496,7 +496,6 @@ const logDevHttpError = (target: string, status: number, body: unknown) => {
 };
 
 const PUBLIC_ENDPOINTS = new Set([
-  '/api/auth/login',
   '/api/auth/register',
   '/api/auth/refresh',
   '/api/mfa/challenge',

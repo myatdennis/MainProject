@@ -20,7 +20,6 @@ const devMode = Boolean(
 );
 
 const PUBLIC_ENDPOINTS = new Set([
-  '/api/auth/login',
   '/api/auth/register',
   '/api/auth/refresh',
   '/api/mfa/challenge',

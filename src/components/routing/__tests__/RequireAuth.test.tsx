@@ -16,8 +16,9 @@ vi.mock('../../../context/SecureAuthContext', () => ({
 const mockUseSecureAuth = authHookMocks.useSecureAuth as Mock;
 
 const createAuthState = (overrides: Record<string, unknown> = {}) => ({
-  isAuthenticated: { lms: true, admin: false, client: true },
-  authReady: true,
+	  isAuthenticated: { lms: true, admin: false, client: true },
+	  authInitialized: true,
+	  authReady: true,
   authInitializing: false,
   authStatus: 'authenticated',
   sessionStatus: 'authenticated',
@@ -25,7 +26,8 @@ const createAuthState = (overrides: Record<string, unknown> = {}) => ({
   hasActiveMembership: true,
   surfaceAuthStatus: { admin: 'ready', lms: 'ready', client: 'ready' },
   orgResolutionStatus: 'ready',
-  user: { id: 'user-1', role: 'learner', email: 'learner@example.com' },
+	  user: { id: 'user-1', role: 'learner', email: 'learner@example.com' },
+	  session: { access_token: 'test-access-token' },
   memberships: [],
   organizationIds: [],
   activeOrgId: null,
@@ -126,7 +128,7 @@ describe('RequireAuth guard', () => {
     expect(loadSession).not.toHaveBeenCalled();
   });
 
-  it('does not request session load while auth bootstrap is still in progress', async () => {
+	  it('does not request session load while auth bootstrap is still in progress', async () => {
     const loadSession = vi.fn().mockResolvedValue(true);
     renderGuard({
       authInitializing: true,
@@ -137,5 +139,19 @@ describe('RequireAuth guard', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(loadSession).not.toHaveBeenCalled();
-  });
-});
+	  });
+
+	  it('redirects logged-out protected routes after auth initialization instead of spinning', () => {
+	    renderGuard({
+	      authInitialized: true,
+	      authReady: false,
+	      authStatus: 'unauthenticated',
+	      sessionStatus: 'unauthenticated',
+	      isAuthenticated: { admin: false, lms: false, client: false },
+	      user: null,
+	      session: null,
+	    });
+
+	    expect(screen.queryByLabelText('Loading')).not.toBeInTheDocument();
+	  });
+	});

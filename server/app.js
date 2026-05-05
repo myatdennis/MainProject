@@ -25,7 +25,6 @@ import debugRlsRouter from './routes/debug-rls.js';
 import mfaRoutes from './routes/mfa.js';
 import analyticsRouter from './routes/analytics.js';
 import { setDoubleSubmitCSRF } from './middleware/csrf.js';
-import { registerAdminMeRoutes } from './routes/admin/adminMe.js';
 import { registerAdminCoursesRoutes } from './routes/admin/adminCourses.js';
 
 export default function createApp(deps = {}, existingApp = null) {
@@ -142,9 +141,6 @@ export default function createApp(deps = {}, existingApp = null) {
   app.use('/api/auth', authRoutes);
   app.use('/api/debug', debugRlsRouter);
   app.use('/', healthRouter);
-
-  // Register extracted admin route blocks (Phase 4)
-  registerAdminMeRoutes(app);
 
   // Mount routers that accept deps where available
   const isDemoOrTestMode = isDemoMode || E2E_TEST_MODE;

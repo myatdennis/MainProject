@@ -57,12 +57,13 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     setRequestedOrgHint,
     loadSession,
     reloadSession,
-    user,
-    session,
-    organizationIds,
-    logout,
-    authReady,
-  } = useSecureAuth();
+	    user,
+	    session,
+	    organizationIds,
+	    logout,
+	    authInitialized,
+	    authReady,
+	  } = useSecureAuth();
   const orgReady = orgResolutionStatus === 'ready' || orgResolutionStatus === 'degraded';
   const location = useLocation();
   const params = useParams<Record<string, string | undefined>>();
@@ -755,9 +756,30 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const shouldShowBootstrapSpinner =
     !hasResolvedAuthRef.current && bootstrapInProgress;
 
-  // Global guard: do not render children until auth subsystem indicates readiness.
-  // This must stay after hook declarations so React sees the same hook order on
-  // every render.
+  if (!authInitialized) {
+    return <Loading />;
+  }
+
+  if (!session?.access_token) {
+    const targetPath = currentLoginPath;
+    if (isOnModeLoginPath) {
+      logGuardEvent('bypass_login_gate', { reason: 'missing_session_on_login_path', target: targetPath });
+      return null;
+    }
+    logRedirectOnce(targetPath, 'missing_session');
+    logGuardEvent('redirect_login', { target: targetPath, reason: 'missing_session' });
+    logAuthRedirect('RequireAuth.redirect_missing_session', {
+      path: location.pathname,
+      target: targetPath,
+      authStatus,
+      authInitializing,
+      sessionStatus,
+      orgResolutionStatus,
+      surfaceStatus: effectiveSurfaceState,
+    });
+    return <Navigate to={targetPath} replace state={{ from: location, reason: 'missing_session' }} />;
+  }
+
   if (!authReady || authInitializing) {
     return <Loading />;
   }

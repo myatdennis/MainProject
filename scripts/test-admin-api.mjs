@@ -1,48 +1,39 @@
 import fetch from 'node-fetch';
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env' });
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8888';
 const EMAIL = process.env.TEST_EMAIL;
 const PASSWORD = process.env.TEST_PASSWORD;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-if (!EMAIL || !PASSWORD) {
-  console.error('TEST_EMAIL and TEST_PASSWORD must be provided in env');
+if (!EMAIL || !PASSWORD || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('TEST_EMAIL, TEST_PASSWORD, SUPABASE_URL, and SUPABASE_ANON_KEY must be provided in env');
   process.exit(1);
 }
 
-const buildCookieHeader = (headers) => {
-  const rawCookies =
-    typeof headers.raw === 'function'
-      ? headers.raw()['set-cookie'] || []
-      : [headers.get('set-cookie')].filter(Boolean);
-  return rawCookies.map((entry) => String(entry).split(';')[0]).filter(Boolean).join('; ');
-};
-
 async function test() {
-  // Step 1: login to obtain session cookie
-  const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: EMAIL,
+    password: PASSWORD,
   });
 
-  if (loginRes.status !== 200) {
-    const text = await loginRes.text().catch(() => null);
-    console.error('Login failed', loginRes.status, text);
+  if (error || !data.session?.access_token) {
+    console.error('Supabase login failed', error?.message || 'missing session');
     process.exit(2);
   }
 
-  const cookieHeader = buildCookieHeader(loginRes.headers);
-  if (!cookieHeader) {
-    console.error('Login did not return set-cookie header. Full headers:', Array.from(loginRes.headers.entries()));
-    process.exit(3);
-  }
-
-  // Step 2: call admin endpoint with the session cookie
+  const token = data.session.access_token;
   const res = await fetch(`${BASE_URL}/api/admin/organizations`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      Cookie: cookieHeader,
+      Authorization: `Bearer ${token}`,
     },
   });
 
@@ -60,7 +51,7 @@ async function test() {
     process.exit(5);
   }
 
-  console.log('✅ Admin API OK - organizations:', payload.length);
+  console.log('Admin API OK - organizations:', payload.length);
 }
 
 test().catch((err) => {

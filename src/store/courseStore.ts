@@ -1973,6 +1973,8 @@ if (import.meta.env.PROD && import.meta.env.VITE_ALLOW_DEFAULT_COURSES === 'true
   );
 }
 
+const MAX_EMPTY_COURSE_RETRIES = 1;
+
 type CatalogDiagnosticEvent =
   | 'default_catalog_loaded'
   | 'assignment_scope_failed'
@@ -2120,10 +2122,11 @@ export const courseStore = {
   let restrictToOrg = true;
   let canUseAdminApi = false;
   let adminLoadStatus: AdminLoadStatus = 'skipped';
-  let adminLoadError: string | null = null;
-  // When true, indicates a fatal admin fetch error (client-side 4xx)
-  // where retries should be suppressed to avoid tight infinite loops.
-  let adminFetchIsFatal = false;
+	  let adminLoadError: string | null = null;
+	  // When true, indicates a fatal admin fetch error (client-side 4xx)
+	  // where retries should be suppressed to avoid tight infinite loops.
+	  let adminFetchIsFatal = false;
+	  let adminCatalogPreserved = false;
     let resolvedOrgIdForInit: string | null = null;
     const attemptStartedAt = monotonicNow();
     if (import.meta.env.DEV) {
@@ -2635,9 +2638,10 @@ export const courseStore = {
           if (isNetworkError && Object.keys(catalogSnapshot).length > 0) {
             // Restore from snapshot but ensure a fresh reference so subscribers
             // receive a new object.
-            courses = { ...catalogSnapshot };
-            adminLoadStatus = 'success'; // treat as success — we kept the catalog
-            console.warn('[courseStore.init] admin_fetch_network_error_catalog_preserved', {
+	            courses = { ...catalogSnapshot };
+	            adminLoadStatus = 'success'; // treat as success — we kept the catalog
+	            adminCatalogPreserved = true;
+	            console.warn('[courseStore.init] admin_fetch_network_error_catalog_preserved', {
               restoredCount: Object.keys(catalogSnapshot).length,
               error: adminLoadError,
             });
@@ -2931,7 +2935,12 @@ export const courseStore = {
         if (import.meta.env?.DEV) {
           console.info(`[courseStore.init] catalog_merged`, { loaded: dbCourses.length, totalInStore: Object.keys(merged).length });
         }
-      } else if (adminEmptySuccess) {
+	      } else if (adminCatalogPreserved) {
+	        console.warn('[courseStore.init] Preserved admin catalog after transient fetch failure; skipping fallback catalog.', {
+	          preservedCount: Object.keys(courses).length,
+	          error: adminLoadError,
+	        });
+	      } else if (adminEmptySuccess) {
         console.debug('[COURSE RESET]', { caller: 'courseStore.init/adminEmptySuccess', beforeCount: Object.keys(courses).length });
   // Reset to an empty catalog (fresh reference).
   courses = {};
@@ -3108,14 +3117,20 @@ export const courseStore = {
           adminLoadStatus,
           reason: initReason,
         });
-        if (courseCount === 0 && !earlyUnauthenticatedExit) {
-          console.warn('[courseStore.init] no courses after init — scheduling retry', { reason: initReason });
-          // Don't schedule a retry when the admin fetch failed with a fatal
-          // client error (4xx). Retrying will not help and creates loops.
-          if (adminFetchIsFatal) {
-            console.warn('[courseStore.init] not scheduling retry due to fatal admin fetch error', { adminLoadError });
-          } else if (!initRetryScheduled) {
-            initRetryScheduled = true;
+	        if (courseCount === 0 && !earlyUnauthenticatedExit) {
+	          // Don't schedule a retry when the admin fetch failed with a fatal
+	          // client error (4xx). Retrying will not help and creates loops.
+	          if (adminFetchIsFatal) {
+	            console.warn('[courseStore.init] not scheduling retry due to fatal admin fetch error', { adminLoadError });
+	          } else if (retryCount >= MAX_EMPTY_COURSE_RETRIES) {
+	            console.warn('[courseStore.init] not scheduling retry; max empty-course retries reached', {
+	              reason: initReason,
+	              retryCount,
+	              maxRetries: MAX_EMPTY_COURSE_RETRIES,
+	            });
+	          } else if (!initRetryScheduled) {
+	            console.warn('[courseStore.init] no courses after init — scheduling retry', { reason: initReason, retryCount });
+	            initRetryScheduled = true;
             initRetryTimeoutHandle = setTimeout(() => {
               initRetryTimeoutHandle = null;
               initRetryScheduled = false;

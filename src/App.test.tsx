@@ -48,6 +48,7 @@ describe('AppContent course store initialization', () => {
     mockInit!.mockReset();
     mockUseSecureAuth!.mockReturnValue({
       authReady: true,
+      authInitialized: true,
       session: {
         access_token: 'test-access-token',
         user: { id: 'user-1' },

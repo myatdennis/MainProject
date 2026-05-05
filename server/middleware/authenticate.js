@@ -31,8 +31,16 @@ export async function authenticate(req, res, next) {
       return next();
     }
 
-    const headerToken = (req.headers.authorization || '').replace('Bearer ', '');
-    const token = (req.cookies?.access_token ?? req.cookies?.['sb-access-token'] ?? headerToken) || '';
+    const headerToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const cookieToken = (req.cookies?.access_token ?? req.cookies?.['sb-access-token'] ?? '').trim();
+    const token = headerToken || cookieToken || '';
+    if (isDev) {
+      console.log('[AUTH SOURCE]', {
+        hasBearer: Boolean(headerToken),
+        hasCookie: Boolean(cookieToken),
+        selected: headerToken ? 'bearer' : cookieToken ? 'cookie' : 'none',
+      });
+    }
 
     if (!token) {
       console.warn('[AUTH MISSING TOKEN]', {

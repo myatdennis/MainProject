@@ -215,9 +215,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const authInitializedRef = useRef<boolean>(false);
   useEffect(() => {
     authInitializedRef.current = authInitialized;
-    // Mirror authInitialized into runtime readiness so API layer can check
-    // readiness without inferring authentication from other heuristics.
-    setRuntimeAuthReady(Boolean(authInitialized));
+    // Runtime API readiness still requires a real Supabase access token.
+    // authInitialized only controls whether public routes may render.
+    setRuntimeAuthReady(Boolean(session?.access_token));
     console.log('[AUTH STATE]', {
       authInitialized,
       hasSession: Boolean(session),
@@ -1276,7 +1276,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           // Mark that the initial supabase getSession() check completed
           setAuthInitialized(true);
           console.log('[AUTH STATE]', {
-            authInitialized: Boolean(currentSession),
+            authInitialized: true,
             hasSession: Boolean(currentSession),
             hasToken: Boolean(currentSession?.access_token),
           });
@@ -1321,7 +1321,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         // Ensure the initialized flag is set when onAuthStateChange fires
         setAuthInitialized(true);
         console.log('[AUTH STATE]', {
-          authInitialized: Boolean(authSession),
+          authInitialized: true,
           hasSession: Boolean(authSession),
           hasToken: Boolean(authSession?.access_token),
         });

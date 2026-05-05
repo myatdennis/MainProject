@@ -8,7 +8,7 @@ afterEach(() => {
 describe('resolveApiUrl', () => {
   it('generates absolute URLs when an override is provided', () => {
     __setApiBaseUrlOverride('https://api.example.com/api');
-    expect(resolveApiUrl('/api/auth/login')).toBe('https://api.example.com/api/auth/login');
+    expect(resolveApiUrl('/api/auth/register')).toBe('https://api.example.com/api/auth/register');
     expect(resolveApiUrl('/health')).toBe('https://api.example.com/api/health');
   });
 
@@ -19,9 +19,9 @@ describe('resolveApiUrl', () => {
 
   it('rejects Supabase Functions API base overrides and falls back to non-functions API paths', () => {
     __setApiBaseUrlOverride('https://eprsgmfzqjptfywoecuy.supabase.co/functions/v1');
-    const loginUrl = resolveApiUrl('/api/auth/login');
-    expect(loginUrl).not.toContain('supabase.co/functions/v1');
-    expect(loginUrl).toContain('/api/auth/login');
+    const authUrl = resolveApiUrl('/api/auth/register');
+    expect(authUrl).not.toContain('supabase.co/functions/v1');
+    expect(authUrl).toContain('/api/auth/register');
   });
 });
 
