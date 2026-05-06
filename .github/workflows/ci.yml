@@ -30,12 +30,12 @@ jobs:
       - name: Check lockfile sync
         run: npm run check:lock
 
-      - name: Verify Supabase schema (optional)
+      - name: Validate production DB schema (optional)
         run: |
           if [ -n "${DATABASE_URL}" ]; then
-            npm run -s verify:schema
+            node scripts/validate_prod_db.mjs
           else
-            echo 'DATABASE_URL not configured in workflow environment; skipping schema verification step.'
+            echo 'DATABASE_URL not configured in workflow environment; skipping production DB validation step.'
           fi
 
       - name: Server typecheck

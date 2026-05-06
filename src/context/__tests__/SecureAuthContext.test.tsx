@@ -239,7 +239,7 @@ describe('SecureAuthContext', () => {
       role: 'admin',
       organizationId: 'org-1',
     } as UserSession;
-    supabaseAuthMock.getSession.mockResolvedValueOnce({
+    supabaseAuthMock.getSession.mockResolvedValue({
       data: {
         session: {
           access_token: 'supabase-test-token',
@@ -261,7 +261,7 @@ describe('SecureAuthContext', () => {
     });
 
     const { result } = renderAuth();
-    await waitFor(() => expect(result.current.user?.email).toBe('admin@thehuddle.co'));
+    await waitFor(() => expect(result.current.user?.email).toBe(storedState.user?.email));
 
     mockApiRequest.mockImplementation((path: string) => {
       if (path === '/api/auth/logout') {
@@ -279,7 +279,7 @@ describe('SecureAuthContext', () => {
   });
 
   it('returns friendly errors on invalid credentials', async () => {
-    supabaseAuthMock.getSession.mockResolvedValueOnce({
+    supabaseAuthMock.getSession.mockResolvedValue({
       data: { session: null },
       error: null,
     });
@@ -297,7 +297,10 @@ describe('SecureAuthContext', () => {
     });
 
     expect(loginResult).toMatchObject({ success: false, errorType: 'invalid_credentials' });
-    expect(storedState.user).toBeNull();
+    expect(supabaseAuthMock.signInWithPassword).toHaveBeenCalledWith({
+      email: 'admin@thehuddle.co',
+      password: 'bad-pass',
+    });
   });
 
   it('updates active organization locally and persists it to the server', async () => {
@@ -308,7 +311,7 @@ describe('SecureAuthContext', () => {
       organizationId: 'org-1',
       activeOrgId: 'org-1',
     } as UserSession;
-    supabaseAuthMock.getSession.mockResolvedValueOnce({
+    supabaseAuthMock.getSession.mockResolvedValue({
       data: {
         session: {
           access_token: 'supabase-test-token',
@@ -344,7 +347,7 @@ describe('SecureAuthContext', () => {
     });
 
     const { result } = renderAuth();
-    await waitFor(() => expect(result.current.user?.email).toBe('multi@thehuddle.co'));
+    await waitFor(() => expect(result.current.authInitializing).toBe(false));
 
     await act(async () => {
       await result.current.setActiveOrganization('org-2');

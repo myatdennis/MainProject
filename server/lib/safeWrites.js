@@ -12,7 +12,7 @@ const withTimeout = (promise, ms = 3000, label = 'operation') => {
       reject(err);
     }, ms);
   });
-  return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
+  return Promise.race([Promise.resolve(promise).finally(() => clearTimeout(timer)), timeout]);
 };
 
 const SUPABASE_CALL_TIMEOUT_MS = Number(process.env.SUPABASE_CALL_TIMEOUT_MS || 3000);

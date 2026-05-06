@@ -20,6 +20,16 @@ function getAllowedOrigins() {
 
 const allowedOrigins = getAllowedOrigins();
 
+function isDevelopmentLoopbackOrigin(origin) {
+  if (process.env.NODE_ENV === 'production') return false;
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
 // Named exports for legacy consumers/tests
 export const resolvedCorsOrigins = allowedOrigins;
 
@@ -42,6 +52,9 @@ export function resolveCorsOriginDecision(origin) {
   if (allowedOrigins.includes(origin)) {
     return { allowed: true, reason: 'allowlist', resolvedOrigin: origin };
   }
+  if (isDevelopmentLoopbackOrigin(origin)) {
+    return { allowed: true, reason: 'dev_loopback', resolvedOrigin: origin };
+  }
   // Allow Netlify preview origins during local development for convenience
   if (process.env.NODE_ENV !== 'production' && /netlify\.app$/i.test(origin)) {
     return { allowed: true, reason: 'netlify_preview', resolvedOrigin: origin };
@@ -52,6 +65,9 @@ export function resolveCorsOriginDecision(origin) {
 function originHandler(origin, callback) {
   if (!origin) return callback(null, true); // allow curl/postman
   if (allowedOrigins.includes(origin)) {
+    return callback(null, true);
+  }
+  if (isDevelopmentLoopbackOrigin(origin)) {
     return callback(null, true);
   }
   return callback(new Error('CORS origin not allowed: ' + origin));

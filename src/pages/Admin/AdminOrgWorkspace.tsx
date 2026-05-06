@@ -193,6 +193,7 @@ const AdminOrgWorkspace = () => {
     const active = organizations.filter((org) => (org.status ?? '').toLowerCase() === 'active').length;
     return { total, active };
   }, [organizations, paginationMeta.total]);
+  const progressMetricsUnavailable = progressMap.progressAvailable === false;
 
   const loadCrmData = useCallback(async () => {
     setCrmLoading(true);
@@ -729,6 +730,13 @@ const AdminOrgWorkspace = () => {
         <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           <p className="font-semibold">CRM data unavailable</p>
           <p>{crmError}</p>
+        </div>
+      )}
+
+      {progressMetricsUnavailable && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Progress metrics temporarily unavailable</p>
+          <p>Organization records are still available. Progress summaries will appear when metrics are restored.</p>
         </div>
       )}
 
