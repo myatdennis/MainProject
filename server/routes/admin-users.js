@@ -8,6 +8,8 @@ import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js
 import { isPlatformAdminActor, canModifyUser, canAssignAcrossOrganizations } from '../utils/adminAuthz.js';
 import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
 import { isMembershipConflictTargetError } from '../utils/errors.js';
+import { createOrProvisionOrganizationUser } from '../services/userProvisioning.js';
+import { sendEmail } from '../services/emailService.js';
 const router = express.Router();
 
 let organizationMembershipsOrgColumn = null;
@@ -641,7 +643,7 @@ router.post('/', async (req, res, next) => {
         requestId: req.requestId ?? null,
       },
       {
-        supabase: runtimeSupabase,
+        supabase: runtimeSupabaseAdmin,
         supabaseAuthClient: runtimeSupabaseAuthClient,
         logger,
         sendEmail,
@@ -796,7 +798,7 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
       requestId: null,
     },
     {
-      supabase: runtimeSupabase,
+      supabase: runtimeSupabaseAdmin,
       logger,
       sendEmail,
       getOrganizationMembershipsOrgColumnName: resolveOrganizationMembershipsOrgColumn,

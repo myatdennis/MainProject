@@ -6401,7 +6401,7 @@ const loadSurveyAssignmentForUser = async (
   }
 };
 
-const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedTo()) => {
+const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedTo(), { requestId = null } = {}) => {
   if (!surveyId) return;
   if (!supabase) {
     updateDemoSurveyAssignments(surveyId, assignedTo);
@@ -6455,7 +6455,10 @@ const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedT
   }
 
   try {
-    const { data, error } = await safeUpsert('survey_assignments', payload, { requestId: requestId ?? null });
+    const { error } = await safeUpsert('survey_assignments', payload, {
+      requestId,
+      onConflict: 'survey_id',
+    });
     if (error) throw error;
   } catch (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
@@ -7263,6 +7266,7 @@ const ensureOrgProgressViewAvailable = async () => {
     orgProgressViewStatus = { checked: true, available: true };
     return true;
   } catch (error) {
+    logOrgRouteFullError(error);
     if (
       isSchemaMismatchError(error) ||
       error?.code === '42P01' ||
@@ -7275,7 +7279,13 @@ const ensureOrgProgressViewAvailable = async () => {
       orgProgressViewStatus = { checked: true, available: false };
       return false;
     }
-    throw error;
+    console.warn('[admin.organizations.progress] view_probe_failed', {
+      code: error?.code ?? null,
+      message: error?.message ?? null,
+      name: error?.name ?? null,
+    });
+    orgProgressViewStatus = { checked: true, available: false };
+    return false;
   }
 };
 
@@ -7286,24 +7296,53 @@ const buildOrgProgressPayload = async (orgIds, { includeProgress, requestId }) =
   if (!supabase || !Array.isArray(orgIds) || orgIds.length === 0) {
     return { progressAvailable: Boolean(orgIds?.length === 0) };
   }
-  const viewAvailable = await ensureOrgProgressViewAvailable();
-  if (!viewAvailable) {
-    return { progressAvailable: false, reason: 'view_unavailable' };
-  }
+  console.log('[ORG ROUTE] enrichment_start', {
+    requestId,
+    orgCount: orgIds.length,
+    includeProgress: Boolean(includeProgress),
+  });
   try {
+    const viewAvailable = await ensureOrgProgressViewAvailable();
+    if (!viewAvailable) {
+      return { progressAvailable: false, reason: 'view_unavailable' };
+    }
     const { data, error } = await supabase
       .from(ORG_PROGRESS_VIEW)
       .select('*')
       .in('org_id', orgIds);
     if (error) throw error;
-    const payload = { progressAvailable: true };
-    (data || []).forEach((row) => {
-      if (row?.org_id) {
-        payload[row.org_id] = row;
-      }
+    console.log('[ORG ROUTE] query_done', {
+      requestId,
+      phase: 'progress_query',
+      rowCount: Array.isArray(data) ? data.length : 0,
     });
+    const payload = { progressAvailable: true };
+    for (const row of Array.isArray(data) ? data : []) {
+      const orgId = row?.org_id ?? row?.organization_id ?? row?.id ?? null;
+      console.log('[ORG ROUTE] enrichment_org_start', {
+        requestId,
+        orgId,
+      });
+      try {
+        if (orgId) {
+          payload[orgId] = sanitizeOrgRouteJsonValue(row);
+        }
+        console.log('[ORG ROUTE] enrichment_org_done', {
+          requestId,
+          orgId,
+        });
+      } catch (error) {
+        console.error('[ORG ENRICHMENT ORG FAILED]', {
+          orgId,
+          message: error?.message,
+          stack: error?.stack,
+        });
+        throw error;
+      }
+    }
     return payload;
   } catch (error) {
+    logOrgRouteFullError(error);
     logOrganizationsStageError('progress_fetch_failed', error, {
       requestId,
       orgCount: orgIds.length,
@@ -7690,7 +7729,34 @@ const getRequestContext = (req) => {
     return { userId: null, userRole: null, memberships: [], organizationIds: [], requestedOrgId: null };
   }
 
-  const normalizedActiveOrg = normalizeOrgIdValue(req.activeOrgId ?? effectiveUser.activeOrgId ?? null);
+  const normalizedActiveOrg = normalizeOrgIdValue(
+    req.organizationId ?? req.activeOrgId ?? effectiveUser.activeOrgId ?? null,
+  );
+  const requestMemberships =
+    req.orgMemberships instanceof Map
+      ? Array.from(req.orgMemberships.entries()).map(([orgId, membership]) => ({
+          ...(membership && typeof membership === 'object' ? membership : {}),
+          organization_id: membership?.organization_id ?? membership?.organizationId ?? membership?.org_id ?? membership?.orgId ?? orgId,
+          orgId: membership?.orgId ?? membership?.organizationId ?? membership?.organization_id ?? orgId,
+        }))
+      : [];
+  const effectiveMemberships = Array.isArray(effectiveUser.memberships) ? effectiveUser.memberships : [];
+  const e2eMemberships = Array.isArray(req.e2eSynthesizedUser?.memberships) ? req.e2eSynthesizedUser.memberships : [];
+  const organizationIds = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(effectiveUser.organizationIds) ? effectiveUser.organizationIds : []),
+        ...(Array.isArray(effectiveUser.organization_ids) ? effectiveUser.organization_ids : []),
+        ...(Array.isArray(req.user?.organizationIds) ? req.user.organizationIds : []),
+        ...(Array.isArray(req.user?.organization_ids) ? req.user.organization_ids : []),
+        ...requestMemberships.map((membership) =>
+          pickOrgId(membership.organization_id, membership.organizationId, membership.org_id, membership.orgId),
+        ),
+      ]
+        .map((orgId) => normalizeOrgIdValue(orgId))
+        .filter(Boolean),
+    ),
+  );
   const appMetadata = effectiveUser.app_metadata && typeof effectiveUser.app_metadata === 'object'
     ? effectiveUser.app_metadata
     : effectiveUser.appMetadata && typeof effectiveUser.appMetadata === 'object'
@@ -7709,8 +7775,8 @@ const getRequestContext = (req) => {
     userId: effectiveUser.userId || effectiveUser.id || null,
     userRole: (effectiveUser.role || effectiveUser.platformRole || '').toLowerCase(),
     platformRole: resolvedPlatformRoleFinal || null,
-    memberships: effectiveUser.memberships || req.e2eSynthesizedUser?.memberships || [],
-    organizationIds: Array.isArray(effectiveUser.organizationIds) ? effectiveUser.organizationIds : [],
+    memberships: [...effectiveMemberships, ...requestMemberships, ...e2eMemberships],
+    organizationIds,
     isPlatformAdmin: Boolean(isPlatformAdminFlag),
     requestedOrgId: normalizedActiveOrg,
     activeOrganizationId: normalizedActiveOrg,
@@ -11460,6 +11526,7 @@ async function fetchOrganizationSummary(orgId) {
 }
 
 const defaultOrgBrandingRow = (orgId) => ({
+  organization_id: orgId,
   org_id: orgId,
   logo_url: null,
   primary_color: null,
@@ -11473,10 +11540,13 @@ const defaultOrgBrandingRow = (orgId) => ({
 
 const buildContactsMap = (rows = []) =>
   rows.reduce((acc, contact) => {
-    const key = contact.org_id || contact.orgId;
+    const key = contact.organization_id || contact.org_id || contact.orgId;
     if (!key) return acc;
     if (!acc[key]) acc[key] = [];
-    acc[key].push(contact);
+    acc[key].push({
+      ...contact,
+      org_id: contact.org_id ?? contact.organization_id,
+    });
     return acc;
   }, {});
 
@@ -11540,7 +11610,7 @@ const normalizeOrgProfileUpdatePayload = (orgId, input = {}) => {
 };
 
 const normalizeOrgBrandingUpdatePayload = (orgId, input = {}) => {
-  const payload = { org_id: orgId };
+  const payload = { organization_id: orgId };
   let hasChanges = false;
   const assign = (key, value) => {
     payload[key] = value;
@@ -11562,7 +11632,7 @@ const normalizeOrgBrandingUpdatePayload = (orgId, input = {}) => {
 
 const mapContactResponse = (row) => ({
   id: row.id,
-  orgId: row.org_id,
+  orgId: row.organization_id ?? row.org_id,
   name: row.name,
   email: row.email,
   role: row.role ?? null,
@@ -11650,7 +11720,7 @@ const handleOrgProfileUpsert = async (req, res, transformBody) => {
     if (brandingPayload) {
       const { error: brandingError } = await supabase
         .from('organization_branding')
-        .upsert(brandingPayload, { onConflict: 'org_id' });
+        .upsert(brandingPayload, { onConflict: 'organization_id' });
       if (brandingError) throw brandingError;
     }
 
@@ -11668,11 +11738,11 @@ const hydrateOrgProfileBundles = async (organizations) => {
 
   const [profilesRes, brandingRes, contactsRes] = await Promise.all([
     supabase.from('organization_profiles').select('*').in('organization_id', orgIds),
-    supabase.from('organization_branding').select('*').in('org_id', orgIds),
+    supabase.from('organization_branding').select('*').in('organization_id', orgIds),
     supabase
       .from('organization_contacts')
       .select('*')
-      .in('org_id', orgIds)
+      .in('organization_id', orgIds)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: false }),
   ]);
@@ -11687,7 +11757,10 @@ const hydrateOrgProfileBundles = async (organizations) => {
   }, {});
 
   const brandingByOrg = (brandingRes.data ?? []).reduce((acc, row) => {
-    acc[row.org_id] = row;
+    acc[row.organization_id ?? row.org_id] = {
+      ...row,
+      org_id: row.org_id ?? row.organization_id,
+    };
     return acc;
   }, {});
 
@@ -11710,11 +11783,11 @@ const fetchOrgProfileBundle = async (orgId) => {
 
   const [profileRes, brandingRes, contactsRes] = await Promise.all([
     supabase.from('organization_profiles').select('*').eq('organization_id', orgId).maybeSingle(),
-    supabase.from('organization_branding').select('*').eq('org_id', orgId).maybeSingle(),
+    supabase.from('organization_branding').select('*').eq('organization_id', orgId).maybeSingle(),
     supabase
       .from('organization_contacts')
       .select('*')
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: false }),
   ]);
@@ -11726,7 +11799,12 @@ const fetchOrgProfileBundle = async (orgId) => {
   return buildOrgProfileBundle(
     organization,
     profileRes.data ?? undefined,
-    brandingRes.data ?? undefined,
+    brandingRes.data
+      ? {
+          ...brandingRes.data,
+          org_id: brandingRes.data.org_id ?? brandingRes.data.organization_id,
+        }
+      : undefined,
     contactsRes.data ?? [],
   );
 };
@@ -13410,7 +13488,7 @@ app.use(
     authenticate,
     logger,
     supabase,
-    getSupabase: () => supabase,
+    getSupabase: () => getSupabaseAdminClient() || supabase,
     e2eStore,
     nodeEnv: NODE_ENV,
     isDemoMode,
@@ -13520,7 +13598,7 @@ app.use(
     backfillPublishedCourseAssignmentsWithTx,
     broadcastToTopic,
     courseWithModulesLessonsSelect: COURSE_WITH_MODULES_LESSONS_SELECT,
-    supabase,
+    supabase: getSupabaseAdminClient() || supabase,
     isDemoOrTestMode,
     prepareLessonContentWithCompletionRule,
     randomUUID,
@@ -14036,7 +14114,7 @@ const REQUIRED_ADMIN_ORG_TABLES = [
 const OPTIONAL_ADMIN_ORG_TABLES = [
   { table: 'organization_memberships', schema: 'public', columns: ['organization_id', 'user_id', 'role', 'status'] },
   { table: 'organization_profiles', schema: 'public', columns: ['organization_id'] },
-  { table: 'organization_branding', schema: 'public', columns: ['org_id'] },
+  { table: 'organization_branding', schema: 'public', columns: ['organization_id'] },
 ];
 const loggedOptionalSchemaWarnings = new Set();
 const buildMembershipSelect = (...fields) => fields.join(', ');
@@ -14175,6 +14253,31 @@ const logOrganizationsEvent = (event, { requestId = null, status = 'info', metad
     metadata: shapedMetadata,
   };
   logger.info('organizations_event', payload);
+};
+
+const logOrgRouteFullError = (error) => {
+  console.error('[ORG ROUTE FULL ERROR]', {
+    message: error?.message,
+    stack: error?.stack,
+    cause: error?.cause,
+    name: error?.name,
+  });
+};
+
+const sanitizeOrgRouteJsonValue = (value) => {
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeOrgRouteJsonValue(entry));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, sanitizeOrgRouteJsonValue(entry)]),
+    );
+  }
+  return value;
 };
 
 const logSurveyAssignmentEvent = (event, payload = {}) => {
@@ -14442,7 +14545,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   let totalCount = 0;
   try {
     logOrganizationsEvent('base_query_start', { requestId, status: 'start' });
-  const result = await runSupabaseReadQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
+    const result = await runSupabaseReadQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
     if (result?.data != null && !Array.isArray(result.data)) {
       const shapeError = new Error('Invalid admin organizations response shape');
       shapeError.code = 'INVALID_RESPONSE_SHAPE';
@@ -14450,6 +14553,12 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     }
     organizations = result?.data || [];
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
+    console.log('[ORG ROUTE] query_done', {
+      requestId,
+      phase: 'base_query',
+      totalCount,
+      returnedCount: organizations.length,
+    });
     logOrganizationsEvent('base_query_done', {
       requestId,
       status: 'ok',
@@ -14459,6 +14568,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       },
     });
   } catch (error) {
+    logOrgRouteFullError(error);
     const normalized = logOrganizationsStageError('base_query', error, {
       requestId,
       includeProgress,
@@ -14511,14 +14621,38 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     metadata: { returnedCount: safeOrganizations.length },
   });
 
-  const orgIdsForProgress = safeOrganizations
-    .map((org) => org?.id || org?.organization_id || null)
-    .filter((orgId) => Boolean(orgId));
-  const progressPayload = await buildOrgProgressPayload(orgIdsForProgress, {
-    includeProgress: Boolean(includeProgress),
-    requestId,
-  });
+  let progressPayload;
+  try {
+    const orgIdsForProgress = safeOrganizations
+      .map((org) => org?.id || org?.organization_id || null)
+      .filter((orgId) => Boolean(orgId));
+    progressPayload = await buildOrgProgressPayload(orgIdsForProgress, {
+      includeProgress: Boolean(includeProgress),
+      requestId,
+    });
+  } catch (error) {
+    logOrgRouteFullError(error);
+    const normalized = logOrganizationsStageError('progress_enrichment', error, {
+      requestId,
+      includeProgress,
+      page,
+      pageSize,
+    });
+    res.status(500).json({
+      error: 'Unable to enrich organizations',
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while enriching organizations',
+      details: normalized.details ?? null,
+      requestId,
+    });
+    return;
+  }
 
+  console.log('[ORG ROUTE] response_ready', {
+    requestId,
+    count: safeOrganizations.length,
+    includeProgress,
+  });
   logOrganizationsEvent('response_ready', {
     requestId,
     status: 'ok',
@@ -14531,7 +14665,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     },
   });
 
-  const responsePayload = {
+  const responsePayload = sanitizeOrgRouteJsonValue({
     data: safeOrganizations,
     pagination: {
       page,
@@ -14540,8 +14674,13 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       hasMore: to + 1 < (totalCount || 0),
     },
     progress: progressPayload,
-  };
-  res.json(responsePayload);
+  });
+  try {
+    res.json(responsePayload);
+  } catch (error) {
+    logOrgRouteFullError(error);
+    throw error;
+  }
 }));
 
 app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
@@ -14909,12 +15048,12 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
     );
     await runOptionalCleanupMutation(
       'delete_org.organization_branding',
-      () => supabase.from('organization_branding').delete().eq('org_id', id),
+      () => supabase.from('organization_branding').delete().eq('organization_id', id),
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
       'delete_org.organization_contacts',
-      () => supabase.from('organization_contacts').delete().eq('org_id', id),
+      () => supabase.from('organization_contacts').delete().eq('organization_id', id),
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
@@ -16310,8 +16449,8 @@ app.delete('/api/admin/org-profiles/:orgId', authenticate, requireOrgAdmin, asyn
   try {
     await Promise.all([
       supabase.from('organization_profiles').delete().eq('organization_id', orgId),
-      supabase.from('organization_branding').delete().eq('org_id', orgId),
-      supabase.from('organization_contacts').delete().eq('org_id', orgId),
+      supabase.from('organization_branding').delete().eq('organization_id', orgId),
+      supabase.from('organization_contacts').delete().eq('organization_id', orgId),
     ]);
     res.status(204).end();
   } catch (error) {
@@ -16334,7 +16473,7 @@ app.post('/api/admin/org-profiles/:orgId/contacts', authenticate, requireOrgAdmi
 
   try {
     const payload = {
-      org_id: orgId,
+      organization_id: orgId,
       name,
       email,
       role: role ?? null,
@@ -16385,7 +16524,7 @@ app.put('/api/admin/org-profiles/:orgId/contacts/:contactId', authenticate, requ
     const { data, error } = await supabase
       .from('organization_contacts')
       .update(updatePayload)
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .eq('id', contactId)
       .select('*')
       .maybeSingle();
@@ -16410,7 +16549,7 @@ app.delete('/api/admin/org-profiles/:orgId/contacts/:contactId', authenticate, r
   if (!access) return;
 
   try {
-    await supabase.from('organization_contacts').delete().eq('org_id', orgId).eq('id', contactId);
+    await supabase.from('organization_contacts').delete().eq('organization_id', orgId).eq('id', contactId);
     res.status(204).end();
   } catch (error) {
     console.error(`Failed to delete contact ${contactId} for org ${orgId}:`, error);
@@ -17466,7 +17605,7 @@ app.use(
   requireAdminAccess,
   createAdminSurveysRouter({
     logger,
-    supabase,
+    supabase: getSupabaseAdminClient() || supabase,
     e2eStore,
     isDemoOrTestMode,
     ensureSupabase,
@@ -17508,7 +17647,7 @@ app.use(
   '/api/admin/surveys',
   requireAdminAccess,
   createAdminSurveyAssignmentsRouter({
-    supabase,
+    supabase: getSupabaseAdminClient() || supabase,
     sql,
     logger,
     e2eStore,
@@ -17573,8 +17712,8 @@ app.use(
   authenticate,
   createClientSurveyAssignmentsRouter({
     logger,
-    supabase,
-    getSupabase: () => supabase,
+    supabase: getSupabaseAdminClient() || supabase,
+    getSupabase: () => getSupabaseAdminClient() || supabase,
     e2eStore,
     persistE2EStore,
     isDemoOrTestMode,
@@ -17598,7 +17737,7 @@ app.use(
   authenticate,
   createClientSurveysRouter({
     logger,
-    supabase,
+    supabase: getSupabaseAdminClient() || supabase,
     e2eStore,
     isDemoMode,
     isDemoOrTestMode,
@@ -17639,7 +17778,7 @@ app.use(
   authenticate,
   createProgressReadRouter({
     logger,
-    supabase,
+    supabase: getSupabaseAdminClient() || supabase,
     e2eStore,
     isDemoMode,
     isDemoOrTestMode,
@@ -17663,7 +17802,7 @@ app.use(
   authenticate,
   createProgressWriteRouter({
     logger,
-    supabase,
+    supabase: getSupabaseAdminClient() || supabase,
     sql,
     e2eStore,
     isDemoMode,

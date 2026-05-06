@@ -475,6 +475,7 @@ export const createCourseAssignmentsService = ({
       const record = {
         course_id: courseId,
         user_id: userId,
+        assignment_type: 'course',
         assigned_by: assignedBy ?? null,
         status: statusValue,
         progress: progressValue ?? 0,
@@ -1540,7 +1541,18 @@ export const createCourseAssignmentsService = ({
         // preserve prior behavior: return 200 with null data when no row exists
         return { status: 200, data: null, meta: null };
       }
-      const upsertPayload = [{ id: existing.id, progress: clamped, status: statusValue, updated_at: now }];
+      const upsertPayload = [{
+        id: existing.id,
+        course_id: existing.course_id ?? courseIdValue,
+        user_id: existing.user_id ?? userIdValue,
+        user_id_uuid: existing.user_id_uuid ?? existing.user_id ?? userIdValue,
+        organization_id: existing.organization_id ?? existing.org_id ?? req.query?.orgId ?? req.query?.organizationId ?? null,
+        assignment_type: existing.assignment_type ?? 'course',
+        active: existing.active ?? true,
+        progress: clamped,
+        status: statusValue,
+        updated_at: now,
+      }];
       const { data: upserted, error: upsertErr } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null });
       if (upsertErr) throw upsertErr;
       const data = Array.isArray(upserted) ? upserted[0] : upserted;

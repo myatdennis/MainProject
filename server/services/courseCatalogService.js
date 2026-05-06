@@ -279,6 +279,8 @@ export const createCourseCatalogService = ({
       req.body?.org_id,
       req.body?.organization_id,
       req.body?.organizationId,
+      req.headers?.['x-org-id'],
+      req.headers?.['x-organization-id'],
       context.requestedOrgId,
       context.activeOrganizationId,
     );
@@ -585,6 +587,8 @@ export const createCourseCatalogService = ({
       req.body?.org_id,
       req.body?.organization_id,
       req.body?.organizationId,
+      req.headers?.['x-org-id'],
+      req.headers?.['x-organization-id'],
       context.requestedOrgId,
       context.activeOrganizationId,
     );

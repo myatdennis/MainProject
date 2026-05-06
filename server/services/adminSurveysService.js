@@ -225,7 +225,7 @@ export const createAdminSurveysService = ({
 
     const data = await performUpsert();
     rememberSurveyIdentifierAlias(incomingSurveyIdentifier, data?.id ?? null);
-    await syncSurveyAssignments(data.id, assignedTo);
+    await syncSurveyAssignments(data.id, assignedTo, { requestId: req.requestId ?? null });
     const survey = await loadSurveyWithAssignments(data.id);
     return { status: 201, data: survey };
   };
@@ -287,7 +287,7 @@ export const createAdminSurveysService = ({
 
     await performUpdate();
     if (assignmentUpdateRequested) {
-      await syncSurveyAssignments(surveyIdForWrite, assignedTo);
+      await syncSurveyAssignments(surveyIdForWrite, assignedTo, { requestId: req.requestId ?? null });
     }
     const survey = await loadSurveyWithAssignments(surveyIdForWrite);
     rememberSurveyIdentifierAlias(id, survey?.id ?? surveyIdForWrite);

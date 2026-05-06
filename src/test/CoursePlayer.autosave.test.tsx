@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
@@ -248,7 +248,10 @@ describe('CoursePlayer autosave', () => {
     video.currentTime = 30;
     expect(video.currentTime).toBe(30);
 
-    intervalCallbacks.forEach((cb) => cb());
+    await waitFor(() => expect(intervalCallbacks.length).toBeGreaterThan(0));
+    await act(async () => {
+      intervalCallbacks.forEach((cb) => cb());
+    });
 
     expect(enqueueProgressMock).toHaveBeenCalledWith(
       expect.objectContaining({

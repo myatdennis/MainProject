@@ -338,12 +338,6 @@ const ensureMembership = async ({
   }
   payload[membershipOrgColumn] = orgId;
 
-  // Also populate the legacy org_id column so the (org_id, user_id) non-partial
-  // unique index stays in sync and the fallback conflict target always works.
-  if (membershipOrgColumn === 'organization_id') {
-    payload.org_id = String(orgId);
-  }
-
   // Require admin client for membership operations
   supabase = ensureAdminSupabase(supabase);
 
@@ -416,8 +410,9 @@ const ensureMembership = async ({
   data = Array.isArray(primaryResult.data) ? (primaryResult.data[0] ?? null) : primaryResult.data;
 
   // Fallback: if PostgREST rejected the conflict target (partial index / no
-  // non-partial unique index found), retry with the legacy org_id column.
-  // This happens when only a partial unique index exists on organization_id.
+  // non-partial unique index found), use an explicit update-then-insert on the
+  // detected organization column. Do not fall back to legacy org_id unless the
+  // schema resolver actually selected it.
   if (upsertError && isConflictTargetError(upsertError) && membershipOrgColumn !== 'org_id') {
     defaultLogger.warn('provisioning_membership_upsert_conflict_target_fallback', {
       requestId,
@@ -427,14 +422,27 @@ const ensureMembership = async ({
       error: upsertError?.message || String(upsertError),
     });
 
-    const fallbackPayload = { ...payload, org_id: String(orgId) };
-    const fallbackResult = await supabase
+    const updateResult = await supabase
       .from('organization_memberships')
-      .upsert(fallbackPayload, { onConflict: 'org_id,user_id' })
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq(membershipOrgColumn, orgId)
+      .eq('user_id', userId)
       .select('*');
 
-    upsertError = fallbackResult.error;
-    data = Array.isArray(fallbackResult.data) ? (fallbackResult.data[0] ?? null) : fallbackResult.data;
+    if (updateResult.error) {
+      upsertError = updateResult.error;
+      data = null;
+    } else if (Array.isArray(updateResult.data) && updateResult.data.length > 0) {
+      upsertError = null;
+      data = updateResult.data[0] ?? null;
+    } else {
+      const insertResult = await supabase
+        .from('organization_memberships')
+        .insert(payload)
+        .select('*');
+      upsertError = insertResult.error;
+      data = Array.isArray(insertResult.data) ? (insertResult.data[0] ?? null) : insertResult.data;
+    }
   }
 
   if (upsertError) {

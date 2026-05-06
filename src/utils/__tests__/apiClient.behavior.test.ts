@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { __setTestOrgContext } from '../../lib/orgContext';
 import * as authBootstrapState from '../../lib/authBootstrapState';
 import { setRuntimeAuthReady } from '../../lib/apiReadiness';
+import { clearSessionCache } from '../../lib/sessionCache';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
 const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
@@ -128,6 +129,7 @@ describe('apiClient', () => {
       error: null,
     } as any);
     supabaseSignOutSpy.mockResolvedValue({ error: null } as any);
+    clearSessionCache();
     setRuntimeAuthReady(true);
     debugSpy.mockClear();
     authBootstrapSpy.mockReturnValue(false);
@@ -147,6 +149,7 @@ describe('apiClient', () => {
       delete (window as any).__E2E_BYPASS;
     }
     __setTestOrgContext(null);
+    clearSessionCache();
     setRuntimeAuthReady(false);
   });
 

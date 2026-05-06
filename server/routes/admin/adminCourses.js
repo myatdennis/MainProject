@@ -141,14 +141,14 @@ export function registerAdminCoursesRoutes(app) {
         const startStack = new Error().stack;
         const timeoutId = setTimeout(() => {
           try {
-            if (!res.headersSent) {
-              console.error('[TIMEOUT WARNING] admin courses handler slow', { path: req.path, requestId: req.requestId ?? null, startStack });
-              res.status(503).json({ error: 'handler_timeout', message: 'Admin course handler timed out' });
-            } else {
-              console.error('[TIMEOUT WARNING] admin courses handler slow but headers already sent', { path: req.path, requestId: req.requestId ?? null, startStack });
-            }
+            console.error('[TIMEOUT WARNING] admin courses handler slow', {
+              path: req.path,
+              requestId: req.requestId ?? null,
+              headersSent: Boolean(res.headersSent),
+              startStack,
+            });
           } catch (e) {
-            console.error('[TIMEOUT WARNING] failed to send timeout response', e?.message || e);
+            console.error('[TIMEOUT WARNING] failed to log timeout warning', e?.message || e);
           }
         }, 2000);
         res.once('finish', () => clearTimeout(timeoutId));

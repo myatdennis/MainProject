@@ -8,7 +8,6 @@ import authShim from './middleware/authShim.js';
 import enforceSingleAuth, { enforceSingleAuth as namedEnforceSingleAuth } from './middleware/enforceSingleAuth.js';
 import { withAuth } from './middleware/withAuth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
-import adminOrganizationsRouter from './routes/adminOrganizations.js';
 import authRoutes from './routes/auth.js';
 import adminUsersRouter from './routes/admin-users.js';
 import { requireAdmin } from './middleware/auth.js';
@@ -144,11 +143,20 @@ export default function createApp(deps = {}, existingApp = null) {
 
   // Mount routers that accept deps where available
   const isDemoOrTestMode = isDemoMode || E2E_TEST_MODE;
-  app.use('/api/admin/organizations', ...withAuth(requireAdminAccess, adminOrganizationsRouter));
+  // Do not mount the extracted organization router here: its placeholder
+  // handlers shadow the full runtime handlers registered in server/index.js.
   // Always mount admin users router at mount level and protect with withAuth(requireAdmin, ...)
   app.use('/api/admin/users', ...withAuth(requireAdmin, adminUsersRouter));
 
-  app.use('/api/admin/surveys', ...withAuth(requireAdmin, createAdminSurveysRouter(deps)));
+  const canMountAdminSurveysRouter = Boolean(
+    deps?.ensureAdminSurveySchemaOrRespond &&
+    deps?.requireUserContext &&
+    deps?.fetchSurveyAssignmentsMap &&
+    deps?.applyAssignmentToSurvey,
+  );
+  if (canMountAdminSurveysRouter) {
+    app.use('/api/admin/surveys', ...withAuth(requireAdmin, createAdminSurveysRouter(deps)));
+  }
   app.use('/api/admin/notifications', ...withAuth(requireAdmin, createAdminNotificationsRouter(deps)));
   app.use('/api/admin/analytics', ...withAuth(requireAdmin, adminAnalyticsRouter));
   app.use('/api/media', ...withAuth(mediaRouter));
