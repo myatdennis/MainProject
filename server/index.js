@@ -14616,12 +14616,13 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     logOrganizationsEvent('base_query_start', { requestId, status: 'start' });
     // Debug: capture context and applied filters. The build function will populate appliedFilters captured above
     console.log('[ORG QUERY DEBUG] pre_query', JSON.stringify({
-      isPlatformAdmin,
-      activeOrgId: context.requestedOrgId ?? context.activeOrganizationId ?? null,
-      adminOrgIds,
-      appliedFilters: { search: search || null, statuses: statuses || null, subscriptions: subscriptions || null },
-      usingAdminClient: Boolean(isPlatformAdmin && getSupabaseAdminClient()),
-    }));
+        userId: req.user?.id ?? req.user?.userId ?? null,
+        isPlatformAdmin,
+        activeOrgId: context.requestedOrgId ?? context.activeOrganizationId ?? null,
+        adminOrgIds,
+        appliedFilters: { search: search || null, statuses: statuses || null, subscriptions: subscriptions || null },
+        usingAdminClient: Boolean(isPlatformAdmin && getSupabaseAdminClient()),
+      }));
     const result = await runSupabaseReadQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
     // We can't access the inner appliedFilters directly here (closure), so rebuild a light appliedFilters description for logging.
     const appliedFiltersForLog = [];
@@ -14640,6 +14641,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
     const organizationIds = Array.isArray(result?.data) ? result.data.map((r) => r.id || r.organization_id || r.org_id || null).filter(Boolean) : [];
     console.log('[ORG QUERY DEBUG] post_query', JSON.stringify({
+      userId: req.user?.id ?? req.user?.userId ?? null,
       isPlatformAdmin,
       activeOrgId: context.requestedOrgId ?? context.activeOrganizationId ?? null,
       appliedFilters: appliedFiltersForLog,
@@ -14648,6 +14650,22 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       totalCount: totalCount || 0,
       organizationIds,
     }));
+
+    // Structured admin access review log for ingestion/alerts
+    try {
+      logger.info('admin_access_review', {
+        userId: req.user?.id ?? req.user?.userId ?? null,
+        isPlatformAdmin: Boolean(isPlatformAdmin),
+        activeOrgId: context.requestedOrgId ?? context.activeOrganizationId ?? null,
+        appliedFilters: appliedFiltersForLog,
+        usingAdminClient: Boolean(isPlatformAdmin && getSupabaseAdminClient()),
+        finalRowCount: Array.isArray(result?.data) ? result.data.length : 0,
+        totalCount: totalCount || 0,
+      });
+    } catch (e) {
+      // Non-fatal: logging should never break request handling
+      console.warn('[admin_access_review] logging_failed', e?.message || e);
+    }
     // Mirror legacy route-level metric
     console.log('[ORG ROUTE] query_done', {
       requestId,

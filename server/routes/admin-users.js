@@ -610,6 +610,17 @@ router.post('/', async (req, res, next) => {
 
     const { getEffectiveUser } = await import('../utils/getEffectiveUser.js');
     const eff = getEffectiveUser(req) || {};
+    // Structured admin access review log (non-fatal)
+    try {
+      logger.info('admin_access_review', {
+        actorUserId: req.user?.id ?? req.user?.userId ?? null,
+        actorIsPlatformAdmin: Boolean(eff.isPlatformAdmin === true),
+        targetUserId: userId,
+        requestedOrgId: orgId || null,
+      });
+    } catch (e) {
+      console.warn('[admin_access_review] admin-users logging failed', e?.message || e);
+    }
     // Platform admins are allowed to create users without specifying orgId.
     if (!orgId && !eff.isPlatformAdmin) {
       return next(createHttpError(400, 'org_id_required', 'organizationId is required.'));
