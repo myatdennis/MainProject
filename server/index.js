@@ -5032,6 +5032,23 @@ const withDevToolsGate = (handler) => (req, res, next) => {
   return handler(req, res, next);
 };
 
+// Dev-only loopback gate: only allows requests from loopback addresses when not in production.
+const withLoopbackGate = (handler) => (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(404).send('Not Found');
+    return;
+  }
+  const remoteAddress = req.ip || req.connection?.remoteAddress || '';
+  const forwardedFor = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+  const candidateIp = forwardedFor || remoteAddress;
+  const isLoopback = candidateIp.startsWith('127.') || candidateIp === '::1' || candidateIp === '::ffff:127.0.0.1';
+  if (!isLoopback) {
+    res.status(404).send('Not Found');
+    return;
+  }
+  return handler(req, res, next);
+};
+
 if (process.env.NODE_ENV !== 'production') {
   app.get('/api/dev/diagnostics/courses', withDevToolsGate(async (req, res) => {
     const idsParam = typeof req.query.ids === 'string' ? req.query.ids : '';
@@ -5177,6 +5194,50 @@ if (process.env.NODE_ENV !== 'production') {
     } catch (err) {
       logger.error('dev_cache_del_failed', { key: cacheKey, error: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: 'cache_del_failed' });
+    }
+  }));
+
+  // Dev-only route: return authoritative organizations list using the service-role admin client.
+  app.get('/api/dev/diagnostics/admin-orgs', withDevToolsGate(async (req, res) => {
+    try {
+      const admin = getSupabaseAdminClient();
+      if (!admin) {
+        res.status(500).json({ ok: false, error: 'admin_client_not_configured' });
+        return;
+      }
+      const { data, error, count } = await admin
+        .from('organizations')
+        .select('id,name,slug,status,subscription', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) {
+        throw error;
+      }
+      res.json({ ok: true, total: typeof count === 'number' ? count : null, organizations: data || [] });
+    } catch (err) {
+      logger.error('dev_admin_orgs_failed', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ ok: false, error: 'dev_admin_orgs_failed' });
+    }
+  }));
+
+  // Local-only dev route: loopback-only, no key required. Useful for quick local checks.
+  app.get('/api/dev/diagnostics/admin-orgs-local', withLoopbackGate(async (req, res) => {
+    try {
+      const admin = getSupabaseAdminClient();
+      if (!admin) {
+        res.status(500).json({ ok: false, error: 'admin_client_not_configured' });
+        return;
+      }
+      const { data, error, count } = await admin
+        .from('organizations')
+        .select('id,name,slug', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      res.json({ ok: true, total: typeof count === 'number' ? count : null, organizations: data || [] });
+    } catch (err) {
+      logger.error('dev_admin_orgs_local_failed', { error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ ok: false, error: 'dev_admin_orgs_local_failed' });
     }
   }));
 }
@@ -14509,33 +14570,41 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   if (!schemaOk) return;
 
   const buildOrgQuery = () => {
-    let query = supabase
+    const appliedFilters = [];
+    // Use admin client for platform admins to avoid RLS-based filtering.
+    const queryClient = isPlatformAdmin ? getSupabaseAdminClient() || supabase : supabase;
+    let query = queryClient
       .from('organizations')
       .select('*', { count: 'exact' })
       .order(sort, { ascending })
       .range(from, to);
 
     if (search) {
+      appliedFilters.push({ type: 'search', value: search });
       const term = sanitizeIlike(search);
       query = query.or(`name.ilike.%${term}%,contact_person.ilike.%${term}%,contact_email.ilike.%${term}%`);
     }
 
     if (statuses.length) {
+      appliedFilters.push({ type: 'statuses', value: statuses });
       query = query.in('status', statuses);
     }
 
     if (subscriptions.length) {
+      appliedFilters.push({ type: 'subscriptions', value: subscriptions });
       query = query.in('subscription', subscriptions);
     }
 
     if (resolvedRequestedOrgId && !isPlatformAdmin) {
       const requestedOrgIdString = String(resolvedRequestedOrgId).trim();
+      appliedFilters.push({ type: 'resolvedRequestedOrgId', value: requestedOrgIdString });
       if (isUuid(requestedOrgIdString)) {
         query = query.eq('id', requestedOrgIdString);
       } else {
         query = query.or(`name.eq.${requestedOrgIdString},slug.eq.${requestedOrgIdString}`);
       }
     } else if (!isPlatformAdmin) {
+      appliedFilters.push({ type: 'adminOrgIds', value: adminOrgIds });
       query = query.in('id', adminOrgIds);
     }
     return query;
@@ -14545,7 +14614,23 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   let totalCount = 0;
   try {
     logOrganizationsEvent('base_query_start', { requestId, status: 'start' });
+    // Debug: capture context and applied filters. The build function will populate appliedFilters captured above
+    console.log('[ORG QUERY DEBUG] pre_query', JSON.stringify({
+      isPlatformAdmin,
+      activeOrgId: context.requestedOrgId ?? context.activeOrganizationId ?? null,
+      adminOrgIds,
+      appliedFilters: { search: search || null, statuses: statuses || null, subscriptions: subscriptions || null },
+      usingAdminClient: Boolean(isPlatformAdmin && getSupabaseAdminClient()),
+    }));
     const result = await runSupabaseReadQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
+    // We can't access the inner appliedFilters directly here (closure), so rebuild a light appliedFilters description for logging.
+    const appliedFiltersForLog = [];
+    if (search) appliedFiltersForLog.push({ type: 'search', value: search });
+    if (statuses.length) appliedFiltersForLog.push({ type: 'statuses', value: statuses });
+    if (subscriptions.length) appliedFiltersForLog.push({ type: 'subscriptions', value: subscriptions });
+    if (resolvedRequestedOrgId && !isPlatformAdmin) appliedFiltersForLog.push({ type: 'resolvedRequestedOrgId', value: String(resolvedRequestedOrgId) });
+    if (!isPlatformAdmin && !resolvedRequestedOrgId) appliedFiltersForLog.push({ type: 'adminOrgIds', value: adminOrgIds });
+
     if (result?.data != null && !Array.isArray(result.data)) {
       const shapeError = new Error('Invalid admin organizations response shape');
       shapeError.code = 'INVALID_RESPONSE_SHAPE';
@@ -14553,6 +14638,17 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     }
     organizations = result?.data || [];
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
+    const organizationIds = Array.isArray(result?.data) ? result.data.map((r) => r.id || r.organization_id || r.org_id || null).filter(Boolean) : [];
+    console.log('[ORG QUERY DEBUG] post_query', JSON.stringify({
+      isPlatformAdmin,
+      activeOrgId: context.requestedOrgId ?? context.activeOrganizationId ?? null,
+      appliedFilters: appliedFiltersForLog,
+      usingAdminClient: Boolean(isPlatformAdmin && getSupabaseAdminClient()),
+      finalRowCount: Array.isArray(result?.data) ? result.data.length : 0,
+      totalCount: totalCount || 0,
+      organizationIds,
+    }));
+    // Mirror legacy route-level metric
     console.log('[ORG ROUTE] query_done', {
       requestId,
       phase: 'base_query',
