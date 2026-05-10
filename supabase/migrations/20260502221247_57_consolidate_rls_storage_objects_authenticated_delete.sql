@@ -9,6 +9,7 @@
 -- DROP POLICY IF EXISTS Authenticated delete own avatars + org-assets ON storage.objects;
 -- DROP POLICY IF EXISTS Users delete own avatars ON storage.objects;
 
+DROP POLICY IF EXISTS consolidated_authenticated_delete ON storage.objects;
 CREATE POLICY consolidated_authenticated_delete ON storage.objects FOR DELETE TO authenticated USING ((((bucket_id = 'org-assets'::text) AND (EXISTS ( SELECT 1
    FROM organization_memberships m
   WHERE ((m.user_id = auth.uid()) AND (m.organization_id = (split_part(objects.name, '/'::text, 1))::uuid)))))) OR (((bucket_id = ANY (ARRAY['avatars'::text, 'org-assets'::text])) AND (owner = auth.uid()))) OR (((bucket_id = 'avatars'::text) AND (owner = auth.uid()))));

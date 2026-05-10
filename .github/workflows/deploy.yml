@@ -30,7 +30,11 @@ jobs:
         run: npm run lint
 
       - name: Validation unit suites
-        run: npx vitest run src/validation/__tests__/courseValidation.test.ts src/validation/__tests__/serverCourseValidation.test.ts src/contracts/__tests__/courseWriteContract.test.ts
+        run: >
+          npx vitest run
+          src/validation/__tests__/courseValidation.test.ts
+          src/validation/__tests__/serverCourseValidation.test.ts
+          src/contracts/__tests__/courseWriteContract.test.ts
 
       - name: Tenant isolation integration gates
         run: npm run -s test:integration:tenant-isolation
@@ -42,14 +46,20 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Course builder E2E gates
-        run: npm run test:e2e -- tests/e2e/course_builder_concurrency.spec.ts tests/e2e/course_builder_feature_validation.spec.ts tests/e2e/course_builder_quiz_persistence.spec.ts
+        run: >
+          npm run test:e2e --
+          tests/e2e/course_builder_concurrency.spec.ts
+          tests/e2e/course_builder_feature_validation.spec.ts
+          tests/e2e/course_builder_quiz_persistence.spec.ts
 
       - name: Write production env
         if: ${{ env.VITE_SUPABASE_URL != '' && env.VITE_SUPABASE_ANON_KEY != '' }}
         run: |
-          echo "VITE_SUPABASE_URL=${{ env.VITE_SUPABASE_URL }}" >> .env.production
-          echo "VITE_SUPABASE_ANON_KEY=${{ env.VITE_SUPABASE_ANON_KEY }}" >> .env.production
-          echo "VITE_API_BASE_URL=${{ env.VITE_API_BASE_URL }}" >> .env.production
+          {
+            echo "VITE_SUPABASE_URL=${{ env.VITE_SUPABASE_URL }}"
+            echo "VITE_SUPABASE_ANON_KEY=${{ env.VITE_SUPABASE_ANON_KEY }}"
+            echo "VITE_API_BASE_URL=${{ env.VITE_API_BASE_URL }}"
+          } >> .env.production
 
       - name: Build
         run: npm run build

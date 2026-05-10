@@ -1,11 +1,10 @@
- 
 name: Launch Gate
 
 on:
   push:
-    branches: [ main, master, develop, 'feat/**', 'fix/**' ]
+    branches: [main, master, develop, 'feat/**', 'fix/**']
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [main, master, develop]
 
 jobs:
   build:
@@ -22,7 +21,14 @@ jobs:
 
       - name: Assert Node version
         run: |
-          node -e "const major=Number(process.versions.node.split('.')[0]); if (major < 20) { console.error('Node < 20 detected:', process.versions.node); process.exit(1); } console.log('Node version OK:', process.versions.node)"
+          node <<'NODE'
+          const major = Number(process.versions.node.split('.')[0]);
+          if (major < 20) {
+            console.error('Node < 20 detected:', process.versions.node);
+            process.exit(1);
+          }
+          console.log('Node version OK:', process.versions.node);
+          NODE
 
       - name: Install dependencies (ci)
         run: npm ci
@@ -72,7 +78,7 @@ jobs:
         run: |
           npm run -s preview -- --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 &
           PREVIEW_PID=$!
-          for i in {1..30}; do
+          for _ in {1..30}; do
             if curl -fsS http://127.0.0.1:4173 >/dev/null; then
               break
             fi
@@ -121,8 +127,3 @@ jobs:
 
       - name: Run Supabase RLS policy tests
         run: npx vitest run tests/integration/rls.policies.spec.ts --config tests/vitest.integration.config.ts
-
-      # Final cleanup: no duplicate steps
-
-
- 

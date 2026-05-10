@@ -47,6 +47,19 @@ let pollingHandle: number | null = null;
 let inflightRefresh: Promise<RuntimeStatus> | null = null;
 let connectivityHandlersInstalled = false;
 
+const resolveRuntimeHealthUrl = (): string => {
+  const resolved = resolveApiUrl('/health');
+  if (
+    process.env.NODE_ENV === 'test' &&
+    typeof window !== 'undefined' &&
+    window.location?.origin &&
+    resolved.startsWith('/')
+  ) {
+    return new URL(resolved, window.location.origin).toString();
+  }
+  return resolved;
+};
+
 type HealthOverrides = {
   apiReachable?: boolean;
   apiAuthRequired?: boolean;
@@ -132,7 +145,7 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
     apiReachable,
     apiAuthRequired: Boolean(overrides.apiAuthRequired),
     demoModeEnabled,
-  wsEnabled,
+    wsEnabled,
     offlineQueueBacklog,
     storageStatus,
     statusLabel: resolvedStatusLabel,
@@ -174,7 +187,7 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 4000);
     const { default: authorizedFetch } = await import('../lib/authorizedFetch');
-    const response = await authorizedFetch(resolveApiUrl('/health'), {
+    const response = await authorizedFetch(resolveRuntimeHealthUrl(), {
       method: 'GET',
       headers: { 'x-runtime-status': '1' },
       signal: controller.signal,

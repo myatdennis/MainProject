@@ -2,7 +2,7 @@ name: Frontend Release Build (Canonical Netlify)
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch: {}
 
 jobs:

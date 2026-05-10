@@ -2515,7 +2515,7 @@ export const courseStore = {
             url: '/api/admin/courses',
             params: { includeStructure: true, includeLessons: true },
           });
-                                                                                                                                                 if (import.meta.env.DEV) {
+          if (import.meta.env.DEV) {
             console.debug('[FETCH START]', {
               ts: Date.now(),
               pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',

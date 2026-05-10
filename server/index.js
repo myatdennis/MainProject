@@ -1688,7 +1688,12 @@ app.use(e2eBypass);
 app.use(authenticate);
 app.use(authCompat);
 app.use(resolveOrganizationContext);
-app.use(['/api/admin', '/api/client'], requireOrg);
+app.use(['/api/admin', '/api/client'], (req, res, next) => {
+  if (shouldBypassApiAuth(req.originalUrl?.replace(/^\/api/, '').split('?')[0], req.method)) {
+    return next();
+  }
+  return requireOrg(req, res, next);
+});
 
 import { withAuth } from './middleware/withAuth.js';
 
@@ -18359,34 +18364,11 @@ app.use(apiErrorHandler);
 
 console.log('[SERVER INIT START]');
 
-// Guard: ensure the desired port is not already in use to avoid duplicate
-// server instances. If the port is taken, log and exit with a clear message.
-import net from 'net';
-
-const checkPortAvailable = (port) =>
-  new Promise((resolve) => {
-    const tester = net.createServer()
-      .once('error', (err) => {
-        tester.close?.();
-        resolve(false);
-      })
-      .once('listening', () => {
-        tester.once('close', () => resolve(true)).close();
-      })
-      .listen(port, '0.0.0.0');
-  });
-
 // Expose `server` to the module scope so later WebSocket initialization
 // and other code can reference it safely.
 let server;
 
-(async () => {
-  const available = await checkPortAvailable(PORT);
-  if (!available) {
-    console.error('[SERVER INIT] Port already in use:', PORT);
-    process.exit(1);
-  }
-
+{
   server = app.listen(PORT, '0.0.0.0', () => {
     console.log('[SERVER LISTENING]', PORT);
     logger.info('server_listening', { port: PORT, host: '0.0.0.0' });
@@ -18423,7 +18405,7 @@ let server;
       process.exit(1);
     }
   });
-})();
+}
 
 runStartupChecks()
   .then(() => {

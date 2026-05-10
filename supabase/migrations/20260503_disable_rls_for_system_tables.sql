@@ -1,4 +1,3 @@
-```sql
 -- Migration: Disable RLS for system / internal tables
 -- Generated: 2026-05-03
 -- Purpose: Disable Row Level Security on non-user-facing/system/backup tables so service_role
@@ -42,5 +41,3 @@ ALTER TABLE IF EXISTS public._policy_backup DISABLE ROW LEVEL SECURITY;
 --   only apply to environments where this is acceptable (staging, production with service_role protections, etc.).
 -- - If you prefer to retain RLS but add service-only policies, let me know and I can convert these to
 --   targeted policies instead of blanket DISABLEs.
-
-``` 

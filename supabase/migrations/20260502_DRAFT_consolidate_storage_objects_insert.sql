@@ -32,7 +32,8 @@ GRANT EXECUTE ON FUNCTION public.is_org_admin_for(uuid) TO authenticated;
 -- 3) Create a conservative policy for uploading avatars to the 'avatars' bucket.
 --    - Only allow inserts where metadata.user_id matches the authenticated user
 --    - This prevents a user from creating an avatar object for someone else
-CREATE POLICY IF NOT EXISTS storage_objects_insert_avatars_authenticated
+DROP POLICY IF EXISTS storage_objects_insert_avatars_authenticated ON storage.objects;
+CREATE POLICY storage_objects_insert_avatars_authenticated
 	ON storage.objects
 	FOR INSERT
 	TO authenticated
@@ -44,7 +45,8 @@ CREATE POLICY IF NOT EXISTS storage_objects_insert_avatars_authenticated
 -- 4) Create a policy allowing active org members to insert org-assets into the 'org-assets' bucket.
 --    Uses an EXISTS check against organization_memberships. Compare auth.uid() to the stored user_id
 --    by casting to text which tolerates uuid/text differences across schemas.
-CREATE POLICY IF NOT EXISTS storage_objects_insert_org_assets_members
+DROP POLICY IF EXISTS storage_objects_insert_org_assets_members ON storage.objects;
+CREATE POLICY storage_objects_insert_org_assets_members
 	ON storage.objects
 	FOR INSERT
 	TO authenticated
@@ -61,7 +63,8 @@ CREATE POLICY IF NOT EXISTS storage_objects_insert_org_assets_members
 
 -- 5) Optionally allow org admins (via is_org_admin_for) to insert org-assets as well.
 --    This is stricter if your is_org_admin_for function encapsulates admin logic.
-CREATE POLICY IF NOT EXISTS storage_objects_insert_org_assets_admins
+DROP POLICY IF EXISTS storage_objects_insert_org_assets_admins ON storage.objects;
+CREATE POLICY storage_objects_insert_org_assets_admins
 	ON storage.objects
 	FOR INSERT
 	TO authenticated

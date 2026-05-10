@@ -45,6 +45,8 @@ import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
 import { nanoid } from 'nanoid';
 
+const USERS_PAGE_SIZE = 25;
+
 export const getUserTransferToastMessage = (
   currentOrgContext: string | null,
   transfer: { fromOrganizationId?: string | null; toOrganizationId?: string | null } | undefined,
@@ -83,6 +85,7 @@ const AdminUsers = () => {
     setSearchTerm('');
     setFilterOrg('all');
     setFilterStatus('all');
+    setCurrentPage(1);
     setSelectedUsers([]);
   }, [routeKey]);
 
@@ -90,6 +93,7 @@ const AdminUsers = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterOrg, setFilterOrg] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -367,14 +371,43 @@ const AdminUsers = () => {
 
   const modules = dynamicModules;
 
-  const filteredUsers = usersList.filter((user: User) => {
+  const filteredUsers = useMemo(() => usersList.filter((user: User) => {
     const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.organization.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesOrg = filterOrg === 'all' || user.organization === filterOrg;
     const matchesStatus = filterStatus === 'all' || user.status === filterStatus;
     return matchesSearch && matchesOrg && matchesStatus;
-  });
+  }), [filterOrg, filterStatus, searchTerm, usersList]);
+
+  const filteredUserIds = useMemo(() => new Set(filteredUsers.map((entry) => entry.id)), [filteredUsers]);
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PAGE_SIZE));
+  const boundedCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedUsers = useMemo(() => {
+    const start = (boundedCurrentPage - 1) * USERS_PAGE_SIZE;
+    return filteredUsers.slice(start, start + USERS_PAGE_SIZE);
+  }, [boundedCurrentPage, filteredUsers]);
+  const paginationStart = filteredUsers.length === 0 ? 0 : (boundedCurrentPage - 1) * USERS_PAGE_SIZE + 1;
+  const paginationEnd = filteredUsers.length === 0 ? 0 : paginationStart + paginatedUsers.length - 1;
+  const pageUserIds = useMemo(() => new Set(paginatedUsers.map((entry) => entry.id)), [paginatedUsers]);
+  const visibleSelectedUsers = useMemo(
+    () => selectedUsers.filter((id) => pageUserIds.has(id)),
+    [pageUserIds, selectedUsers],
+  );
+
+  useEffect(() => {
+    setSelectedUsers((prev) => prev.filter((id) => filteredUserIds.has(id)));
+  }, [filteredUserIds]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterOrg, filterStatus, searchTerm]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleSelectUser = (userId: string) => {
     setSelectedUsers((prev: string[]) => 
@@ -385,10 +418,10 @@ const AdminUsers = () => {
   };
 
   const handleSelectAll = () => {
-    if (selectedUsers.length === filteredUsers.length) {
-      setSelectedUsers([]);
+    if (visibleSelectedUsers.length === paginatedUsers.length && paginatedUsers.length > 0) {
+      setSelectedUsers((prev) => prev.filter((id) => !pageUserIds.has(id)));
     } else {
-      setSelectedUsers(filteredUsers.map((user: User) => user.id));
+      setSelectedUsers((prev) => Array.from(new Set([...prev, ...paginatedUsers.map((user: User) => user.id)])));
     }
   };
 
@@ -620,7 +653,7 @@ const AdminUsers = () => {
     <PageWrapper>
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
-      <div className="mb-8 flex items-start justify-between">
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="h1">User Management</h1>
           <p className="muted-text">Monitor learner progress, assign courses, and manage user accounts</p>
@@ -653,8 +686,8 @@ const AdminUsers = () => {
       {/* Search and Filter Bar */}
       <div className="card mb-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <div className="relative flex-1 max-w-[520px]">
+          <div className="flex flex-1 flex-col gap-3 sm:flex-row">
+            <div className="relative w-full sm:max-w-[520px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 muted-text" />
               <input
                 type="text"
@@ -665,7 +698,7 @@ const AdminUsers = () => {
                 aria-label="Search users"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Filter className="h-4 w-4 muted-text" />
               <select
                 value={filterOrg}
@@ -692,9 +725,12 @@ const AdminUsers = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {selectedUsers.length > 0 && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
+                  {visibleSelectedUsers.length} selected
+                </span>
                 <LoadingButton
                   onClick={handleSendReminder}
                   loading={loading}
@@ -748,6 +784,7 @@ const AdminUsers = () => {
               onClick={handleExport}
               loading={loading}
               variant="secondary"
+              disabled={filteredUsers.length === 0}
             >
               <Download className="icon-16" />
               Export
@@ -762,31 +799,35 @@ const AdminUsers = () => {
           <div className="flex justify-center py-16">
             <Loading size="lg" />
           </div>
-        ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full table-collapse">
-            <thead className="table-head">
-              <tr>
-                <th className="table-cell">
-                  <input
-                    type="checkbox"
-                    checked={selectedUsers.length === filteredUsers.length && filteredUsers.length > 0}
-                    onChange={handleSelectAll}
-                    aria-label="Select all users"
-                    className="checkbox-sm"
-                  />
-                </th>
-                <th className="table-cell table-head-cell" scope="col">User</th>
-                <th className="table-cell table-head-cell" scope="col">Organization</th>
-                <th className="table-cell table-head-cell text-center" scope="col">Progress</th>
-                <th className="table-cell table-head-cell text-center" scope="col">Modules</th>
-                <th className="table-cell table-head-cell text-center" scope="col">Status</th>
-                <th className="table-cell table-head-cell text-center" scope="col">Last Login</th>
-                <th className="table-cell table-head-cell text-center" scope="col">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredUsers.map((user: User) => (
+        ) : usersError ? (
+          <div className="px-4 py-12 text-center text-sm text-gray-500">
+            Resolve the loading error above, then retry the user list.
+          </div>
+        ) : filteredUsers.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full table-collapse">
+              <thead className="table-head">
+                <tr>
+                  <th className="table-cell">
+                    <input
+                      type="checkbox"
+                      checked={visibleSelectedUsers.length === paginatedUsers.length && paginatedUsers.length > 0}
+                      onChange={handleSelectAll}
+                      aria-label="Select all users"
+                      className="checkbox-sm"
+                    />
+                  </th>
+                  <th className="table-cell table-head-cell" scope="col">User</th>
+                  <th className="table-cell table-head-cell" scope="col">Organization</th>
+                  <th className="table-cell table-head-cell text-center" scope="col">Progress</th>
+                  <th className="table-cell table-head-cell text-center" scope="col">Modules</th>
+                  <th className="table-cell table-head-cell text-center" scope="col">Status</th>
+                  <th className="table-cell table-head-cell text-center" scope="col">Last Login</th>
+                  <th className="table-cell table-head-cell text-center" scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedUsers.map((user: User) => (
                 <tr key={user.id} className="table-row-border">
                   <td className="table-cell">
                     <input
@@ -799,9 +840,9 @@ const AdminUsers = () => {
                   </td>
                   <td className="table-cell">
                     <div>
-                      <div className="progress-number">{user.name}</div>
-                      <div className="muted-small text-13">{user.email}</div>
-                      <div className="muted-small text-12">{user.role}</div>
+                      <div className="progress-number break-words">{user.name}</div>
+                      <div className="muted-small text-13 break-all">{user.email}</div>
+                      <div className="muted-small text-12 break-words">{user.role || 'Member'}</div>
                     </div>
                   </td>
                   <td className="table-cell">
@@ -818,7 +859,7 @@ const AdminUsers = () => {
                       <div className="progress-track mt-1">
                         <div
                           className="progress-fill"
-                          style={{ width: `${user.overallProgress}%` }}
+                          style={{ width: `${Math.max(0, Math.min(100, user.overallProgress))}%` }}
                           role="progressbar"
                           aria-valuemin={0}
                           aria-valuemax={100}
@@ -829,7 +870,7 @@ const AdminUsers = () => {
                     </div>
                   </td>
                   <td className="table-cell text-center">
-                      <div className="text-13">
+                    <div className="text-13">
                       <span className="font-bold">{user.completedModules}</span>
                       <span className="muted-text">/ {user.totalModules}</span>
                     </div>
@@ -857,7 +898,7 @@ const AdminUsers = () => {
                   <td className="table-cell text-center">
                     <div className="flex items-center justify-center gap-2">
                       <Link
-                        to={`/admin/users/user-${user.id}`}
+                        to={`/admin/users/${user.id}`}
                         title="View Profile"
                         aria-label={`View profile for ${user.name}`}
                         className="icon-action secondary"
@@ -912,30 +953,61 @@ const AdminUsers = () => {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        ) : (
+          <div className="px-4 py-12">
+            <EmptyState
+              title={usersList.length === 0 ? 'No users yet' : 'No users found'}
+              description={usersList.length === 0
+                ? 'Invite the first learner or administrator for this organization.'
+                : 'Try adjusting your search, organization, or status filters.'}
+              action={usersList.length === 0 ? (
+                <Button onClick={handleAddUser} type="button" variant="primary" size="sm">
+                  Add User
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => { setSearchTerm(''); setFilterOrg('all'); setFilterStatus('all'); setSelectedUsers([]); }}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                >
+                  Reset filters
+                </Button>
+              )}
+              illustrationSrc={undefined}
+            />
+          </div>
         )}
       </div>
 
-      {!usersLoading && !usersError && filteredUsers.length === 0 && (
-        <div className="mt-8">
-          <EmptyState
-            title={usersList.length === 0 ? 'No users yet' : 'No users found'}
-            description={usersList.length === 0
-              ? 'Invite your first user by clicking "Add User" above.'
-              : 'Try adjusting your search or filter criteria.'}
-            action={(
-              <Button
-                onClick={() => { setSearchTerm(''); setFilterOrg('all'); setFilterStatus('all'); setSelectedUsers([]); }}
-                type="button"
-                variant="outline"
-                size="sm"
-              >
-                Reset filters
-              </Button>
-            )}
-            illustrationSrc={undefined}
-          />
+      {!usersLoading && !usersError && filteredUsers.length > 0 && (
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-gray-100 bg-white px-4 py-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Showing {paginationStart}-{paginationEnd} of {filteredUsers.length} user{filteredUsers.length === 1 ? '' : 's'}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={boundedCurrentPage <= 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            >
+              Previous
+            </Button>
+            <span className="min-w-16 text-center text-xs font-semibold text-gray-500">
+              {boundedCurrentPage} / {totalPages}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={boundedCurrentPage >= totalPages}
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
 

@@ -626,6 +626,13 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
       app_metadata: {
         ...(claims.app_metadata || {}),
         ...(normalizedPlatformRole ? { platform_role: normalizedPlatformRole } : {}),
+        memberships: [
+          {
+            organization_id: testUser.organizationId,
+            role: testUser.role,
+            status: 'active',
+          },
+        ],
       },
       iss,
       aud: 'authenticated',

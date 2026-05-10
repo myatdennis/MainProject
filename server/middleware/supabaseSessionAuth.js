@@ -1,5 +1,28 @@
 import { supabaseAuthClient } from '../lib/supabaseClient.js';
 
+const normalizeMemberships = (user = {}) => {
+  const raw = Array.isArray(user?.app_metadata?.memberships) ? user.app_metadata.memberships : [];
+  return raw
+    .map((membership) => {
+      if (!membership || typeof membership !== 'object') return null;
+      const organizationId =
+        membership.organization_id ??
+        membership.organizationId ??
+        membership.orgId ??
+        membership.org_id ??
+        null;
+      if (!organizationId) return null;
+      return {
+        ...membership,
+        organization_id: String(organizationId),
+        organizationId: String(organizationId),
+        orgId: String(organizationId),
+        status: membership.status || 'active',
+      };
+    })
+    .filter(Boolean);
+};
+
 // Single-source-of-truth Supabase session middleware
 export default async function supabaseSessionAuth(req, res, next) {
   try {
@@ -27,13 +50,20 @@ export default async function supabaseSessionAuth(req, res, next) {
 
     // Attach validated supabase session data for authenticate() to consume.
   // Do NOT write legacy request-level user shapes here.
+    const appMetadata = data.user?.app_metadata || {};
+    const memberships = normalizeMemberships(data.user);
+    const organizationIds = memberships.map((membership) => membership.organization_id);
     req.authValidatedUser = {
       id: data.user.id,
       userId: data.user.id,
       email: data.user.email,
-      role: (data.user?.role || 'user'),
-      isPlatformAdmin: Boolean(data.user?.app_metadata?.platform_role === 'platform_admin'),
-      app_metadata: data.user?.app_metadata || {},
+      role: appMetadata.role || data.user?.role || 'user',
+      platformRole: appMetadata.platform_role || null,
+      isPlatformAdmin: Boolean(appMetadata.platform_role === 'platform_admin'),
+      memberships,
+      organizationIds,
+      app_metadata: appMetadata,
+      user_metadata: data.user?.user_metadata || {},
     };
     req.supabaseJwtToken = token;
   console.log('[AUTH SUCCESS] authValidatedUser=', req.authValidatedUser.id);

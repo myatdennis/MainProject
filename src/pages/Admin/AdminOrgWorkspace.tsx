@@ -762,7 +762,7 @@ const AdminOrgWorkspace = () => {
         <div className="space-y-6">
           <div className="card-lg card-hover">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative flex-1 max-w-md">
+              <div className="relative w-full lg:max-w-md">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                 <input
                   type="text"
@@ -772,7 +772,7 @@ const AdminOrgWorkspace = () => {
                   className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 focus:border-transparent focus:ring-2 focus:ring-orange-500"
                 />
               </div>
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto">
                 <select
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value as StatusFilterOption)}
@@ -820,8 +820,12 @@ const AdminOrgWorkspace = () => {
 
           {!initialLoad && loadError && (
             <EmptyState
-              title="Unable to load organizations"
-              description="Check your connection and try refreshing."
+              title={loadError === 'no_admin_memberships' ? 'No admin organizations available' : 'Unable to load organizations'}
+              description={
+                loadError === 'no_admin_memberships'
+                  ? 'Your account does not have an active organization admin membership. Contact a platform administrator to update access.'
+                  : 'Check your connection and try refreshing.'
+              }
               action={<LoadingButton onClick={handleRefreshOrgs}>Retry</LoadingButton>}
             />
           )}
@@ -858,10 +862,20 @@ const AdminOrgWorkspace = () => {
                 return (
                   <div
                     key={org.id}
-                    className={`card-lg card-hover cursor-pointer border ${
+                    className={`card-lg card-hover cursor-pointer border focus:outline-none focus:ring-2 focus:ring-orange-200 ${
                       isSelected ? 'border-orange-400 ring-2 ring-orange-100' : 'border-gray-100'
                     }`}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    aria-label={`Select ${org.name}`}
                     onClick={() => handleSelectOrganization(org.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleSelectOrganization(org.id);
+                      }
+                    }}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3">
@@ -954,7 +968,7 @@ const AdminOrgWorkspace = () => {
 
                     <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-4">
                       <div className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusBadge(org.status)}`}>{org.status}</div>
-                      <div className="relative">
+                      <div className="relative" onClick={(event) => event.stopPropagation()}>
                         <ActionsMenu
                           items={[
                             { key: 'view', label: 'View', onClick: () => navigate(`/admin/organizations/${org.id}`) },

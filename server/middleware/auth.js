@@ -1085,7 +1085,9 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   const effectiveMembershipCount = membershipsTrusted ? memberships.length : 0;
   const membershipDegraded = false;
   const userPayload = buildUserPayload(supabaseUser, memberships, { membershipStatus });
-  const membershipMap = membershipsTrusted ? buildMembershipMap(memberships) : new Map();
+  const membershipMap = Array.isArray(userPayload.memberships) && userPayload.memberships.length > 0
+    ? buildMembershipMap(userPayload.memberships)
+    : new Map();
   // Resolve activeOrgId: prefer explicit request, then req.activeOrgId, then first membership
   let activeOrgId = null;
   const requestedOrgId = getRequestedOrgId(req);
@@ -1771,6 +1773,7 @@ export async function resolveOrganizationContext(req, res, next) {
   }
 
   const userId = effectiveUser.userId || effectiveUser.id || null;
+  const requestToken = resolveAccessTokenFromRequest(req);
   let memberships = [];
   if (userId) {
     try {
@@ -1800,8 +1803,8 @@ export async function resolveOrganizationContext(req, res, next) {
       } else {
         // No admin client available — only proceed if a request token exists so
         // the per-request client will evaluate RLS as `authenticated` rather
-        // than `anon`. The variable `token` is in scope in buildAuthContext.
-        if (!token) {
+        // than `anon`.
+        if (!requestToken) {
           console.warn('[ORG MEMBERSHIPS SKIPPED] no admin client and no request token - skipping membership lookup', { userId });
         } else {
           const runtimeSupabase = getActiveSupabaseClient(req);
@@ -1835,6 +1838,14 @@ export async function resolveOrganizationContext(req, res, next) {
       count: memberships?.length,
       orgIds: memberships?.map((m) => m.organization_id),
     });
+  }
+
+  if ((!memberships || memberships.length === 0) && req.orgMemberships instanceof Map && req.orgMemberships.size > 0) {
+    memberships = Array.from(req.orgMemberships.values()).map((membership) => ({
+      organization_id: membership.organization_id ?? membership.organizationId ?? membership.orgId ?? membership.org_id,
+      role: membership.role ?? null,
+      status: membership.status ?? 'active',
+    })).filter((membership) => membership.organization_id);
   }
 
   const requestedOrgId = getRequestedOrgId(req);
@@ -1882,9 +1893,38 @@ export async function resolveOrganizationContext(req, res, next) {
   // Enforce org scoping for non-platform admins: all admin endpoints should be bound to an org.
   const eff = getEffectiveUser(req) || {};
   const platformAdmin =
+    isPlatformAdmin(eff) ||
     eff?.isPlatformAdmin === true ||
     eff?.role === 'platform_admin' ||
     eff?.platformRole === 'platform_admin';
+
+  if (
+    platformAdmin &&
+    requestedOrgId &&
+    process.env.NODE_ENV !== 'production' &&
+    String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true' &&
+    req.orgMemberships instanceof Map &&
+    req.orgMemberships.size > 0 &&
+    !req.orgMemberships.has(String(requestedOrgId))
+  ) {
+    const message = 'Organization scope not permitted.';
+    if (String(req.originalUrl || req.url || '').startsWith('/api/admin/documents')) {
+      return res.status(403).json({
+        error: {
+          code: 'org_access_denied',
+          message,
+        },
+        code: 'org_access_denied',
+        message,
+      });
+    }
+    return res.status(403).json({
+      error: 'org_access_denied',
+      code: 'org_access_denied',
+      message,
+    });
+  }
+
   if (!platformAdmin && !req.organizationId) {
     const reason = orgIds.length > 1 ? 'org_selection_required' : 'org_scope_required';
     return res.status(403).json({

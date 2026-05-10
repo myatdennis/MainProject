@@ -783,7 +783,7 @@ export const createCourseCatalogService = ({
     let effectiveAssignedOnly = assignedOnly;
     let membershipFallbackApplied = false;
     const requestOrgId = req.organizationId || null;
-    let effectiveOrgId = requestOrgId || resolvedOrgId || primaryOrgId || null;
+    let effectiveOrgId = normalizeOrgIdValue(queryOrgParam) || requestOrgId || resolvedOrgId || primaryOrgId || null;
 
     if (effectiveOrgId && !context.isPlatformAdmin && !membershipSet.has(effectiveOrgId)) {
       return {

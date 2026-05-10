@@ -6,7 +6,10 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 45000,
     hookTimeout: 45000,
+    fileParallelism: false,
     maxConcurrency: 1,
+    maxWorkers: 1,
+    minWorkers: 1,
     pool: 'forks',
     watch: false,
     sequence: {

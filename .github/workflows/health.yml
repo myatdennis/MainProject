@@ -2,7 +2,7 @@ name: health-monitor
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # every 30 minutes
+    - cron: '*/30 * * * *'  # every 30 minutes
   workflow_dispatch: {}
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
       - name: Curl domain root
         run: |
           DOMAIN=${DOMAIN:-the-huddle.co}
-          curl -fsS https://$DOMAIN/ | head -c 200 || exit 1
+          curl -fsS "https://$DOMAIN/" | head -c 200 || exit 1
       - name: API health (Supabase Edge function proxy)
         run: |
           set -euo pipefail
@@ -20,7 +20,7 @@ jobs:
           if curl -fsS "$URL/api/health" | jq -e '.ok == true' >/dev/null; then
             echo "API health endpoint responded OK"
           else
-            echo "/api/health failed, retrying /health …"
+            echo "/api/health failed, retrying /health ..."
             curl -fsS "$URL/health" | jq -e '.ok == true' >/dev/null
           fi
       - name: Database health
@@ -32,4 +32,8 @@ jobs:
         run: |
           API_HOST=${API_HOST:-eprsgmfzqjptfywoecuy.supabase.co}
           DOMAIN=${DOMAIN:-the-huddle.co}
-          curl -i -X OPTIONS https://$API_HOST/functions/v1/api/auth/login -H "Origin: https://$DOMAIN" -H "Access-Control-Request-Method: POST" | grep -i "Access-Control-Allow-Origin" || exit 1
+          curl -i -X OPTIONS "https://$API_HOST/functions/v1/api/auth/login" \
+            -H "Origin: https://$DOMAIN" \
+            -H "Access-Control-Request-Method: POST" \
+            | grep -i "Access-Control-Allow-Origin" \
+            || exit 1

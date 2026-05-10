@@ -3,6 +3,7 @@ import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import type { FC } from 'react';
 import Modal from '../Modal';
+import { Link } from 'react-router-dom';
 
 interface OrgOption {
   id: string;
@@ -71,7 +72,7 @@ const AdminOrgSelectorModal: FC<Props> = ({ open, onClose, organizationOptions, 
           <div className="mt-6 flex justify-end gap-3">
             <Button variant="ghost" onClick={onClose}>Close</Button>
             <Button asChild>
-              <a href="/admin/organizations" className="no-underline">Open Organizations</a>
+              <Link to="/admin/organizations" className="no-underline" onClick={onClose}>Open Organizations</Link>
             </Button>
           </div>
         </Card>

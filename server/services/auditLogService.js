@@ -5,8 +5,11 @@ export const createAuditLogService = ({
   persistE2EStore,
   isDemoOrTestMode,
   normalizeOrgIdValue,
-} = {}) => ({
-  record: async ({ req, res }) => {
+} = {}) => {
+  const fallbackAuditLogs = [];
+
+  return {
+    record: async ({ req, res }) => {
     const { action, details = {}, timestamp, userId, user_id, orgId, org_id } = req.body || {};
   const sessionUser = req.user || null;
     if (!sessionUser) {
@@ -38,8 +41,14 @@ export const createAuditLogService = ({
     };
 
     if (isDemoOrTestMode) {
-      e2eStore.auditLogs.unshift(entry);
-      if (e2eStore.auditLogs.length > 500) e2eStore.auditLogs.length = 500;
+      const auditStore = e2eStore && typeof e2eStore === 'object'
+        ? e2eStore
+        : { auditLogs: fallbackAuditLogs };
+      if (!Array.isArray(auditStore.auditLogs)) {
+        auditStore.auditLogs = [];
+      }
+      auditStore.auditLogs.unshift(entry);
+      if (auditStore.auditLogs.length > 500) auditStore.auditLogs.length = 500;
       persistE2EStore?.();
       return {
         status: 200,
@@ -93,7 +102,8 @@ export const createAuditLogService = ({
         meta: { requestId: req.requestId ?? null },
       };
     }
-  },
-});
+    },
+  };
+};
 
 export default createAuditLogService;

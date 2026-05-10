@@ -44,12 +44,14 @@ export const reflectionService = {
   },
 
   async fetchAdminReflections(params: {
+    orgId: string;
     courseId: string;
     lessonId: string;
     limit?: number;
     offset?: number;
   }): Promise<{ rows: AdminReflectionRow[]; total: number }> {
     const query = new URLSearchParams({
+      orgId: params.orgId,
       courseId: params.courseId,
       lessonId: params.lessonId,
       limit: String(params.limit ?? 20),
@@ -65,6 +67,7 @@ export const reflectionService = {
   },
 
   async fetchAdminCourseReflections(params: {
+    orgId: string;
     courseId: string;
     lessonId?: string;
     search?: string;
@@ -72,6 +75,7 @@ export const reflectionService = {
     offset?: number;
   }): Promise<{ rows: AdminReflectionRow[]; total: number }> {
     const query = new URLSearchParams({
+      orgId: params.orgId,
       ...(params.lessonId ? { lessonId: params.lessonId } : {}),
       ...(params.search ? { search: params.search } : {}),
       limit: String(params.limit ?? 50),
