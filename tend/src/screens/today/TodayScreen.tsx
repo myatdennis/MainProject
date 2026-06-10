@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ScrollView,
   View,
@@ -8,256 +8,235 @@ import {
   Pressable,
   ActivityIndicator,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+} from 'react-native-reanimated';
 import { TText } from '@/components/ui/TText';
-import { Card, PressableCard } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { RecoveryRing } from '@/components/RecoveryRing';
 import { Divider } from '@/components/ui/Divider';
+import { RecoveryRing } from '@/components/RecoveryRing';
 import { BaselineBanner } from '@/components/health/BaselineBanner';
+import { PriorityItem } from '@/components/today/PriorityItem';
+import { RolloverSection } from '@/components/today/RolloverSection';
+import { WorkoutCard, getWorkoutForToday } from '@/components/today/WorkoutCard';
+import { DailyBrief } from '@/components/today/DailyBrief';
 import { useHealth } from '@/hooks/useHealth';
+import { useTodayPriorities } from '@/hooks/useTodayPriorities';
+import { useTasks } from '@/hooks/useTasks';
+import { useUserProfile } from '@/hooks/useUserProfile';
 import { getRecoveryZone, getRecoveryMessage } from '@/types';
 import { colors, spacing } from '@/theme';
 
-interface Priority {
-  id: string;
-  text: string;
-  done: boolean;
-}
-
-const INITIAL_PRIORITIES: Priority[] = [
-  { id: '1', text: '', done: false },
-  { id: '2', text: '', done: false },
-  { id: '3', text: '', done: false },
-];
-
 export function TodayScreen() {
   const { today, baseline, isLoading } = useHealth();
-  const [priorities, setPriorities] = useState<Priority[]>(INITIAL_PRIORITIES);
+  const {
+    priorities,
+    rolloverItems,
+    rolloverExpanded,
+    showWelcomeBack,
+    hasAnyText,
+    update,
+    complete,
+    promoteRollover,
+    dismissRollover,
+    toggleRolloverExpanded,
+  } = useTodayPriorities();
+  const { openTaskCount, upcomingTasks } = useTasks();
+  const { displayName } = useUserProfile();
   const [briefExpanded, setBriefExpanded] = useState(false);
+
+  // Refs for keyboard focus chaining between priority inputs
+  const inputRef0 = useRef<TextInput>(null);
+  const inputRef1 = useRef<TextInput>(null);
+  const inputRef2 = useRef<TextInput>(null);
+  const inputRefs = [inputRef0, inputRef1, inputRef2];
 
   const recoveryScore = today?.recoveryScore ?? 0;
   const zone = getRecoveryZone(recoveryScore);
   const stressInferred = today?.stressInferred ?? false;
+  const displayScore = today ? recoveryScore : 0;
 
-  const today_ = new Date();
-  const dateLabel = today_.toLocaleDateString('en-US', {
+  const dateLabel = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
   });
 
-  const hasAnyPriority = priorities.some((p) => p.text.trim());
+  const greeting = buildGreeting(displayName);
 
-  function togglePriority(id: string) {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPriorities((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, done: !p.done } : p)),
-    );
-  }
-
-  function updatePriorityText(id: string, text: string) {
-    setPriorities((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, text } : p)),
-    );
-  }
-
-  const coachMessage = stressInferred
+  // Coach message: welcome-back trumps stress/recovery
+  const coachMessage = showWelcomeBack
+    ? null  // shown separately
+    : stressInferred
     ? "Your nervous system is working hard today. Keep demands light."
     : getRecoveryMessage(zone);
 
-  // Show score only if there's real data or baseline is being built with placeholder
-  const displayScore = (today || !isLoading) ? recoveryScore : 0;
+  const workout = getWorkoutForToday();
+  const isYogaDay = workout.isYoga;
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* Greeting */}
-        <View style={styles.header}>
-          <TText variant="title">{getGreeting()}</TText>
+        {/* ── Greeting ───────────────────────────────────────────── */}
+        <Animated.View entering={FadeIn.duration(300)} style={styles.header}>
+          <TText variant="title">{greeting}</TText>
           <TText variant="caption" color="secondary">{dateLabel}</TText>
-        </View>
+        </Animated.View>
 
-        {/* Baseline notice */}
+        {/* ── Welcome back (after 3+ day gap) ───────────────────── */}
+        {showWelcomeBack && (
+          <Animated.View entering={FadeInDown.duration(400).delay(100)}>
+            <View style={styles.welcomeBack}>
+              <TText variant="medium" style={styles.welcomeText}>
+                Welcome back. Today is a fresh page.
+              </TText>
+            </View>
+          </Animated.View>
+        )}
+
+        {/* ── Baseline building notice ───────────────────────────── */}
         {!baseline.isReliable && baseline.daysOfData > 0 && (
           <BaselineBanner daysOfData={baseline.daysOfData} />
         )}
 
-        {/* Recovery Ring */}
-        <View style={styles.ringSection}>
+        {/* ── Recovery Ring ──────────────────────────────────────── */}
+        <Animated.View
+          entering={FadeInDown.duration(500).delay(150)}
+          style={styles.ringSection}
+        >
           {isLoading && !today ? (
             <View style={styles.ringPlaceholder}>
-              <ActivityIndicator color={colors.accent} />
+              <ActivityIndicator color={colors.accent} size="large" />
+              <TText variant="caption" color="secondary" style={{ marginTop: spacing[3] }}>
+                Reading health data…
+              </TText>
             </View>
           ) : (
             <RecoveryRing score={displayScore} size={180} showScore showMessage={false} />
           )}
-          <TText variant="body" style={styles.coachMessage}>{coachMessage}</TText>
-          {stressInferred && (
-            <TText variant="caption" style={styles.stressNote}>
-              HRV + resting HR signal elevated stress
-            </TText>
-          )}
-        </View>
 
-        {/* Top 3 Priorities */}
-        <View style={styles.section}>
-          <TText variant="caption" style={styles.sectionLabel}>Top 3</TText>
-          {!hasAnyPriority && (
-            <TText variant="body" color="secondary" style={styles.emptyPrompt}>
-              What's one thing that would make today feel complete?
+          {coachMessage && (
+            <TText variant="body" style={styles.coachMessage}>
+              {coachMessage}
             </TText>
           )}
-          <View style={styles.priorities}>
+
+          {stressInferred && !showWelcomeBack && (
+            <View style={styles.stressPill}>
+              <TText variant="small" style={styles.stressPillText}>
+                Stress signal detected
+              </TText>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* ── Top 3 Priorities ───────────────────────────────────── */}
+        <Animated.View
+          entering={FadeInDown.duration(500).delay(200)}
+          style={styles.section}
+        >
+          <TText style={styles.sectionLabel}>Top 3</TText>
+
+          {!hasAnyText && (
+            <Pressable
+              onPress={() => inputRefs[0].current?.focus()}
+              accessibilityLabel="Tap to add your first priority"
+            >
+              <TText variant="body" color="secondary" style={styles.emptyPrompt}>
+                {showWelcomeBack
+                  ? 'One thing is enough. What's your one thing?'
+                  : 'What's one thing that would make today feel complete?'}
+              </TText>
+            </Pressable>
+          )}
+
+          <View style={styles.priorityList}>
             {priorities.map((p, i) => (
-              <PriorityRow
+              <PriorityItem
                 key={p.id}
                 number={i + 1}
                 priority={p}
-                onToggle={() => togglePriority(p.id)}
-                onChangeText={(t) => updatePriorityText(p.id, t)}
+                onComplete={() => complete(p.id)}
+                onChangeText={(text) => update(p.id, text)}
+                inputRef={inputRefs[i]}
+                nextRef={i < 2 ? inputRefs[i + 1] : undefined}
               />
             ))}
           </View>
-        </View>
+
+          {/* Rollover section (yesterday's uncompleted items) */}
+          <RolloverSection
+            items={rolloverItems}
+            expanded={rolloverExpanded}
+            onToggle={toggleRolloverExpanded}
+            onPromote={promoteRollover}
+            onDismiss={dismissRollover}
+          />
+        </Animated.View>
 
         <Divider />
 
-        {/* Today's Workout */}
-        <View style={styles.section}>
-          <TText variant="caption" style={styles.sectionLabel}>Today's Workout</TText>
+        {/* ── Today's Workout ────────────────────────────────────── */}
+        <Animated.View
+          entering={FadeInDown.duration(500).delay(250)}
+          style={styles.section}
+        >
+          <TText style={styles.sectionLabel}>
+            {workout.isYoga ? "Today's Practice" : "Today's Workout"}
+          </TText>
           <WorkoutCard recoveryScore={recoveryScore} />
-        </View>
+        </Animated.View>
 
         <Divider />
 
-        {/* Daily Brief */}
+        {/* ── Daily Brief ────────────────────────────────────────── */}
         <View style={styles.section}>
           <Pressable
             onPress={() => setBriefExpanded((e) => !e)}
             style={styles.briefHeader}
-            accessibilityLabel="Toggle daily brief"
+            accessibilityLabel={briefExpanded ? 'Collapse daily brief' : 'Expand daily brief'}
             accessibilityRole="button"
+            accessibilityState={{ expanded: briefExpanded }}
           >
             <TText variant="heading">Daily Brief</TText>
-            <TText variant="body" color="secondary">{briefExpanded ? '▾' : '▸'}</TText>
+            <View style={styles.briefMeta}>
+              {openTaskCount > 0 && !briefExpanded && (
+                <View style={styles.taskCountPill}>
+                  <TText variant="small" style={styles.taskCountText}>
+                    {openTaskCount}
+                  </TText>
+                </View>
+              )}
+              <TText variant="body" color="secondary">
+                {briefExpanded ? '▾' : '▸'}
+              </TText>
+            </View>
           </Pressable>
-          {briefExpanded && <DailyBrief />}
+
+          {briefExpanded && (
+            <DailyBrief
+              openTaskCount={openTaskCount}
+              upcomingTasks={upcomingTasks}
+              recoveryScore={recoveryScore}
+              yogaScheduledToday={isYogaDay}
+            />
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function PriorityRow({
-  number,
-  priority,
-  onToggle,
-  onChangeText,
-}: {
-  number: number;
-  priority: Priority;
-  onToggle: () => void;
-  onChangeText: (text: string) => void;
-}) {
-  return (
-    <View style={styles.priorityRow}>
-      <Pressable
-        onPress={onToggle}
-        style={[styles.priorityCheck, priority.done && styles.priorityCheckDone]}
-        accessibilityLabel={priority.done ? 'Mark incomplete' : 'Mark complete'}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: priority.done }}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        {priority.done && <TText style={styles.checkmark}>✓</TText>}
-      </Pressable>
-      <TText variant="mono" color="secondary" style={styles.priorityNumber}>{number}</TText>
-      <TextInput
-        style={[styles.priorityInput, priority.done && styles.priorityTextDone]}
-        placeholder="Add a priority…"
-        placeholderTextColor={colors.textSecondary}
-        value={priority.text}
-        onChangeText={onChangeText}
-        returnKeyType="next"
-        accessibilityLabel={`Priority ${number}`}
-      />
-    </View>
-  );
-}
-
-function WorkoutCard({ recoveryScore }: { recoveryScore: number }) {
-  const zone = getRecoveryZone(recoveryScore);
-  const workout = getWorkoutForToday();
-  const modLabel = zone === 'low' ? 'Rehab only'
-    : zone === 'moderate' ? '−20% volume'
-    : 'As written';
-  const modColor = zone === 'low' ? colors.danger
-    : zone === 'moderate' ? colors.warning
-    : colors.success;
-
-  if (workout.isRest) {
-    return (
-      <Card style={styles.workoutCard}>
-        <TText variant="medium" color="secondary">Rest day</TText>
-        <TText variant="caption" color="secondary">
-          Recovery is training too. Let your body absorb the work.
-        </TText>
-      </Card>
-    );
-  }
-
-  return (
-    <Card style={styles.workoutCard}>
-      <View style={styles.workoutHeader}>
-        <View style={{ flex: 1, gap: 2 }}>
-          <TText variant="medium">{workout.name}</TText>
-          <TText variant="caption" color="secondary">Est. {workout.duration} min</TText>
-        </View>
-        <View style={[styles.modPill, { backgroundColor: `${modColor}15` }]}>
-          <TText variant="small" style={{ color: modColor }}>{modLabel}</TText>
-        </View>
-      </View>
-      <Button label="Start Workout" onPress={() => {}} size="md" fullWidth />
-    </Card>
-  );
-}
-
-function DailyBrief() {
-  return (
-    <View style={styles.brief}>
-      <TText variant="body" color="secondary">No open tasks today.</TText>
-      <TText variant="body" color="secondary" style={{ marginTop: spacing[2] }}>
-        Set your Top 3 to anchor the day.
-      </TText>
-    </View>
-  );
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getGreeting(): string {
+function buildGreeting(name: string | null): string {
   const h = new Date().getHours();
-  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-}
-
-function getWorkoutForToday() {
-  const day = new Date().getDay();
-  const plan: Record<number, { name: string; duration: number; isRest: boolean }> = {
-    1: { name: 'Upper Push + Shoulder Prep', duration: 50, isRest: false },
-    2: { name: 'Lower Body — Quad Dominant', duration: 45, isRest: false },
-    3: { name: 'Rest + Yoga', duration: 30, isRest: false },
-    4: { name: 'Upper Pull + Trap Release', duration: 50, isRest: false },
-    5: { name: 'Lower Body — Hinge Dominant', duration: 45, isRest: false },
-    6: { name: 'Yoga or Active Recovery', duration: 30, isRest: false },
-    0: { name: 'Full Rest', duration: 0, isRest: true },
-  };
-  return plan[day] ?? plan[0];
+  const time = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  return name ? `${time}, ${name.split(' ')[0]}` : time;
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
@@ -276,6 +255,17 @@ const styles = StyleSheet.create({
     gap: spacing[1],
     paddingTop: spacing[2],
   },
+  welcomeBack: {
+    backgroundColor: `${colors.accent}10`,
+    borderRadius: 12,
+    padding: spacing[4],
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
+  },
+  welcomeText: {
+    color: colors.accent,
+    lineHeight: 22,
+  },
   ringSection: {
     alignItems: 'center',
     gap: spacing[3],
@@ -289,11 +279,17 @@ const styles = StyleSheet.create({
   coachMessage: {
     textAlign: 'center',
     color: colors.textSecondary,
-    maxWidth: 280,
+    maxWidth: 260,
+    lineHeight: 22,
   },
-  stressNote: {
+  stressPill: {
+    backgroundColor: `${colors.warning}18`,
+    borderRadius: 20,
+    paddingHorizontal: spacing[3],
+    paddingVertical: 5,
+  },
+  stressPillText: {
     color: colors.warning,
-    textAlign: 'center',
   },
   section: {
     gap: spacing[3],
@@ -303,68 +299,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    letterSpacing: 1,
   },
   emptyPrompt: {
     fontStyle: 'italic',
+    lineHeight: 22,
+    paddingVertical: spacing[1],
   },
-  priorities: {
-    gap: spacing[1],
-  },
-  priorityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[3],
-    minHeight: 48,
-  },
-  priorityCheck: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  priorityCheckDone: {
-    backgroundColor: colors.success,
-    borderColor: colors.success,
-  },
-  checkmark: {
-    color: '#fff',
-    fontSize: 12,
-    lineHeight: 14,
-  },
-  priorityNumber: {
-    width: 16,
-    textAlign: 'right',
-  },
-  priorityInput: {
-    flex: 1,
-    fontSize: 15,
-    color: colors.textPrimary,
-    minHeight: 44,
-    paddingVertical: spacing[2],
-  },
-  priorityTextDone: {
-    textDecorationLine: 'line-through',
-    color: colors.textSecondary,
-  },
-  workoutCard: {
-    gap: spacing[4],
-    padding: spacing[4],
-  },
-  workoutHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: spacing[3],
-  },
-  modPill: {
-    paddingHorizontal: spacing[2],
-    paddingVertical: 4,
-    borderRadius: 8,
-    overflow: 'hidden',
+  priorityList: {
+    gap: 0,
   },
   briefHeader: {
     flexDirection: 'row',
@@ -372,9 +315,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minHeight: 44,
   },
-  brief: {
-    padding: spacing[3],
-    backgroundColor: colors.surfaceAlt,
+  briefMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+  },
+  taskCountPill: {
+    minWidth: 20,
+    height: 20,
     borderRadius: 10,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  taskCountText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 11,
   },
 });
