@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Tend",
+    "slug": "tend",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "scheme": "tend",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#F8F7F4"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tend.app",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "Tend uses Apple Health to calculate your recovery score from HRV, heart rate, and sleep data.",
+        "NSHealthUpdateUsageDescription": "Tend writes workout sessions to Apple Health.",
+        "NSCameraUsageDescription": "Tend uses your camera to capture photos in notes.",
+        "NSMicrophoneUsageDescription": "Tend uses your microphone to record voice memos.",
+        "UIRequiresFullScreen": false
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true,
+        "com.apple.developer.healthkit.access": []
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F8F7F4"
+      },
+      "package": "com.tend.app"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F8F7F4"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
