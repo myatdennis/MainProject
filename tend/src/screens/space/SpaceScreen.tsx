@@ -10,6 +10,7 @@ import { TText } from '@/components/ui/TText';
 import { Card, PressableCard } from '@/components/ui/Card';
 import { Divider } from '@/components/ui/Divider';
 import { SpaceInbox } from '@/components/SpaceInbox';
+import { JournalScreen } from './JournalScreen';
 import { colors, spacing, radius } from '@/theme';
 import type { CaptureItem } from '@/types';
 
@@ -39,6 +40,10 @@ export function SpaceScreen() {
         <SpaceInbox items={inboxItems} />
       </SafeAreaView>
     );
+  }
+
+  if (activeSection === 'journal') {
+    return <JournalScreen />;
   }
 
   return (

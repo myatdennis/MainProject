@@ -18,6 +18,8 @@ import { ActivityRings } from '@/components/health/ActivityRings';
 import { TrendsChart } from '@/components/health/TrendsChart';
 import { BaselineBanner } from '@/components/health/BaselineBanner';
 import { useHealth, useSleep, useStrain, useTrends } from '@/hooks/useHealth';
+import { useJournal } from '@/hooks/useJournal';
+import { MoodTrendChart } from '@/components/journal/MoodTrendChart';
 import { getRecoveryZone } from '@/types';
 import { colors, spacing } from '@/theme';
 
@@ -34,6 +36,7 @@ export function MeScreen() {
   const sleep = useSleep();
   const strain = useStrain();
   const trends7 = useTrends(7);
+  const { moodHistory } = useJournal();
 
   // Recovery sparkline for card header
   const recoverySparkData = trends7.map((t) => ({ value: t.recoveryScore }));
@@ -152,7 +155,15 @@ export function MeScreen() {
 
         <Divider />
 
-        {/* 7. Progress stubs — Sprint 7 */}
+        {/* 7. Mood Trend */}
+        <View style={styles.section}>
+          <TText variant="heading">Mood — 14 days</TText>
+          <MoodTrendChart data={moodHistory} days={14} />
+        </View>
+
+        <Divider />
+
+        {/* 8. Progress stubs — Sprint 7 */}
         <View style={styles.section}>
           <TText variant="heading">Progress</TText>
           {(['Strength', 'Body', 'Feel'] as const).map((view) => (
