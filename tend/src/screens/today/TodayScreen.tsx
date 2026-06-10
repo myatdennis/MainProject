@@ -25,6 +25,7 @@ import { useTodayPriorities } from '@/hooks/useTodayPriorities';
 import { useTasks } from '@/hooks/useTasks';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { getRecoveryZone, getRecoveryMessage } from '@/types';
+import { WorkoutSessionScreen } from '@/screens/training/WorkoutSessionScreen';
 import { colors, spacing } from '@/theme';
 
 export function TodayScreen() {
@@ -44,6 +45,7 @@ export function TodayScreen() {
   const { openTaskCount, upcomingTasks } = useTasks();
   const { displayName } = useUserProfile();
   const [briefExpanded, setBriefExpanded] = useState(false);
+  const [workoutVisible, setWorkoutVisible] = useState(false);
 
   // Refs for keyboard focus chaining between priority inputs
   const inputRef0 = useRef<TextInput>(null);
@@ -188,7 +190,10 @@ export function TodayScreen() {
           <TText style={styles.sectionLabel}>
             {workout.isYoga ? "Today's Practice" : "Today's Workout"}
           </TText>
-          <WorkoutCard recoveryScore={recoveryScore} />
+          <WorkoutCard
+            recoveryScore={recoveryScore}
+            onStartWorkout={() => setWorkoutVisible(true)}
+          />
         </Animated.View>
 
         <Divider />
@@ -227,6 +232,13 @@ export function TodayScreen() {
           )}
         </View>
       </ScrollView>
+
+      <WorkoutSessionScreen
+        visible={workoutVisible}
+        recoveryScore={recoveryScore}
+        onClose={() => setWorkoutVisible(false)}
+        onComplete={() => setWorkoutVisible(false)}
+      />
     </SafeAreaView>
   );
 }
