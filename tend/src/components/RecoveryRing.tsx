@@ -1,9 +1,18 @@
 import React, { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Canvas, Circle, Path, Skia, useValue, runTiming } from '@shopify/react-native-skia';
-import { Easing } from 'react-native-reanimated';
+import {
+  Canvas,
+  Path,
+  Skia,
+  useDerivedValue,
+} from '@shopify/react-native-skia';
+import {
+  useSharedValue,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { TText } from './ui/TText';
-import { getRecoveryZone, getRecoveryColor } from '@/types';
+import { getRecoveryZone, getRecoveryColor, getRecoveryMessage } from '@/types';
 import { colors } from '@/theme';
 
 interface RecoveryRingProps {
@@ -21,37 +30,47 @@ export function RecoveryRing({
 }: RecoveryRingProps) {
   const zone = getRecoveryZone(score);
   const ringColor = getRecoveryColor(zone);
-  const progress = useValue(0);
-
   const strokeWidth = size * 0.075;
-  const radius = (size - strokeWidth) / 2;
-  const center = size / 2;
-  const circumference = 2 * Math.PI * radius;
+
+  const rect = {
+    x: strokeWidth / 2,
+    y: strokeWidth / 2,
+    width: size - strokeWidth,
+    height: size - strokeWidth,
+  };
+
+  // Animate progress from 0 → score/100 on mount
+  const animatedProgress = useSharedValue(0);
 
   useEffect(() => {
-    runTiming(progress, score / 100, {
+    animatedProgress.value = 0;
+    animatedProgress.value = withTiming(score / 100, {
       duration: 1200,
       easing: Easing.out(Easing.cubic),
     });
   }, [score]);
 
-  // Arc path using Skia
-  const arcPath = Skia.Path.Make();
-  arcPath.addArc(
-    { x: strokeWidth / 2, y: strokeWidth / 2, width: size - strokeWidth, height: size - strokeWidth },
-    -90,
-    360 * (score / 100),
-  );
-
+  // Build static background path once
   const bgPath = Skia.Path.Make();
-  bgPath.addArc(
-    { x: strokeWidth / 2, y: strokeWidth / 2, width: size - strokeWidth, height: size - strokeWidth },
-    -90,
-    360,
-  );
+  bgPath.addArc(rect, -90, 360);
+
+  // Build animated arc path using useDerivedValue (Skia v1.x pattern)
+  const arcPath = useDerivedValue(() => {
+    const p = Skia.Path.Make();
+    const sweep = 360 * animatedProgress.value;
+    if (sweep > 0) {
+      p.addArc(rect, -90, sweep);
+    }
+    return p;
+  });
 
   return (
-    <View style={styles.container} accessibilityLabel={`Recovery score: ${score}`}>
+    <View
+      style={styles.container}
+      accessibilityLabel={`Recovery score ${score} out of 100`}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: score }}
+    >
       <Canvas style={{ width: size, height: size }}>
         {/* Background track */}
         <Path
@@ -61,7 +80,7 @@ export function RecoveryRing({
           strokeWidth={strokeWidth}
           strokeCap="round"
         />
-        {/* Progress arc */}
+        {/* Animated progress arc */}
         <Path
           path={arcPath}
           color={ringColor}
@@ -73,7 +92,14 @@ export function RecoveryRing({
 
       {showScore && (
         <View style={[styles.centerContent, { width: size, height: size }]}>
-          <TText variant="display" style={{ color: ringColor, fontSize: size * 0.28, lineHeight: size * 0.3 }}>
+          <TText
+            style={{
+              color: ringColor,
+              fontSize: size * 0.27,
+              fontWeight: '700',
+              lineHeight: size * 0.3,
+            }}
+          >
             {score}
           </TText>
           <TText variant="caption" color="secondary">
@@ -84,9 +110,7 @@ export function RecoveryRing({
 
       {showMessage && (
         <TText variant="caption" color="secondary" style={styles.message}>
-          {zone === 'high' ? "You're recovered. Push hard today."
-            : zone === 'moderate' ? 'Moderate energy today. Keep it controlled.'
-            : 'Your body needs rest. Rehab and breathe today.'}
+          {getRecoveryMessage(zone)}
         </TText>
       )}
     </View>

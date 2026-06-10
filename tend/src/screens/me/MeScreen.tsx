@@ -4,37 +4,63 @@ import {
   View,
   StyleSheet,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { TText } from '@/components/ui/TText';
-import { Card } from '@/components/ui/Card';
+import { Card, PressableCard } from '@/components/ui/Card';
 import { RecoveryRing } from '@/components/RecoveryRing';
 import { Divider } from '@/components/ui/Divider';
-import { colors, spacing } from '@/theme';
+import { SparklineChart } from '@/components/health/SparklineChart';
+import { SleepCard } from '@/components/health/SleepCard';
+import { StrainCard } from '@/components/health/StrainCard';
+import { ReadinessCard } from '@/components/health/ReadinessCard';
+import { ActivityRings } from '@/components/health/ActivityRings';
+import { TrendsChart } from '@/components/health/TrendsChart';
+import { BaselineBanner } from '@/components/health/BaselineBanner';
+import { useHealth, useSleep, useStrain, useTrends } from '@/hooks/useHealth';
 import { getRecoveryZone } from '@/types';
-import { calculateStrainScore, calculateReadinessScore } from '@/hooks/useRecoveryScore';
-
-// Placeholder values — Sprint 2 wires HealthKit
-const MOCK = {
-  recovery: 74,
-  sleepHours: 7.2,
-  sleepEfficiency: 0.87,
-  activeCalories: 420,
-  exerciseMinutes: 48,
-  avgHR: 142,
-  yesterdayStrain: 12,
-};
+import { colors, spacing } from '@/theme';
 
 export function MeScreen() {
-  const zone = getRecoveryZone(MOCK.recovery);
-  const strain = calculateStrainScore({
-    activeCalories: MOCK.activeCalories,
-    exerciseMinutes: MOCK.exerciseMinutes,
-    avgHeartRate: MOCK.avgHR,
-  });
-  const readiness = calculateReadinessScore({
-    recoveryScore: MOCK.recovery,
-    yesterdayStrainScore: MOCK.yesterdayStrain,
-  });
+  const {
+    today,
+    trends,
+    baseline,
+    isLoading,
+    permissionGranted,
+    requestPermissions,
+  } = useHealth();
+
+  const sleep = useSleep();
+  const strain = useStrain();
+  const trends7 = useTrends(7);
+
+  // Recovery sparkline for card header
+  const recoverySparkData = trends7.map((t) => ({ value: t.recoveryScore }));
+
+  if (!permissionGranted) {
+    return <HealthPermissionPrompt onRequest={requestPermissions} />;
+  }
+
+  if (isLoading && !today) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color={colors.accent} />
+          <TText variant="caption" color="secondary" style={{ marginTop: spacing[3] }}>
+            Reading your health data…
+          </TText>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const recoveryScore = today?.recoveryScore ?? 0;
+  const zone = getRecoveryZone(recoveryScore);
+
+  const recoverLabel = zone === 'high' ? 'Well recovered'
+    : zone === 'moderate' ? 'Moderate'
+    : 'Rest day';
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -44,67 +70,102 @@ export function MeScreen() {
           <TText variant="caption" color="secondary">Body + progress</TText>
         </View>
 
-        {/* Recovery Card */}
+        {/* Baseline building notice */}
+        {!baseline.isReliable && (
+          <BaselineBanner daysOfData={baseline.daysOfData} />
+        )}
+
+        {/* 1. Recovery Card */}
         <Card style={styles.recoveryCard}>
-          <View style={styles.recoveryRow}>
-            <RecoveryRing score={MOCK.recovery} size={120} showScore />
-            <View style={styles.recoveryMeta}>
-              <MetricPill
-                label="Readiness"
-                value={String(readiness)}
-                color={colors.accent}
+          <View style={styles.recoveryHeader}>
+            <View style={styles.recoveryLeft}>
+              <RecoveryRing score={recoveryScore} size={120} showScore />
+            </View>
+            <View style={styles.recoveryRight}>
+              <TText variant="heading">{recoverLabel}</TText>
+              {today?.stressInferred && (
+                <TText variant="caption" style={styles.stressTag}>
+                  Stress detected
+                </TText>
+              )}
+              <SparklineChart
+                data={recoverySparkData}
+                width={140}
+                height={36}
+                color={colors.success}
+                showDots
+                showArea
               />
-              <MetricPill
-                label="Strain"
-                value={String(strain)}
-                color={colors.accentWarm}
-              />
-              <TText variant="caption" color="secondary" style={{ marginTop: spacing[2] }}>
-                {zone === 'high' ? 'Well recovered'
-                  : zone === 'moderate' ? 'Moderate'
-                  : 'Rest day'}
-              </TText>
+              <TText variant="small" color="secondary">7-day recovery trend</TText>
             </View>
           </View>
         </Card>
 
         <Divider />
 
-        {/* Sleep Card */}
+        {/* 2. Sleep Card */}
+        <SleepCard
+          hours={sleep.hours}
+          efficiency={sleep.efficiency}
+          stages={sleep.stages}
+          trends={trends}
+        />
+
+        <Divider />
+
+        {/* 3. Strain Card */}
+        <StrainCard
+          score={strain.score}
+          activeCalories={strain.activeCalories}
+          exerciseMinutes={strain.exerciseMinutes}
+          avgHr={strain.avgHr}
+          trends={trends}
+        />
+
+        <Divider />
+
+        {/* 4. Readiness Card */}
+        <ReadinessCard
+          score={today?.readinessScore ?? null}
+          recoveryScore={recoveryScore}
+          yesterdayStrain={today?.yesterdayStrain ?? 0}
+          stressInferred={today?.stressInferred ?? false}
+          isBuilding={!baseline.isReliable}
+        />
+
+        <Divider />
+
+        {/* 5. Activity Rings */}
         <Card style={styles.card}>
-          <TText variant="heading">Sleep</TText>
-          <View style={styles.metricsRow}>
-            <Metric label="Duration" value={`${MOCK.sleepHours}h`} />
-            <Metric label="Efficiency" value={`${Math.round(MOCK.sleepEfficiency * 100)}%`} />
-          </View>
-          <TText variant="caption" color="secondary">
-            Efficiency = time asleep ÷ time in bed. Above 85% is solid.
-          </TText>
+          <TText variant="heading">Activity</TText>
+          <ActivityRings
+            activeCalories={today?.raw.activeCalories ?? null}
+            exerciseMinutes={today?.raw.exerciseMinutes ?? null}
+            stepCount={today?.raw.steps ?? null}
+          />
         </Card>
 
         <Divider />
 
-        {/* Strain Card */}
-        <Card style={styles.card}>
-          <TText variant="heading">Strain</TText>
-          <View style={styles.metricsRow}>
-            <Metric label="Score" value={String(strain)} />
-            <Metric label="Active Cal" value={String(MOCK.activeCalories)} />
-            <Metric label="Exercise" value={`${MOCK.exerciseMinutes}m`} />
-          </View>
-          <HRZoneBar exerciseMinutes={MOCK.exerciseMinutes} />
-        </Card>
+        {/* 6. Trends Chart */}
+        <TrendsChart trends={trends} />
 
         <Divider />
 
-        {/* Progress Sections */}
+        {/* 7. Progress stubs — Sprint 7 */}
         <View style={styles.section}>
           <TText variant="heading">Progress</TText>
-          {['Strength', 'Body', 'Feel'].map((view) => (
-            <Card key={view} style={[styles.card, styles.progressRow]}>
+          {(['Strength', 'Body', 'Feel'] as const).map((view) => (
+            <PressableCard
+              key={view}
+              style={styles.progressRow}
+              onPress={() => {}}
+              accessibilityLabel={`${view} progress`}
+              accessibilityRole="button"
+            >
               <TText variant="medium">{view}</TText>
               <TText variant="caption" color="secondary">▸</TText>
-            </Card>
+            </PressableCard>
           ))}
         </View>
       </ScrollView>
@@ -112,82 +173,25 @@ export function MeScreen() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function HealthPermissionPrompt({ onRequest }: { onRequest: () => void }) {
   return (
-    <View style={metricStyles.container}>
-      <TText variant="mono" style={metricStyles.value}>{value}</TText>
-      <TText variant="caption" color="secondary">{label}</TText>
-    </View>
-  );
-}
-
-const metricStyles = StyleSheet.create({
-  container: { alignItems: 'center', gap: 2 },
-  value: { fontSize: 22, color: colors.textPrimary, fontWeight: '600' },
-});
-
-function MetricPill({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <View style={pillStyles.container}>
-      <TText style={[pillStyles.value, { color }]}>{value}</TText>
-      <TText variant="caption" color="secondary">{label}</TText>
-    </View>
-  );
-}
-
-const pillStyles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
-  },
-  value: {
-    fontSize: 28,
-    fontWeight: '700',
-  },
-});
-
-function HRZoneBar({ exerciseMinutes }: { exerciseMinutes: number }) {
-  // Placeholder distribution — Sprint 6 uses real HealthKit data
-  const easy = Math.round(exerciseMinutes * 0.4);
-  const moderate = Math.round(exerciseMinutes * 0.4);
-  const hard = exerciseMinutes - easy - moderate;
-
-  const total = exerciseMinutes || 1;
-
-  return (
-    <View style={zoneStyles.container}>
-      <TText variant="caption" color="secondary" style={{ marginBottom: 6 }}>HR Zones</TText>
-      <View style={zoneStyles.bar}>
-        <View style={[zoneStyles.zone, { flex: easy / total, backgroundColor: colors.success }]} />
-        <View style={[zoneStyles.zone, { flex: moderate / total, backgroundColor: colors.warning }]} />
-        <View style={[zoneStyles.zone, { flex: hard / total, backgroundColor: colors.accentWarm }]} />
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.permissionContainer}>
+        <TText variant="title" style={{ textAlign: 'center' }}>Connect Apple Health</TText>
+        <TText variant="body" color="secondary" style={styles.permissionText}>
+          Tend reads your HRV, resting heart rate, and sleep to calculate your recovery score.
+          {'\n\n'}
+          Your data stays on your device.
+        </TText>
+        <PressableCard style={styles.permissionButton} onPress={onRequest} accessibilityRole="button">
+          <TText variant="medium" color="accent" style={{ textAlign: 'center' }}>
+            Connect Apple Health
+          </TText>
+        </PressableCard>
       </View>
-      <View style={zoneStyles.legend}>
-        <TText variant="small" color="secondary">Easy {easy}m</TText>
-        <TText variant="small" color="secondary">Moderate {moderate}m</TText>
-        <TText variant="small" color="secondary">Hard {hard}m</TText>
-      </View>
-    </View>
+    </SafeAreaView>
   );
 }
-
-const zoneStyles = StyleSheet.create({
-  container: { gap: 4 },
-  bar: {
-    flexDirection: 'row',
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-    backgroundColor: colors.border,
-    gap: 1,
-  },
-  zone: { borderRadius: 4 },
-  legend: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-});
 
 const styles = StyleSheet.create({
   safe: {
@@ -203,25 +207,38 @@ const styles = StyleSheet.create({
     gap: spacing[1],
     paddingTop: spacing[2],
   },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   recoveryCard: {
     padding: spacing[4],
   },
-  recoveryRow: {
+  recoveryHeader: {
     flexDirection: 'row',
+    gap: spacing[4],
     alignItems: 'center',
-    gap: spacing[6],
   },
-  recoveryMeta: {
+  recoveryLeft: {
+    alignItems: 'center',
+  },
+  recoveryRight: {
     flex: 1,
     gap: spacing[2],
+  },
+  stressTag: {
+    color: colors.warning,
+    backgroundColor: `${colors.warning}15`,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    overflow: 'hidden',
   },
   card: {
     padding: spacing[4],
     gap: spacing[3],
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    gap: spacing[8],
   },
   section: {
     gap: spacing[3],
@@ -231,5 +248,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: spacing[4],
+  },
+  permissionContainer: {
+    flex: 1,
+    padding: spacing[6],
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[6],
+  },
+  permissionText: {
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  permissionButton: {
+    padding: spacing[4],
+    width: '100%',
   },
 });

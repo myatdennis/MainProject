@@ -6,6 +6,7 @@ import {
   SafeAreaView,
   TextInput,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { TText } from '@/components/ui/TText';
@@ -13,11 +14,10 @@ import { Card, PressableCard } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { RecoveryRing } from '@/components/RecoveryRing';
 import { Divider } from '@/components/ui/Divider';
-import { colors, spacing } from '@/theme';
+import { BaselineBanner } from '@/components/health/BaselineBanner';
+import { useHealth } from '@/hooks/useHealth';
 import { getRecoveryZone, getRecoveryMessage } from '@/types';
-
-// Placeholder recovery data — replaced by HealthKit in Sprint 2
-const MOCK_RECOVERY = 74;
+import { colors, spacing } from '@/theme';
 
 interface Priority {
   id: string;
@@ -32,18 +32,22 @@ const INITIAL_PRIORITIES: Priority[] = [
 ];
 
 export function TodayScreen() {
+  const { today, baseline, isLoading } = useHealth();
   const [priorities, setPriorities] = useState<Priority[]>(INITIAL_PRIORITIES);
   const [briefExpanded, setBriefExpanded] = useState(false);
-  const recoveryScore = MOCK_RECOVERY;
-  const zone = getRecoveryZone(recoveryScore);
 
-  const today = new Date();
-  const greeting = getGreeting();
-  const dateLabel = today.toLocaleDateString('en-US', {
+  const recoveryScore = today?.recoveryScore ?? 0;
+  const zone = getRecoveryZone(recoveryScore);
+  const stressInferred = today?.stressInferred ?? false;
+
+  const today_ = new Date();
+  const dateLabel = today_.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
   });
+
+  const hasAnyPriority = priorities.some((p) => p.text.trim());
 
   function togglePriority(id: string) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -58,7 +62,12 @@ export function TodayScreen() {
     );
   }
 
-  const hasAnyPriority = priorities.some((p) => p.text.trim());
+  const coachMessage = stressInferred
+    ? "Your nervous system is working hard today. Keep demands light."
+    : getRecoveryMessage(zone);
+
+  // Show score only if there's real data or baseline is being built with placeholder
+  const displayScore = (today || !isLoading) ? recoveryScore : 0;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -68,21 +77,35 @@ export function TodayScreen() {
       >
         {/* Greeting */}
         <View style={styles.header}>
-          <TText variant="title">{greeting}</TText>
+          <TText variant="title">{getGreeting()}</TText>
           <TText variant="caption" color="secondary">{dateLabel}</TText>
         </View>
 
+        {/* Baseline notice */}
+        {!baseline.isReliable && baseline.daysOfData > 0 && (
+          <BaselineBanner daysOfData={baseline.daysOfData} />
+        )}
+
         {/* Recovery Ring */}
         <View style={styles.ringSection}>
-          <RecoveryRing score={recoveryScore} size={180} showScore showMessage={false} />
-          <TText variant="body" style={styles.coachMessage}>
-            {getRecoveryMessage(zone)}
-          </TText>
+          {isLoading && !today ? (
+            <View style={styles.ringPlaceholder}>
+              <ActivityIndicator color={colors.accent} />
+            </View>
+          ) : (
+            <RecoveryRing score={displayScore} size={180} showScore showMessage={false} />
+          )}
+          <TText variant="body" style={styles.coachMessage}>{coachMessage}</TText>
+          {stressInferred && (
+            <TText variant="caption" style={styles.stressNote}>
+              HRV + resting HR signal elevated stress
+            </TText>
+          )}
         </View>
 
         {/* Top 3 Priorities */}
         <View style={styles.section}>
-          <TText variant="heading" style={styles.sectionLabel}>Top 3</TText>
+          <TText variant="caption" style={styles.sectionLabel}>Top 3</TText>
           {!hasAnyPriority && (
             <TText variant="body" color="secondary" style={styles.emptyPrompt}>
               What's one thing that would make today feel complete?
@@ -105,7 +128,7 @@ export function TodayScreen() {
 
         {/* Today's Workout */}
         <View style={styles.section}>
-          <TText variant="heading" style={styles.sectionLabel}>Today's Workout</TText>
+          <TText variant="caption" style={styles.sectionLabel}>Today's Workout</TText>
           <WorkoutCard recoveryScore={recoveryScore} />
         </View>
 
@@ -128,6 +151,8 @@ export function TodayScreen() {
     </SafeAreaView>
   );
 }
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function PriorityRow({
   number,
@@ -152,9 +177,7 @@ function PriorityRow({
       >
         {priority.done && <TText style={styles.checkmark}>✓</TText>}
       </Pressable>
-      <TText variant="mono" color="secondary" style={styles.priorityNumber}>
-        {number}
-      </TText>
+      <TText variant="mono" color="secondary" style={styles.priorityNumber}>{number}</TText>
       <TextInput
         style={[styles.priorityInput, priority.done && styles.priorityTextDone]}
         placeholder="Add a priority…"
@@ -170,18 +193,35 @@ function PriorityRow({
 
 function WorkoutCard({ recoveryScore }: { recoveryScore: number }) {
   const zone = getRecoveryZone(recoveryScore);
-  const workout = getWorkoutForToday(zone);
+  const workout = getWorkoutForToday();
+  const modLabel = zone === 'low' ? 'Rehab only'
+    : zone === 'moderate' ? '−20% volume'
+    : 'As written';
+  const modColor = zone === 'low' ? colors.danger
+    : zone === 'moderate' ? colors.warning
+    : colors.success;
+
+  if (workout.isRest) {
+    return (
+      <Card style={styles.workoutCard}>
+        <TText variant="medium" color="secondary">Rest day</TText>
+        <TText variant="caption" color="secondary">
+          Recovery is training too. Let your body absorb the work.
+        </TText>
+      </Card>
+    );
+  }
 
   return (
     <Card style={styles.workoutCard}>
       <View style={styles.workoutHeader}>
-        <View>
+        <View style={{ flex: 1, gap: 2 }}>
           <TText variant="medium">{workout.name}</TText>
           <TText variant="caption" color="secondary">Est. {workout.duration} min</TText>
         </View>
-        <TText variant="caption" color="secondary" style={styles.workoutMod}>
-          {zone === 'low' ? 'Rehab only' : zone === 'moderate' ? '−20% volume' : 'As written'}
-        </TText>
+        <View style={[styles.modPill, { backgroundColor: `${modColor}15` }]}>
+          <TText variant="small" style={{ color: modColor }}>{modLabel}</TText>
+        </View>
       </View>
       <Button label="Start Workout" onPress={() => {}} size="md" fullWidth />
     </Card>
@@ -191,9 +231,9 @@ function WorkoutCard({ recoveryScore }: { recoveryScore: number }) {
 function DailyBrief() {
   return (
     <View style={styles.brief}>
-      <TText variant="body" color="secondary">No open tasks for today.</TText>
+      <TText variant="body" color="secondary">No open tasks today.</TText>
       <TText variant="body" color="secondary" style={{ marginTop: spacing[2] }}>
-        Take a moment to set your Top 3.
+        Set your Top 3 to anchor the day.
       </TText>
     </View>
   );
@@ -202,24 +242,22 @@ function DailyBrief() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
 
-function getWorkoutForToday(zone: ReturnType<typeof getRecoveryZone>) {
-  const day = new Date().getDay(); // 0 Sun, 1 Mon…
-  const plans: Record<number, { name: string; duration: number }> = {
-    1: { name: 'Upper Push + Shoulder Prep', duration: 50 },
-    2: { name: 'Lower Body — Quad Dominant', duration: 45 },
-    3: { name: 'Rest + Yoga', duration: 30 },
-    4: { name: 'Upper Pull + Trap Release', duration: 50 },
-    5: { name: 'Lower Body — Hinge Dominant', duration: 45 },
-    6: { name: 'Yoga or Active Recovery', duration: 30 },
-    0: { name: 'Full Rest', duration: 0 },
+function getWorkoutForToday() {
+  const day = new Date().getDay();
+  const plan: Record<number, { name: string; duration: number; isRest: boolean }> = {
+    1: { name: 'Upper Push + Shoulder Prep', duration: 50, isRest: false },
+    2: { name: 'Lower Body — Quad Dominant', duration: 45, isRest: false },
+    3: { name: 'Rest + Yoga', duration: 30, isRest: false },
+    4: { name: 'Upper Pull + Trap Release', duration: 50, isRest: false },
+    5: { name: 'Lower Body — Hinge Dominant', duration: 45, isRest: false },
+    6: { name: 'Yoga or Active Recovery', duration: 30, isRest: false },
+    0: { name: 'Full Rest', duration: 0, isRest: true },
   };
-  return plans[day] ?? plans[0];
+  return plan[day] ?? plan[0];
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
@@ -242,18 +280,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing[3],
   },
+  ringPlaceholder: {
+    width: 180,
+    height: 180,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   coachMessage: {
     textAlign: 'center',
     color: colors.textSecondary,
     maxWidth: 280,
+  },
+  stressNote: {
+    color: colors.warning,
+    textAlign: 'center',
   },
   section: {
     gap: spacing[3],
   },
   sectionLabel: {
     color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
@@ -261,14 +309,13 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   priorities: {
-    gap: spacing[2],
+    gap: spacing[1],
   },
   priorityRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing[3],
     minHeight: 48,
-    paddingVertical: spacing[1],
   },
   priorityCheck: {
     width: 22,
@@ -305,17 +352,18 @@ const styles = StyleSheet.create({
   },
   workoutCard: {
     gap: spacing[4],
+    padding: spacing[4],
   },
   workoutHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    gap: spacing[3],
   },
-  workoutMod: {
-    backgroundColor: colors.surfaceAlt,
+  modPill: {
     paddingHorizontal: spacing[2],
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
     overflow: 'hidden',
   },
   briefHeader: {

@@ -7,12 +7,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { TText } from '@/components/ui/TText';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { colors, spacing, radius } from '@/theme';
 import { supabase } from '@/lib/supabase';
+import { useHealth } from '@/hooks/useHealth';
 
 type Step =
   | 'welcome'
@@ -48,6 +50,14 @@ export function OnboardingScreen() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { requestPermissions } = useHealth();
+
+  const FLOW: Step[] = ['welcome', 'auth', 'health', 'goal', 'trainingDays', 'yoga', 'notification', 'done'];
+
+  function advance() {
+    const idx = FLOW.indexOf(step);
+    if (idx < FLOW.length - 1) setStep(FLOW[idx + 1]);
+  }
 
   async function handleAuth() {
     if (!state.email || !state.password) return;
@@ -61,14 +71,31 @@ export function OnboardingScreen() {
     if (error) {
       setError(error.message);
     } else {
-      setStep('health');
+      advance();
     }
   }
 
-  function advance() {
-    const flow: Step[] = ['welcome', 'auth', 'health', 'goal', 'trainingDays', 'yoga', 'notification', 'done'];
-    const idx = flow.indexOf(step);
-    if (idx < flow.length - 1) setStep(flow[idx + 1]);
+  async function handleHealthConnect() {
+    setLoading(true);
+    await requestPermissions();
+    setLoading(false);
+    advance();
+  }
+
+  async function handleDone() {
+    // Persist user profile preferences to Supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from('users').upsert({
+        id: user.id,
+        email: user.email,
+        fitness_goal: state.goal ?? 'all',
+        training_days_per_week: state.trainingDays,
+        yoga_time: state.yogaTime ?? 'morning',
+        settings: { notifications: state.notifications },
+      });
+    }
+    advance();
   }
 
   return (
@@ -93,7 +120,11 @@ export function OnboardingScreen() {
             />
           )}
           {step === 'health' && (
-            <HealthStep onNext={advance} />
+            <HealthStep
+              onConnect={handleHealthConnect}
+              onSkip={advance}
+              loading={loading}
+            />
           )}
           {step === 'goal' && (
             <GoalStep
@@ -118,8 +149,11 @@ export function OnboardingScreen() {
           )}
           {step === 'notification' && (
             <NotificationStep
-              onEnable={() => { setState((s) => ({ ...s, notifications: true })); advance(); }}
-              onSkip={advance}
+              onEnable={() => {
+                setState((s) => ({ ...s, notifications: true }));
+                handleDone();
+              }}
+              onSkip={handleDone}
             />
           )}
           {step === 'done' && (
@@ -180,7 +214,23 @@ function AuthStep({
   );
 }
 
-function HealthStep({ onNext }: { onNext: () => void }) {
+function HealthStep({
+  onConnect,
+  onSkip,
+  loading,
+}: {
+  onConnect: () => void;
+  onSkip: () => void;
+  loading: boolean;
+}) {
+  const metrics = [
+    ['Heart Rate Variability (HRV)', 'Primary recovery signal'],
+    ['Resting Heart Rate', 'Baseline cardiovascular health'],
+    ['Sleep Analysis', 'Duration + efficiency'],
+    ['Active Energy', 'Daily movement'],
+    ['Workouts', 'Session history'],
+  ];
+
   return (
     <View style={stepStyles.container}>
       <TText variant="title">Connect Apple Health</TText>
@@ -188,24 +238,60 @@ function HealthStep({ onNext }: { onNext: () => void }) {
         Tend reads your HRV, heart rate, and sleep to calculate your daily recovery score.
         Your data stays on your device and is never sold.
       </TText>
+
       <Card style={{ padding: spacing[4], gap: spacing[3] }}>
-        {[
-          ['Heart Rate Variability (HRV)', 'Primary recovery signal'],
-          ['Resting Heart Rate', 'Baseline cardiovascular health'],
-          ['Sleep Analysis', 'Duration + efficiency'],
-          ['Active Energy', 'Daily movement'],
-          ['Workouts', 'Session history'],
-        ].map(([metric, desc]) => (
-          <View key={metric} style={{ gap: 2 }}>
-            <TText variant="medium">{metric}</TText>
-            <TText variant="caption" color="secondary">{desc}</TText>
+        {metrics.map(([metric, desc]) => (
+          <View key={metric} style={healthStyles.metricRow}>
+            <View style={healthStyles.metricDot} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <TText variant="medium">{metric}</TText>
+              <TText variant="caption" color="secondary">{desc}</TText>
+            </View>
           </View>
         ))}
       </Card>
-      <Button label="Connect Apple Health" onPress={onNext} size="lg" fullWidth />
+
+      <TText variant="caption" color="secondary" style={stepStyles.subtitle}>
+        Apple Watch SE 2nd Gen provides all data Tend needs. No blood oxygen or skin
+        temperature is ever requested.
+      </TText>
+
+      {loading ? (
+        <View style={healthStyles.loadingRow}>
+          <ActivityIndicator color={colors.accent} />
+          <TText variant="caption" color="secondary">Loading 30 days of history…</TText>
+        </View>
+      ) : (
+        <>
+          <Button label="Connect Apple Health" onPress={onConnect} size="lg" fullWidth />
+          <Button label="Skip for now" onPress={onSkip} variant="ghost" size="md" fullWidth />
+        </>
+      )}
     </View>
   );
 }
+
+const healthStyles = StyleSheet.create({
+  metricRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing[3],
+  },
+  metricDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+    marginTop: 6,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[3],
+    padding: spacing[4],
+  },
+});
 
 function GoalStep({
   selected, onSelect, onNext,
