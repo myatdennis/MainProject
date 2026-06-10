@@ -6,6 +6,7 @@ import { SpaceScreen } from '@/screens/space/SpaceScreen';
 import { BuildScreen } from '@/screens/build/BuildScreen';
 import { MeScreen } from '@/screens/me/MeScreen';
 import { QuickCaptureFAB } from '@/components/QuickCaptureFAB';
+import { addCapture, getTodaySessionId } from '@/lib/braindump';
 import { colors, spacing } from '@/theme';
 import { TText } from '@/components/ui/TText';
 
@@ -104,8 +105,14 @@ export function TabNavigator() {
         />
       </Tab.Navigator>
 
-      {/* Global FAB — floats above tab bar */}
-      <QuickCaptureFAB />
+      {/* Global FAB — floats above tab bar; text captures go to Brain Dump session */}
+      <QuickCaptureFAB
+        onCapture={(type, content) => {
+          if (type === 'text' && content.trim()) {
+            addCapture(getTodaySessionId(), content);
+          }
+        }}
+      />
     </View>
   );
 }

@@ -11,6 +11,8 @@ import { Card, PressableCard } from '@/components/ui/Card';
 import { Divider } from '@/components/ui/Divider';
 import { SpaceInbox } from '@/components/SpaceInbox';
 import { JournalScreen } from './JournalScreen';
+import { BrainDumpScreen } from './BrainDumpScreen';
+import { getUnsortedCount, getTodaySessionId } from '@/lib/braindump';
 import { colors, spacing, radius } from '@/theme';
 import type { CaptureItem } from '@/types';
 
@@ -27,6 +29,7 @@ const SECTIONS: { key: SpaceSection; label: string; symbol: string; description:
 export function SpaceScreen() {
   const [activeSection, setActiveSection] = useState<SpaceSection | null>(null);
   const [inboxItems] = useState<CaptureItem[]>([]);
+  const unsortedCount = getUnsortedCount(getTodaySessionId());
 
   if (activeSection === 'inbox') {
     return (
@@ -46,6 +49,10 @@ export function SpaceScreen() {
     return <JournalScreen />;
   }
 
+  if (activeSection === 'braindump') {
+    return <BrainDumpScreen />;
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -55,19 +62,29 @@ export function SpaceScreen() {
         </View>
 
         <View style={styles.grid}>
-          {SECTIONS.map((section) => (
-            <PressableCard
-              key={section.key}
-              style={styles.sectionCard}
-              onPress={() => setActiveSection(section.key)}
-              accessibilityLabel={section.label}
-              accessibilityRole="button"
-            >
-              <TText style={styles.sectionEmoji}>{section.symbol}</TText>
-              <TText variant="medium">{section.label}</TText>
-              <TText variant="caption" color="secondary">{section.description}</TText>
-            </PressableCard>
-          ))}
+          {SECTIONS.map((section) => {
+            const badge = section.key === 'braindump' && unsortedCount > 0 ? unsortedCount : null;
+            return (
+              <PressableCard
+                key={section.key}
+                style={styles.sectionCard}
+                onPress={() => setActiveSection(section.key)}
+                accessibilityLabel={section.label}
+                accessibilityRole="button"
+              >
+                <View style={styles.cardRow}>
+                  <TText style={styles.sectionEmoji}>{section.symbol}</TText>
+                  {badge !== null && (
+                    <View style={styles.badge}>
+                      <TText style={styles.badgeText}>{badge}</TText>
+                    </View>
+                  )}
+                </View>
+                <TText variant="medium">{section.label}</TText>
+                <TText variant="caption" color="secondary">{section.description}</TText>
+              </PressableCard>
+            );
+          })}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -99,5 +116,24 @@ const styles = StyleSheet.create({
   },
   sectionEmoji: {
     fontSize: 28,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+  },
+  badge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
 });
