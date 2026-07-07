@@ -3460,7 +3460,13 @@ const shouldAttemptProgressSnapshotSeed = (seedKey) =>
 const markProgressSnapshotSeedAttempt = (seedKey) =>
   progressSnapshotSeedAttemptCache.markAttempt(seedKey);
 
-await runStorageDoctor();
+// Storage bucket validation depends on `supabase` being connected, but
+// `supabaseInitializationPromise` above is intentionally not awaited at
+// module scope so the HTTP server can bind even while Supabase is still
+// connecting/retrying. Run the doctor once that connection attempt settles
+// instead of immediately, otherwise `supabase` is always still null here
+// and the check is silently skipped on every startup.
+supabaseInitializationPromise.finally(() => runStorageDoctor());
 
 const isAssignmentsUserIdUuidColumnMissing = (error) => {
   if (!isMissingColumnError(error)) return false;
@@ -9307,9 +9313,14 @@ function scheduleInviteReminderRunner() {
     });
   }, INVITE_REMINDER_INTERVAL_MS);
 
-  runInviteReminderSweep({ reason: 'interval' }).catch((error) => {
-    logger.warn('invite_reminder_initial_failed', { message: error?.message || String(error) });
-  });
+  // Wait for the (unawaited, retrying) Supabase connection to settle before the
+  // first sweep — otherwise `supabase` is still null here on every cold start
+  // and this initial run is skipped until the next hourly interval tick.
+  supabaseInitializationPromise
+    .finally(() => runInviteReminderSweep({ reason: 'interval' }))
+    .catch((error) => {
+      logger.warn('invite_reminder_initial_failed', { message: error?.message || String(error) });
+    });
 
   logger.info('invite_reminder_interval_scheduled', { intervalMs: INVITE_REMINDER_INTERVAL_MS });
 }
