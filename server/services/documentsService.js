@@ -1,4 +1,5 @@
 import { createDocumentsRepository } from '../repositories/documentsRepository.js';
+import { getSupabaseAdminClient } from '../lib/supabaseClient.js';
 import { buildDocumentUpdatePayload, validateAdminDocumentCreatePayload } from '../validators/documents.js';
 
 export const createDocumentsService = ({
@@ -30,7 +31,12 @@ export const createDocumentsService = ({
   firstRow,
   normalizeLegacyOrgInput,
 }) => {
-  const repository = supabase ? createDocumentsRepository({ supabase }) : null;
+  // createDocumentsRepository fetches its own client via getSupabaseAdminClient()
+  // on each call rather than closing over the `supabase` param above, which is a
+  // one-time snapshot taken at router-construction time (see documentsRepository.js
+  // for why that snapshot is unreliable). Always construct it; ensureSupabase(res)
+  // below still gates requests on the connection-retry state before it's used.
+  const repository = createDocumentsRepository();
   const collectRequestOrganizationIds = (context = {}, req = {}) => {
     const ids = new Set();
     const push = (candidate) => {
@@ -99,7 +105,8 @@ export const createDocumentsService = ({
     if (!ensureSupabase(res)) return null;
     if (!(await ensureDocumentsSchemaOrRespond(res, 'client.documents.list'))) return null;
 
-    let query = supabase.from('documents').select('*').order('created_at', { ascending: false });
+    // Fresh client, not the stale `supabase` param — see documentsRepository.js.
+    let query = getSupabaseAdminClient().from('documents').select('*').order('created_at', { ascending: false });
     if (resolvedRequestedOrgId) {
       const userId = context.userId;
       query = query.or(
