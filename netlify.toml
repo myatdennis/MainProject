@@ -42,7 +42,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://api.the-huddle.co/api/:splat"
+  to = "https://thehuddleco.up.railway.app/api/:splat"
   status = 200
   force = true
 
