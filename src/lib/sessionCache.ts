@@ -1,4 +1,4 @@
-import { getSupabase } from './supabaseClient';
+import { getSupabase, supabase } from './supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 
 // Short-lived in-memory cache for supabase.auth.getSession() to avoid
@@ -21,11 +21,15 @@ export async function getSessionCached(ttl = DEFAULT_TTL_MS): Promise<Session | 
 
   const p = (async (): Promise<Session | null> => {
     try {
-      const supabase = getSupabase();
-      if (!supabase || typeof supabase.auth?.getSession !== 'function') return null;
+      // getSupabase() gates on env config being present, which prevents session
+      // lookups in dev/test environments where config is absent but the real
+      // (or E2E-mocked) client is still usable. Fall back to the client directly
+      // in that case rather than silently treating the user as unauthenticated.
+      const client = getSupabase() ?? supabase;
+      if (!client || typeof client.auth?.getSession !== 'function') return null;
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await client.auth.getSession();
       lastSession = session ?? null;
       lastFetchedAt = Date.now();
       return lastSession;

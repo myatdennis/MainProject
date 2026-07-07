@@ -36,7 +36,18 @@ const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
   } else if (normalizedEmail) {
     query = query.eq('email', normalizedEmail);
   }
-  const { data, error } = await query;
+  let data, error;
+  try {
+    ({ data, error } = await query);
+  } catch (thrown) {
+    console.error('[requireAdminAccess] admin_users_query_threw', {
+      requestId,
+      userId,
+      email: normalizedEmail,
+      message: thrown?.message ?? null,
+    });
+    return { entry: null, error: thrown };
+  }
   if (error) {
     console.error('[requireAdminAccess] admin_users_query_failed', {
       requestId,
@@ -259,20 +270,21 @@ const ensureAdminAccess = async (req, res) => {
   // 2) admin_users lookup
   const { entry: allowlistEntry, error: allowlistError } = await fetchAdminAllowlistEntry(user.id, user.email, { requestId: req.requestId ?? null });
   if (allowlistError) {
-    if (allowlistError.message === 'SUPABASE_NOT_CONFIGURED') {
-      console.error('[requireAdminAccess] supabase_not_configured', {
-        requestId: req.requestId ?? null,
-        userId: user.id,
-        email: user.email ?? null,
-      });
-      res.status(503).json({
-        code: 'SUPABASE_NOT_CONFIGURED',
-        error: 'Service unavailable',
-        message: 'Supabase service role client is not configured.',
-      });
-      return false;
-    }
-    throw allowlistError;
+    const notConfigured = allowlistError.message === 'SUPABASE_NOT_CONFIGURED';
+    console.error(notConfigured ? '[requireAdminAccess] supabase_not_configured' : '[requireAdminAccess] admin_lookup_failed', {
+      requestId: req.requestId ?? null,
+      userId: user.id,
+      email: user.email ?? null,
+      message: allowlistError?.message ?? null,
+    });
+    res.status(503).json({
+      code: notConfigured ? 'SUPABASE_NOT_CONFIGURED' : 'ADMIN_LOOKUP_FAILED',
+      error: 'Service unavailable',
+      message: notConfigured
+        ? 'Supabase service role client is not configured.'
+        : 'Unable to verify administrator access. Please try again.',
+    });
+    return false;
   }
   if (allowlistEntry) {
     return grantAdminAccess(req, 'allowlist', { allowlistEntry });
@@ -294,14 +306,40 @@ const ensureAdminAccess = async (req, res) => {
     return false;
   }
 
-  const { data, error } = await admin2
-    .from('user_profiles')
-    .select('is_admin, role')
-    .eq('id', user.id)
-    .maybeSingle();
+  let data, error;
+  try {
+    ({ data, error } = await admin2
+      .from('user_profiles')
+      .select('is_admin, role')
+      .eq('id', user.id)
+      .maybeSingle());
+  } catch (thrown) {
+    console.error('[requireAdminAccess] user_profiles_query_threw', {
+      requestId: req.requestId ?? null,
+      userId: user.id,
+      message: thrown?.message ?? null,
+    });
+    res.status(503).json({
+      code: 'ADMIN_LOOKUP_FAILED',
+      error: 'Service unavailable',
+      message: 'Unable to verify administrator access. Please try again.',
+    });
+    return false;
+  }
 
   if (error) {
-    throw error;
+    console.error('[requireAdminAccess] user_profiles_query_failed', {
+      requestId: req.requestId ?? null,
+      userId: user.id,
+      message: error?.message ?? null,
+      code: error?.code ?? null,
+    });
+    res.status(503).json({
+      code: 'ADMIN_LOOKUP_FAILED',
+      error: 'Service unavailable',
+      message: 'Unable to verify administrator access. Please try again.',
+    });
+    return false;
   }
 
   const normalizedProfileRole = data?.role ? String(data.role).trim().toLowerCase() : null;
