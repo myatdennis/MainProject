@@ -2,7 +2,13 @@
 nixPkgs = ["nodejs_22"]
 
 [phases.install]
-cmds = ["npm ci --omit=dev"]
+# This service's Railway build command (set in the dashboard, overriding
+# [phases.build] below) runs `npm run build:client`, which needs vite and
+# its plugins — devDependencies. Installing with --omit=dev strips those,
+# so the build fails with "vite: not found". Install everything so the
+# build step has what it needs; the resulting devDependencies stay in the
+# runtime image, which is a size tradeoff but keeps the build working.
+cmds = ["npm ci"]
 
 [phases.build]
 cmds = ["npm run build:server"]
