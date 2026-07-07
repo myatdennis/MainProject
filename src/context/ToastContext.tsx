@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode } from 'react';
 import Toast, { ToastType } from '../components/Toast';
 
 interface ToastContextType {
@@ -36,7 +36,12 @@ const createToastId = () =>
 export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
-  const showToast = (message: string, type: ToastType = 'info', duration: number = 3000) => {
+  // Stable across renders: components that depend on showToast in a
+  // useCallback/useEffect dependency array (e.g. data-fetch retry logic)
+  // would otherwise get a new reference on every toast, since setToasts
+  // triggers a re-render here. That previously caused infinite fetch/toast
+  // loops in callers whose effects depended on such a callback.
+  const showToast = useCallback((message: string, type: ToastType = 'info', duration: number = 3000) => {
     setToasts((current) => {
       const nextToast: ToastItem = {
         id: createToastId(),
@@ -50,14 +55,16 @@ export const ToastProvider: React.FC<ToastProviderProps> = ({ children }) => {
       }
       return merged.slice(merged.length - MAX_VISIBLE_TOASTS);
     });
-  };
+  }, []);
 
-  const hideToast = (id: string) => {
+  const hideToast = useCallback((id: string) => {
     setToasts((current) => current.filter((toast) => toast.id !== id));
-  };
+  }, []);
+
+  const contextValue = useMemo(() => ({ showToast }), [showToast]);
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(92vw,28rem)] flex-col gap-3" aria-live="polite" aria-atomic="false">
         {toasts.map((toast) => (

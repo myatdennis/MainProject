@@ -22,6 +22,24 @@ export const requireExplicitAdminOrgId = (surface: string, preferredOrgId?: stri
     // ignore
   }
 
+  // Diagnostic: this error fires whenever neither an explicit orgId nor the
+  // platform-admin bridge flag is set. Log the flag's actual value so a
+  // false-negative here (flag not yet set, or never set for this session)
+  // is distinguishable from a genuine non-admin caller in browser reports.
+  try {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    console.warn('[adminOrgScope] org_id_required', {
+      surface,
+      preferredOrgId: preferredOrgId ?? null,
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      windowPlatformAdminFlag: typeof window !== 'undefined' ? window.__IS_PLATFORM_ADMIN__ : 'no_window',
+    });
+  } catch (e) {
+    // ignore
+  }
+
   const error = new Error(`Organization context is required for ${surface}.`);
   (error as Error & { code?: string }).code = 'org_id_required';
   throw error;
