@@ -493,11 +493,15 @@ const buildOrgQuery = (params?: OrgListParams) => {
 
 export const listOrgPage = async (
   params?: OrgListParams,
-  options?: { forceRefresh?: boolean; preferredOrgId?: string | null },
+  options?: { forceRefresh?: boolean; preferredOrgId?: string | null; isPlatformAdmin?: boolean },
 ): Promise<OrgListResponse> => {
   // 🔒 MUST RUN BEFORE ANY OTHER LOGIC
   // Call into adminOrgScope.requireExplicitAdminOrgId early so tests can mock its behavior.
-  requireExplicitAdminOrgId('admin', options?.preferredOrgId ?? null);
+  // Prefer the caller's own freshly-computed isPlatformAdmin (e.g. AdminOrgWorkspace derives
+  // it directly from useSecureAuth()'s user object) over the window.__IS_PLATFORM_ADMIN__
+  // bridge, which has been observed to lag/race after login and report false for a
+  // confirmed platform admin — see adminOrgScope.ts's requireExplicitAdminOrgId.
+  requireExplicitAdminOrgId('admin', options?.preferredOrgId ?? null, options?.isPlatformAdmin);
   const cacheKey = buildOrgListCacheKey(params);
   const cached = orgPageCache.get(cacheKey);
   if (!options?.forceRefresh && cached && Date.now() - cached.timestamp < ORG_LIST_CACHE_TTL_MS) {

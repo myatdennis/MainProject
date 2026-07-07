@@ -239,6 +239,7 @@ const AdminOrgWorkspace = () => {
         }, {
           ...options,
           preferredOrgId: activeOrgScopeId ?? undefined,
+          isPlatformAdmin,
         });
         if (cancelled) return;
   setOrganizations(response.data);

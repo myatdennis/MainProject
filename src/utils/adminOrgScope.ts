@@ -4,15 +4,27 @@ export const resolveExplicitAdminOrgId = (preferredOrgId?: string | null): strin
   return explicit || null;
 };
 
-export const requireExplicitAdminOrgId = (surface: string, preferredOrgId?: string | null): string => {
+export const requireExplicitAdminOrgId = (
+  surface: string,
+  preferredOrgId?: string | null,
+  isPlatformAdminOverride?: boolean,
+): string => {
   const orgId = resolveExplicitAdminOrgId(preferredOrgId);
   if (orgId) {
     return orgId;
   }
 
+  // Prefer an explicit flag from the caller (freshly computed from its own
+  // auth-context read) when provided — see callers for why the window
+  // bridge below can lag behind a confirmed platform admin's real status.
+  if (isPlatformAdminOverride) return null as any;
+
   // If running in a browser, allow a global override for platform admins so
   // that admin UIs do not require an explicit org selection. SecureAuthContext
-  // will set `window.__IS_PLATFORM_ADMIN__ = true` when appropriate.
+  // will set `window.__IS_PLATFORM_ADMIN__ = true` when appropriate. This is a
+  // pragmatic bridge for callers that don't pass isPlatformAdminOverride; it
+  // has been observed to race/lag right after login, reporting false for a
+  // confirmed platform admin — prefer passing isPlatformAdminOverride instead.
   try {
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
@@ -32,6 +44,7 @@ export const requireExplicitAdminOrgId = (surface: string, preferredOrgId?: stri
     console.warn('[adminOrgScope] org_id_required', {
       surface,
       preferredOrgId: preferredOrgId ?? null,
+      isPlatformAdminOverride: isPlatformAdminOverride ?? null,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       windowPlatformAdminFlag: typeof window !== 'undefined' ? window.__IS_PLATFORM_ADMIN__ : 'no_window',
