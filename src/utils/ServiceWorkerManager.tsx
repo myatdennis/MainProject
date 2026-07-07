@@ -108,8 +108,11 @@ class ServiceWorkerManager {
 
   private async fetchManifestVersion(): Promise<string | null> {
     try {
-    const authorizedFetch = (await import('../lib/authorizedFetch')).default;
-    const response = await authorizedFetch('/sw-version.json', { method: 'GET', credentials: 'include' });
+    // Plain fetch, not authorizedFetch: this is a public static file at the
+    // site root (public/sw-version.json), not a backend API route.
+    // authorizedFetch always resolves relative paths against the API base
+    // and force-prefixes them with /api, which 404s for this file.
+    const response = await fetch('/sw-version.json', { method: 'GET', cache: 'no-store' });
       if (!response.ok) {
         return null;
       }
