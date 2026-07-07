@@ -2118,6 +2118,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Compute it from the current Supabase session presence (access token).
   const authReady = Boolean(session?.access_token);
 
+  // Computed synchronously from `user` on every render — unlike
+  // window.__IS_PLATFORM_ADMIN__ (set by a separate effect elsewhere in this
+  // file), there's no window between `user` updating and this being correct,
+  // so callers should prefer this over the window global.
+  const isPlatformAdmin = Boolean(
+    user?.isPlatformAdmin ||
+    String(user?.appMetadata?.platform_role ?? user?.appMetadata?.platformRole ?? user?.platformRole ?? '').toLowerCase() === 'platform_admin'
+  );
+
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
@@ -2133,6 +2142,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     // orgReady is derived: true when orgResolutionStatus indicates completion
     orgReady: orgResolutionStatus === 'ready' || orgResolutionStatus === 'degraded',
     user,
+    isPlatformAdmin,
     memberships,
     organizationIds,
   activeOrgId,

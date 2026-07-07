@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Brain, Target, Activity, Users, RefreshCcw, CheckCircle2, AlertTriangle, Zap } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { listOrgs, type Org } from '../../dal/orgs';
 import leadershipDal, {
   type LeadershipHealthRecord,
@@ -47,6 +48,7 @@ const metricTiles = [
 
 const AdminLeadershipInsights = () => {
   const { showToast } = useToast();
+  const { isPlatformAdmin } = useSecureAuth();
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
   const [healthRows, setHealthRows] = useState<LeadershipHealthRecord[]>([]);
@@ -62,7 +64,7 @@ const AdminLeadershipInsights = () => {
     const bootstrap = async () => {
       setLoading(true);
       try {
-  const [orgList, aggHealth] = await Promise.all([listOrgs(), leadershipDal.fetchHealth()]);
+  const [orgList, aggHealth] = await Promise.all([listOrgs(undefined, { isPlatformAdmin }), leadershipDal.fetchHealth()]);
         setOrgs(orgList);
         setHealthRows(aggHealth);
         if (!selectedOrganizationId) {
@@ -82,7 +84,7 @@ const AdminLeadershipInsights = () => {
     };
 
     void bootstrap();
-  }, [showToast]);
+  }, [showToast, isPlatformAdmin]);
 
   const fetchOrgInsights = useCallback(
     async (organizationId: string) => {

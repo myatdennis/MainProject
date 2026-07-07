@@ -6,6 +6,7 @@ import { assignSurvey } from '../../dal/surveys';
 import orgService, { invalidateOrgListCache, type Org } from '../../dal/orgs';
 import adminUsers, { AdminUserRecord } from '../../dal/adminUsers';
 import { useToast } from '../../context/ToastContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { resolveUserFacingError } from '../../utils/userFacingError';
 import { emitSurveyAssignmentsChanged } from '../../utils/surveyAssignmentEvents';
 
@@ -27,6 +28,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
   onAssigned,
 }) => {
   const { showToast } = useToast();
+  const { isPlatformAdmin } = useSecureAuth();
   const [organizations, setOrganizations] = useState<Org[]>([]);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
@@ -66,7 +68,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
     let cancelled = false;
     setOrgLoading(true);
     orgService
-      .listOrgs(undefined, { forceRefresh: true })
+      .listOrgs(undefined, { forceRefresh: true, isPlatformAdmin })
       .then((data) => {
         if (cancelled) return;
         setOrganizations(data);
@@ -83,7 +85,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [isOpen, isPlatformAdmin]);
 
   useEffect(() => {
     if (!isOpen) return;

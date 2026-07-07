@@ -5,6 +5,7 @@ import orgService from '../dal/orgs';
 import { fetchCourseAssignments } from '../dal/adminCourses';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
+import { useSecureAuth } from '../context/SecureAuthContext';
 
 interface AdminCourseAssignmentsPanelProps {
   courseId?: string;
@@ -28,6 +29,7 @@ const formatDate = (value?: string | null) => {
 
 const AdminCourseAssignmentsPanel = ({ courseId, defaultOrgId, refreshToken = 0 }: AdminCourseAssignmentsPanelProps) => {
   const { showToast } = useToast();
+  const { isPlatformAdmin } = useSecureAuth();
   const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
@@ -48,7 +50,7 @@ const AdminCourseAssignmentsPanel = ({ courseId, defaultOrgId, refreshToken = 0 
       setOrgsLoading(true);
       setOrgError(null);
       try {
-        const orgs = await orgService.listOrgs(undefined, forceRefresh ? { forceRefresh: true } : undefined);
+        const orgs = await orgService.listOrgs(undefined, { forceRefresh, isPlatformAdmin });
         const normalized: OrgOption[] = orgs.map((org) => ({
           id: String(org.id),
           name: org.name || `Org ${org.id}`,
@@ -70,7 +72,7 @@ const AdminCourseAssignmentsPanel = ({ courseId, defaultOrgId, refreshToken = 0 
         setOrgsLoading(false);
       }
     },
-    [defaultOrgId, showToast, updateSelectedOrg]
+    [defaultOrgId, showToast, updateSelectedOrg, isPlatformAdmin]
   );
 
   const loadAssignments = useCallback(

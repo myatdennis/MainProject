@@ -22,6 +22,10 @@ export interface AuthContextType {
   // selectedOrgId mirrors activeOrgId but named for compatibility with callers
   selectedOrgId?: string | null;
   user: UserSession | null;
+  // Derived synchronously from `user` (isPlatformAdmin / platform_role claims),
+  // available in the same render — unlike window.__IS_PLATFORM_ADMIN__, which is
+  // set by a separate effect and can race with early admin-page data fetches.
+  isPlatformAdmin: boolean;
   memberships: UserMembership[];
   organizationIds: string[];
   activeOrgId: string | null;
@@ -55,6 +59,7 @@ export const defaultAuthContext: AuthContextType = {
   orgResolutionStatus: 'idle',
   orgReady: false,
   user: null,
+  isPlatformAdmin: false,
   memberships: [],
   organizationIds: [],
   activeOrgId: null,

@@ -294,7 +294,7 @@ const AdminUsers = () => {
   useEffect(() => {
     let cancelled = false;
     if (!activeOrgId && !isPlatformAdmin) return;
-    listOrgs(undefined, { preferredOrgId: activeOrgScopeId })
+    listOrgs(undefined, { preferredOrgId: activeOrgScopeId, isPlatformAdmin })
       .then((orgs) => {
         if (cancelled) return;
         setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
@@ -310,7 +310,7 @@ const AdminUsers = () => {
     const unsub = onOrgListInvalidated?.(() => {
       let cancelled = false;
       if (!activeOrgId && !isPlatformAdmin) return;
-      listOrgs({}, { forceRefresh: true, preferredOrgId: activeOrgScopeId })
+      listOrgs({}, { forceRefresh: true, preferredOrgId: activeOrgScopeId, isPlatformAdmin })
         .then((orgs) => {
           if (cancelled) return;
           setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));

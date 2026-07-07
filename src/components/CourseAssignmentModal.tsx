@@ -49,7 +49,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
 }) => {
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
-  const { user } = useSecureAuth();
+  const { user, isPlatformAdmin } = useSecureAuth();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const runtimeLastChecked = runtimeStatus.lastChecked
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -147,7 +147,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         setOrgListLoading(true);
         setOrganizationOptions([]);
         setOrgListError(null);
-        const orgs = await orgService.listOrgs(undefined, { forceRefresh: true });
+        const orgs = await orgService.listOrgs(undefined, { forceRefresh: true, isPlatformAdmin });
         if (!active) return;
         const normalized = Array.isArray(orgs)
           ? orgs

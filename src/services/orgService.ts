@@ -570,7 +570,7 @@ export const listOrgPage = async (
 
 export const listOrgs = async (
   params?: OrgListParams,
-  options?: { forceRefresh?: boolean; preferredOrgId?: string | null }
+  options?: { forceRefresh?: boolean; preferredOrgId?: string | null; isPlatformAdmin?: boolean }
 ): Promise<Org[]> => {
   const cacheKey = buildOrgListCacheKey(params);
   if (!options?.forceRefresh) {

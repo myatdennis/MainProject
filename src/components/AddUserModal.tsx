@@ -30,7 +30,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
   defaultOrgId,
 }) => {
   const { showToast } = useToast();
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, isPlatformAdmin } = useSecureAuth();
   const submitInFlightRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
@@ -88,7 +88,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
     if (orgsProp && orgsProp.length > 0) return;
     let cancelled = false;
     setOrgsLoading(true);
-    listOrgs()
+    listOrgs(undefined, { isPlatformAdmin })
       .then((orgs) => {
         if (cancelled) return;
         setFetchedOrgs(
@@ -103,7 +103,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
         if (!cancelled) setOrgsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [isOpen, orgsProp]);
+  }, [isOpen, orgsProp, isPlatformAdmin]);
 
   useEffect(() => {
     if (!isOpen) {

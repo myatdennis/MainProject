@@ -69,7 +69,7 @@ const AdminSurveys = () => {
   const { routeKey } = useRouteChangeReset();
   useNavTrace('AdminSurveys');
   const { showToast } = useToast();
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, isPlatformAdmin } = useSecureAuth();
   const activeOrgScopeId = activeOrgId === GLOBAL_ORG_ID ? null : activeOrgId;
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -96,7 +96,7 @@ const AdminSurveys = () => {
       let lastErr: any = null;
       for (let i = 0; i < attempts; i++) {
         try {
-          const orgs = await listOrgs(undefined, { preferredOrgId: activeOrgScopeId });
+          const orgs = await listOrgs(undefined, { preferredOrgId: activeOrgScopeId, isPlatformAdmin });
           if (cancelled) return;
           const next = new Map<string, string>();
           orgs.forEach((org) => {
@@ -124,7 +124,7 @@ const AdminSurveys = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeOrgId, activeOrgScopeId]);
+  }, [activeOrgId, activeOrgScopeId, isPlatformAdmin]);
 
   useEffect(() => {
     if (orgNameMap.size === 0) return;
