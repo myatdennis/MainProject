@@ -4,11 +4,13 @@ nixPkgs = ["nodejs_22"]
 [phases.install]
 # This service's Railway build command (set in the dashboard, overriding
 # [phases.build] below) runs `npm run build:client`, which needs vite and
-# its plugins — devDependencies. Installing with --omit=dev strips those,
-# so the build fails with "vite: not found". Install everything so the
-# build step has what it needs; the resulting devDependencies stay in the
-# runtime image, which is a size tradeoff but keeps the build working.
-cmds = ["npm ci"]
+# its plugins — devDependencies. NODE_ENV=production is set for the whole
+# build environment, and npm independently treats that as "skip
+# devDependencies" even with plain `npm ci` (no --omit=dev needed to
+# trigger it). --include=dev explicitly overrides that inference. Installing
+# devDependencies means they stay in the runtime image too — a size
+# tradeoff, but the build step needs them.
+cmds = ["npm ci --include=dev"]
 
 [phases.build]
 cmds = ["npm run build:server"]
