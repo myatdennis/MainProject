@@ -256,10 +256,17 @@ export async function safeDelete(table, predicateBuilder, { logger = console, re
     throw err;
   }
   try {
-    // predicateBuilder should be a function that accepts a query and returns a query
-    const base = client.from(table);
+    // predicateBuilder should be a function that accepts a query and returns a
+    // query, e.g. (q) => q.eq('user_id', id). PostgREST's filter methods
+    // (.eq/.contains/etc.) only exist on the builder returned by .delete()
+    // (or .select()/.update()), not on the bare .from(table) result — so
+    // .delete() must be called BEFORE handing the builder to predicateBuilder,
+    // not after. Every caller of safeDelete relies on this filter-after-delete
+    // chain (e.g. (q) => q.eq(...)), so getting this order backwards broke
+    // every safeDelete call in the app with "q.eq is not a function".
+    const base = client.from(table).delete();
     const query = typeof predicateBuilder === 'function' ? predicateBuilder(base) : base;
-    const res = await query.delete();
+    const res = await query;
     return res;
   } catch (error) {
     logger.error('safe_delete_failed', { requestId, table, code: error?.code ?? null, message: error?.message ?? String(error) });
