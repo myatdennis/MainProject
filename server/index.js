@@ -7302,9 +7302,16 @@ const runSupabaseReadQueryWithRetry = (label, buildQuery, options = {}) =>
 
 /** Extract the first row from an INSERT/UPDATE/UPSERT result safely.
  *  Replaces .single() — tolerates multiple rows (duplicates) without throwing PGRST116.
- *  @param {{ data: unknown }} result - PostgREST result object
+ *  Accepts both PostgREST results ({ data: [...] }) and raw postgres.js
+ *  tagged-template results (a plain array of rows) — passing a postgres.js
+ *  result through the { data } branch always silently returned null, since
+ *  those results have no `.data` property.
+ *  @param {{ data: unknown }|Array} result - PostgREST result object, or a postgres.js query result
  *  @returns {object|null} first row or null */
 const firstRow = (result) => {
+  if (Array.isArray(result)) {
+    return result[0] ?? null;
+  }
   const rows = Array.isArray(result?.data) ? result.data : result?.data ? [result.data] : [];
   return rows[0] ?? null;
 };
