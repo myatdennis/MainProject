@@ -119,8 +119,10 @@ export async function fetchCourseAssignments(
   if (!organizationId) {
     throw new CourseValidationError('fetchCourseAssignments', ['organizationId is required']);
   }
+  // buildScopedApiUrl() below already appends ?orgId=<organizationId> — don't
+  // also set it here, or the request ends up with orgId twice in the query
+  // string (?orgId=X&orgId=X), which the server rejects.
   const params = new URLSearchParams({});
-  params.set('orgId', organizationId);
   if (options.activeOnly === false) {
     params.set('active', 'false');
   }

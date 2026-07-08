@@ -875,11 +875,20 @@ export const createCourseAssignmentsService = ({
         if (existing) {
           const patch = {
             id: existing.id,
+            // safeUpsert() issues an INSERT ... ON CONFLICT (id) DO UPDATE.
+            // Any column not present in this payload comes from the INSERT's
+            // (unset) value, not the existing row, so course_id and the org
+            // column MUST be included explicitly here or they get written as
+            // NULL on every "update" — violating assignments.organization_id's
+            // NOT NULL constraint (and the course_id/assignment_type CHECK
+            // constraint right after it).
+            course_id: existing.course_id ?? courseId,
             metadata: mergeMetadata(existing.metadata),
             updated_at: nowIso,
             active: true,
             user_id: existing.user_id ?? existing.user_id_uuid ?? null,
           };
+          patch[assignmentsOrgColumn] = existing[assignmentsOrgColumn] ?? existing.organization_id ?? existing.org_id ?? finalOrganizationId;
           if (assignmentsSupportUserIdUuid) {
             patch.user_id_uuid = existing.user_id_uuid ?? existing.user_id ?? null;
           }
@@ -1492,8 +1501,18 @@ export const createCourseAssignmentsService = ({
     if (!access) {
       return { status: 403, error: { code: 'org_access_denied', message: 'You do not have access to this organization.' } };
     }
-    // perform the update via safeUpsert using the id to ensure admin client is used
-    const upsertPayload = [{ id: assignmentId, active: false, removed_at: new Date().toISOString() }];
+    // perform the update via safeUpsert using the id to ensure admin client is used.
+    // safeUpsert() is INSERT ... ON CONFLICT (id) DO UPDATE — any NOT NULL
+    // column left out of this payload gets written as NULL, not left alone,
+    // so course_id/organization_id must be carried over from `existing`
+    // explicitly. `removed_at` was also never a real column on this table.
+    const upsertPayload = [{
+      id: assignmentId,
+      course_id: existing.course_id ?? null,
+      organization_id: existing.organization_id ?? existing.org_id ?? null,
+      active: false,
+      updated_at: new Date().toISOString(),
+    }];
     const { data: upserted, error: upsertErr } = await safeUpsert('assignments', upsertPayload, { select: '*', requestId: req.requestId ?? null });
     if (upsertErr) throw upsertErr;
     const data = Array.isArray(upserted) ? upserted[0] : upserted;

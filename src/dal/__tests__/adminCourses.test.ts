@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminCreateCourse, adminPublishCourse } from '../adminCourses';
+import { adminCreateCourse, adminPublishCourse, fetchCourseAssignments } from '../adminCourses';
 
 const apiClientMock = vi.fn();
 
@@ -36,5 +36,16 @@ describe('adminCourses DAL', () => {
     const published = await adminPublishCourse('course-1');
 
     expect(published).toEqual({ id: 'course-1', status: 'published' });
+  });
+
+  it('fetchCourseAssignments requests orgId exactly once, not twice', async () => {
+    apiClientMock.mockResolvedValueOnce({ data: [] });
+
+    await fetchCourseAssignments('course-1', 'org-1');
+
+    expect(apiClientMock).toHaveBeenCalledTimes(1);
+    const [requestedUrl] = apiClientMock.mock.calls[0];
+    const orgIdOccurrences = (String(requestedUrl).match(/orgId=/g) || []).length;
+    expect(orgIdOccurrences).toBe(1);
   });
 });
