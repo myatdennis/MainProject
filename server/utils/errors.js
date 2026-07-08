@@ -1,12 +1,21 @@
+// PostgREST's actual schema-cache-miss message is
+// "Could not find the '<column>' column of '<table>' in the schema cache" —
+// note the literal "the" before the quoted column name. The patterns below
+// previously omitted it, so they never matched real PostgREST responses
+// (only the raw Postgres "column ... does not exist" error, which PostgREST
+// doesn't normally surface this way) and every column-mismatch fallback
+// path silently failed to extract a column name. "the" is optional here to
+// still match older/alternate phrasing.
 const missingColumnPatterns = [
   /column\s+"?([\w.]+)"?\s+does not exist/i,
-  /Could not find ['"]?([\w.]+)['"]? column/i,
-  /Could not find '([\w.]+)' column of '([\w.]+)' in the schema cache/i,
+  /Could not find (?:the )?['"]?([\w.]+)['"]? column/i,
+  /Could not find (?:the )?'([\w.]+)' column of '([\w.]+)' in the schema cache/i,
 ];
 
 const missingRelationPatterns = [
   /relation\s+"?([\w.]+)"?\s+does not exist/i,
   /table\s+"?([\w.]+)"?\s+does not exist/i,
+  /Could not find the table '([\w.]+)' in the schema cache/i,
 ];
 
 const missingFunctionPatterns = [
