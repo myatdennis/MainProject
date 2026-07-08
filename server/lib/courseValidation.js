@@ -154,8 +154,22 @@ const hasVideoSource = (lesson, { allowPlaceholders = true } = {}) => {
   return Boolean(videoUrl);
 };
 
+// The documented import format (docs/course-import-template.json) and the
+// import-time validator (server/validators/coursePayload.js) both accept
+// quiz questions nested under content.quiz.questions, not just a flat
+// content.questions array. Without this, any course built from the
+// documented template shape passes import but can never pass publish.
+const extractQuizQuestions = (lesson) => {
+  const content = lesson?.content || {};
+  if (Array.isArray(content.questions)) return content.questions;
+  if (Array.isArray(content.quiz?.questions)) return content.quiz.questions;
+  if (Array.isArray(content.quizQuestions)) return content.quizQuestions;
+  if (Array.isArray(content.quiz_questions)) return content.quiz_questions;
+  return null;
+};
+
 const hasQuizQuestions = (lesson) => {
-  const questions = lesson?.content?.questions;
+  const questions = extractQuizQuestions(lesson);
   return Array.isArray(questions) && questions.length > 0;
 };
 
@@ -208,7 +222,7 @@ const hasValidQuizCorrectAnswer = (question = {}, options = []) => {
 };
 
 const validateQuizQuestions = (lesson) => {
-  const questions = lesson?.content?.questions;
+  const questions = extractQuizQuestions(lesson);
   if (!Array.isArray(questions) || questions.length === 0) {
     return {
       valid: false,
@@ -229,7 +243,12 @@ const validateQuizQuestions = (lesson) => {
       };
     }
 
-    const options = Array.isArray(question.options) ? question.options : [];
+    // The documented import shape uses `choices`, not `options`.
+    const options = Array.isArray(question.options)
+      ? question.options
+      : Array.isArray(question.choices)
+      ? question.choices
+      : [];
     if (options.length < 2) {
       return {
         valid: false,
@@ -259,8 +278,11 @@ const validateQuizQuestions = (lesson) => {
 };
 
 const hasTextContent = (lesson) => {
-  const text = lesson?.content?.textContent || lesson?.content?.content || lesson?.content?.notes;
-  return trim(text).length > 0;
+  const content = lesson?.content || {};
+  const text = content.textContent || content.content || content.notes || content.introduction;
+  if (trim(text).length > 0) return true;
+  // Documented import shape: content_json.body.{introduction, key_points}
+  return Array.isArray(content.key_points) && content.key_points.some((point) => trim(point).length > 0);
 };
 
 const hasDocumentSource = (lesson) => {

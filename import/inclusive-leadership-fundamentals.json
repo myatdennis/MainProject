@@ -117,7 +117,8 @@
               "duration_s": 420,
               "description": "A short video illustrating how bias shows up in team settings.",
               "content_json": {
-                "videoUrl": "https://videos.thehuddleco.com/placeholder/bias-in-action.mp4"
+                "videoUrl": "https://videos.thehuddleco.com/placeholder/bias-in-action.mp4",
+                "videoSourceType": "external"
               }
             },
             {
