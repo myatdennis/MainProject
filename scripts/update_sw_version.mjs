@@ -11,7 +11,20 @@ if (!fs.existsSync(swPath)) {
   process.exit(1);
 }
 
-const buildId = process.env.CACHE_VERSION || 'v1';
+// CACHE_VERSION was never actually set by any build environment (Netlify
+// doesn't define it), so this always fell back to the literal string 'v1' —
+// on every single deploy, forever. ServiceWorkerManager.tsx registers the
+// worker at `/sw.js?v=<this value>`; since that URL never changed, browsers
+// never saw a new service worker to install, so nobody's cached bundle ever
+// got busted after a deploy, no matter how many times we shipped fixes.
+// Netlify sets COMMIT_REF (the git SHA) and BUILD_ID/DEPLOY_ID for every
+// build — use those so the tag is genuinely unique per deploy.
+const buildId =
+  process.env.CACHE_VERSION ||
+  process.env.COMMIT_REF ||
+  process.env.BUILD_ID ||
+  process.env.DEPLOY_ID ||
+  new Date().toISOString();
 const versionTag = buildId;
 
 const manifestPayload = {
