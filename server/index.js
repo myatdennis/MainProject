@@ -8240,9 +8240,16 @@ const loadCourseGraphWithTx = async (tx, courseId) => {
 };
 
 const upsertCourseGraphWithTx = async (tx, { actorUserId, organizationId, coursePayload }) => {
+  // postgres.js double-encodes an already-stringified JSON value when it's
+  // followed by an explicit ::jsonb cast (it JSON-serializes the string
+  // again), producing a jsonb *scalar string* instead of an object. That
+  // makes every `p_course->>'field'` lookup inside the RPC return NULL,
+  // which the function reports as "slug required" regardless of the real
+  // input. tx.json() hands postgres.js the raw object so it serializes it
+  // exactly once.
   const result = await tx`
     select public.upsert_course_graph(
-      ${JSON.stringify(coursePayload)}::jsonb,
+      ${tx.json(coursePayload)},
       ${actorUserId ? actorUserId : null}::uuid,
       ${organizationId}::uuid
     ) as course

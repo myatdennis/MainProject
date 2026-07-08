@@ -1,0 +1,329 @@
+{
+  "items": [
+    {
+      "course": {
+        "slug": "inclusive-leadership-fundamentals",
+        "title": "Inclusive Leadership Fundamentals",
+        "description": "A foundational course for all employees on recognizing bias, communicating inclusively, and practicing everyday allyship. Participants will build practical skills for creating a workplace where every voice is heard and valued.",
+        "status": "draft",
+        "version": 1,
+        "meta": {
+          "audience": "All employees",
+          "estimated_minutes": 75,
+          "difficulty": "beginner",
+          "tags": ["inclusion", "leadership", "belonging", "bias", "allyship"]
+        }
+      },
+      "modules": [
+        {
+          "title": "Foundations of Inclusion",
+          "description": "Introduces core concepts of inclusive leadership and why they matter for every employee, not just managers.",
+          "order_index": 1,
+          "lessons": [
+            {
+              "title": "What Is Inclusive Leadership?",
+              "type": "text",
+              "order_index": 1,
+              "duration_s": 300,
+              "description": "Defines inclusive leadership and the mindset behind it.",
+              "content_json": {
+                "body": {
+                  "introduction": "Inclusive leadership isn't a title — it's a set of behaviors anyone can practice, regardless of role. It means actively creating conditions where people with different backgrounds, perspectives, and working styles feel safe to contribute fully.",
+                  "key_points": [
+                    "Inclusion is a practice, not a job title — every employee can lead inclusively.",
+                    "Inclusive leaders notice who isn't participating and invite them in.",
+                    "Small, consistent behaviors matter more than grand gestures.",
+                    "Inclusion benefits team performance, not just individual wellbeing."
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Why Inclusion Matters for Everyone",
+              "type": "text",
+              "order_index": 2,
+              "duration_s": 300,
+              "description": "Connects inclusion to team outcomes and individual experience at work.",
+              "content_json": {
+                "body": {
+                  "introduction": "When people feel excluded, they hold back ideas, disengage, and eventually leave. When they feel included, teams make better decisions and retain talent longer.",
+                  "key_points": [
+                    "Diverse teams that feel included outperform homogeneous teams on complex problems.",
+                    "Exclusion often shows up in small moments: being talked over, left off invites, or having ideas credited to someone else.",
+                    "Everyone has a role in shaping team culture, regardless of seniority.",
+                    "Inclusion is an ongoing practice, not a one-time training outcome."
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Check Your Understanding",
+              "type": "quiz",
+              "order_index": 3,
+              "duration_s": 180,
+              "description": "A short knowledge check on the foundations of inclusive leadership.",
+              "content_json": {
+                "quiz": {
+                  "questions": [
+                    {
+                      "prompt": "Which statement best reflects inclusive leadership?",
+                      "choices": [
+                        { "id": "choice-a", "text": "Only managers are responsible for inclusion.", "correct": false },
+                        { "id": "choice-b", "text": "Anyone can practice inclusive behaviors, regardless of title.", "correct": true },
+                        { "id": "choice-c", "text": "Inclusion is mainly about following HR policy.", "correct": false }
+                      ]
+                    },
+                    {
+                      "prompt": "What is a common sign that someone feels excluded at work?",
+                      "choices": [
+                        { "id": "choice-a", "text": "They stop offering ideas in meetings.", "correct": true },
+                        { "id": "choice-b", "text": "They ask more questions than usual.", "correct": false },
+                        { "id": "choice-c", "text": "They take on more projects.", "correct": false }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "title": "Recognizing Bias and Barriers",
+          "description": "Builds awareness of unconscious bias and how it shows up in everyday interactions.",
+          "order_index": 2,
+          "lessons": [
+            {
+              "title": "Understanding Unconscious Bias",
+              "type": "text",
+              "order_index": 1,
+              "duration_s": 360,
+              "description": "Explains what unconscious bias is and common patterns.",
+              "content_json": {
+                "body": {
+                  "introduction": "Unconscious bias refers to the automatic mental shortcuts we all use to process information quickly. These shortcuts can lead to unfair judgments about people based on group membership rather than individual merit.",
+                  "key_points": [
+                    "Bias is a normal cognitive function — the goal is awareness, not guilt.",
+                    "Affinity bias leads us to favor people who remind us of ourselves.",
+                    "Confirmation bias causes us to notice evidence that supports existing beliefs.",
+                    "Awareness alone doesn't eliminate bias — deliberate practices are needed to counter it."
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Bias in Action",
+              "type": "video",
+              "order_index": 2,
+              "duration_s": 420,
+              "description": "A short video illustrating how bias shows up in team settings.",
+              "content_json": {
+                "videoUrl": "https://videos.thehuddleco.com/placeholder/bias-in-action.mp4"
+              }
+            },
+            {
+              "title": "Spot the Bias",
+              "type": "interactive",
+              "order_index": 3,
+              "duration_s": 300,
+              "description": "An interactive scenario asking learners to identify and respond to biased moments.",
+              "content_json": {
+                "elements": [
+                  {
+                    "id": "scene-1",
+                    "data": [
+                      {
+                        "text": "In a meeting, a colleague suggests an idea and it's ignored. Minutes later, another colleague repeats the same idea and receives praise. What's the most inclusive response?",
+                        "choices": [
+                          { "id": "choice-1", "text": "Say nothing — it's not your place to comment." },
+                          { "id": "choice-2", "text": "Point out that the idea was first raised by your colleague and give them credit." },
+                          { "id": "choice-3", "text": "Bring it up privately with the colleague afterward instead of during the meeting." }
+                        ]
+                      },
+                      {
+                        "text": "A hiring manager says a candidate 'doesn't feel like a culture fit' but can't explain specifics. What's the more inclusive framing?",
+                        "choices": [
+                          { "id": "choice-1", "text": "Trust the gut feeling — it usually reflects real team dynamics." },
+                          { "id": "choice-2", "text": "Ask what specific skills or values the candidate lacks, tied to the role." },
+                          { "id": "choice-3", "text": "Move to the next candidate without further discussion." }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "Everyday Inclusive Behaviors",
+          "description": "Practical habits for communication, meetings, and language that build inclusion day to day.",
+          "order_index": 3,
+          "lessons": [
+            {
+              "title": "Inclusive Communication Habits",
+              "type": "text",
+              "order_index": 1,
+              "duration_s": 300,
+              "description": "Covers habits that make communication more inclusive.",
+              "content_json": {
+                "body": {
+                  "introduction": "How we communicate shapes who feels welcome to participate. Small shifts in habit can open the door for more voices to be heard.",
+                  "key_points": [
+                    "Ask open-ended questions that invite different perspectives.",
+                    "Avoid interrupting — pause before responding to let others finish.",
+                    "Paraphrase and credit ideas accurately to the person who raised them.",
+                    "Check in directly with quieter team members rather than assuming silence means agreement."
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Running Inclusive Meetings",
+              "type": "text",
+              "order_index": 2,
+              "duration_s": 300,
+              "description": "Tactics for structuring meetings so more people can contribute.",
+              "content_json": {
+                "body": {
+                  "introduction": "Meetings often default to the loudest or most senior voices. Structure can level the playing field.",
+                  "key_points": [
+                    "Share agendas in advance so people can prepare thoughts, especially those who process best in writing.",
+                    "Use round-robin or written input methods to surface ideas from everyone, not just fast talkers.",
+                    "Rotate who facilitates and who takes notes.",
+                    "Be mindful of meeting times across time zones and personal schedules."
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Inclusive Language Quick Reference",
+              "type": "document",
+              "order_index": 3,
+              "duration_s": 120,
+              "description": "A downloadable reference guide for inclusive language choices.",
+              "content_json": {
+                "fileUrl": "https://files.thehuddleco.com/placeholder/inclusive-language-quick-reference.pdf",
+                "fileName": "inclusive-language-quick-reference.pdf"
+              }
+            },
+            {
+              "title": "Apply What You've Learned",
+              "type": "quiz",
+              "order_index": 4,
+              "duration_s": 180,
+              "description": "A knowledge check on inclusive communication and meeting practices.",
+              "content_json": {
+                "quiz": {
+                  "questions": [
+                    {
+                      "prompt": "What is an effective way to make meetings more inclusive?",
+                      "choices": [
+                        { "id": "choice-a", "text": "Let whoever speaks first set the direction of the discussion.", "correct": false },
+                        { "id": "choice-b", "text": "Use structured input methods like round-robin so everyone contributes.", "correct": true },
+                        { "id": "choice-c", "text": "Keep the agenda private until the meeting starts.", "correct": false }
+                      ]
+                    },
+                    {
+                      "prompt": "When a colleague's idea is later repeated by someone else and praised, what's the inclusive response?",
+                      "choices": [
+                        { "id": "choice-a", "text": "Redirect credit to the person who raised it first.", "correct": true },
+                        { "id": "choice-b", "text": "Let it go since it doesn't matter who gets credit.", "correct": false },
+                        { "id": "choice-c", "text": "Wait for the original person to speak up themselves.", "correct": false }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "title": "Speaking Up and Allyship",
+          "description": "Focuses on how to act as an ally and respond in the moment when exclusion happens.",
+          "order_index": 4,
+          "lessons": [
+            {
+              "title": "What Allyship Looks Like",
+              "type": "text",
+              "order_index": 1,
+              "duration_s": 300,
+              "description": "Defines allyship and everyday actions that support it.",
+              "content_json": {
+                "body": {
+                  "introduction": "Allyship means using your position, voice, or access to support colleagues from underrepresented or marginalized groups — consistently, not just in visible moments.",
+                  "key_points": [
+                    "Allyship is ongoing behavior, not a one-time statement of support.",
+                    "Effective allies listen first and avoid speaking over the people they intend to support.",
+                    "Allies use their access — to rooms, information, or decision-makers — to amplify others.",
+                    "Mistakes will happen; owning them and adjusting matters more than getting it perfect."
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Responding to an Exclusionary Comment",
+              "type": "scenario",
+              "order_index": 2,
+              "duration_s": 300,
+              "description": "A branching scenario practicing how to respond when you witness exclusion.",
+              "content_json": {
+                "elements": [
+                  {
+                    "id": "scene-1",
+                    "data": [
+                      {
+                        "text": "During a team lunch, a colleague makes a joke that stereotypes another team member's background. The team member looks visibly uncomfortable. What do you do?",
+                        "choices": [
+                          { "id": "choice-1", "text": "Say nothing in the moment, but check in with the affected colleague privately afterward." },
+                          { "id": "choice-2", "text": "Address it directly in the moment, calmly naming that the comment wasn't okay." },
+                          { "id": "choice-3", "text": "Laugh along to avoid making the situation awkward." }
+                        ]
+                      },
+                      {
+                        "text": "Later, the colleague who made the joke asks you privately if they were 'overreacting to worry about it.' How do you respond?",
+                        "choices": [
+                          { "id": "choice-1", "text": "Reassure them it was fine and not worth dwelling on." },
+                          { "id": "choice-2", "text": "Explain honestly why the comment landed poorly and suggest how to approach it differently next time." },
+                          { "id": "choice-3", "text": "Avoid the conversation to keep things comfortable." }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "title": "Final Knowledge Check",
+              "type": "quiz",
+              "order_index": 3,
+              "duration_s": 180,
+              "description": "A concluding quiz covering the full course.",
+              "content_json": {
+                "quiz": {
+                  "questions": [
+                    {
+                      "prompt": "What best describes allyship?",
+                      "choices": [
+                        { "id": "choice-a", "text": "A one-time public statement of support.", "correct": false },
+                        { "id": "choice-b", "text": "Consistent behavior that uses your position to support others.", "correct": true },
+                        { "id": "choice-c", "text": "Something only people in leadership roles can practice.", "correct": false }
+                      ]
+                    },
+                    {
+                      "prompt": "If you witness an exclusionary comment in the moment, what is generally the most inclusive response?",
+                      "choices": [
+                        { "id": "choice-a", "text": "Ignore it to avoid conflict.", "correct": false },
+                        { "id": "choice-b", "text": "Calmly name that the comment wasn't okay, in the moment or shortly after.", "correct": true },
+                        { "id": "choice-c", "text": "Wait for someone with more seniority to address it.", "correct": false }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
