@@ -327,6 +327,24 @@ const hasInteractiveSource = (lesson) => {
   return false;
 };
 
+// ScenarioBuilder.tsx (the live, wired-up admin editor for 'scenario' lessons)
+// writes content.scenario.nodes — a branching tree of
+// {id, prompt, options:[{id, label}]} — which hasInteractiveSource() above
+// never looks at. A scenario lesson authored through the real admin UI could
+// never pass publish validation without this check.
+const hasScenarioNodesSource = (lesson) => {
+  const nodes = lesson?.content?.scenario?.nodes;
+  if (!Array.isArray(nodes) || nodes.length === 0) return false;
+  return nodes.some(
+    (node) =>
+      node &&
+      typeof node === 'object' &&
+      trim(node.prompt).length > 0 &&
+      Array.isArray(node.options) &&
+      node.options.some((option) => trim(option?.label).length > 0),
+  );
+};
+
 const lessonHasPublishableMedia = (lesson, intent) => {
   if (lesson?.type === 'video') {
     return hasVideoSource(lesson, { allowPlaceholders: intent !== 'publish' });
@@ -533,12 +551,22 @@ export const validateCourse = (course, options = {}) => {
           }
           break;
         case 'interactive':
-        case 'scenario':
           if (!hasInteractiveSource(lesson)) {
             pushIssue(issues, {
               code: 'lesson.interactive.content_missing',
               message: `Interactive lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs a URL or configured activity`,
               path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
+              moduleId: module.id,
+              lessonId: lesson?.id,
+            });
+          }
+          break;
+        case 'scenario':
+          if (!hasScenarioNodesSource(lesson) && !hasInteractiveSource(lesson)) {
+            pushIssue(issues, {
+              code: 'lesson.interactive.content_missing',
+              message: `Scenario lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs at least one branching step with a prompt and an option`,
+              path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.scenario`,
               moduleId: module.id,
               lessonId: lesson?.id,
             });

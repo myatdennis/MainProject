@@ -555,6 +555,53 @@ describe('CoursePlayer progress integration', () => {
     );
   });
 
+  it('renders the configured scenario text and options for an interactive lesson, not a content-blind stub', async () => {
+    const user = userEvent.setup();
+    const interactiveLesson = {
+      id: 'lesson-interactive',
+      title: 'Interactive Lesson',
+      type: 'interactive',
+      order: 1,
+      order_index: 1,
+      duration: '5 min',
+      content: {
+        scenarioText: 'A teammate raises a concern in a meeting. What do you do?',
+        instructions: 'Choose the response that best reflects inclusive leadership.',
+        options: [
+          { text: 'Listen and ask follow-up questions', feedback: 'This builds trust.', isCorrect: true },
+          { text: 'Dismiss the concern', feedback: 'This can shut down future input.', isCorrect: false },
+        ],
+      },
+    };
+    mockLoadCourse.mockResolvedValue({
+      course: { ...mockCourse, modules: [{ id: 'module-1', title: 'Module 1', description: '', duration: '5 min', order: 1, lessons: [interactiveLesson] }] },
+      modules: [{ id: 'module-1', title: 'Module 1', description: '', duration: '5 min', order: 1, lessons: [interactiveLesson] }],
+      lessons: [interactiveLesson],
+      source: 'supabase' as const,
+    });
+
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/lms/courses/course-1/lesson/lesson-interactive']}>
+          <Routes>
+            <Route path="/lms/courses/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/A teammate raises a concern in a meeting/i)).toBeInTheDocument();
+    expect(screen.getByText(/Choose the response that best reflects inclusive leadership/i)).toBeInTheDocument();
+    const goodOption = screen.getByRole('button', { name: /Listen and ask follow-up questions/i });
+    expect(goodOption).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Dismiss the concern/i })).toBeInTheDocument();
+
+    await user.click(goodOption);
+    expect(await screen.findByText('This builds trust.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Mark activity complete/i })).toBeInTheDocument();
+  });
+
   it('saves reflection responses and restores previously saved content on reload', async () => {
     mockFetchLearnerReflection
       .mockResolvedValueOnce({

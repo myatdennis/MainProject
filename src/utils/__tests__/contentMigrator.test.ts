@@ -84,6 +84,43 @@ describe('migrateLessonContent', () => {
     expect(out.body).toBeUndefined();
   });
 
+  it('promotes documented body.{introduction, key_points} shape into textContent', () => {
+    const documentedImportShape = {
+      body: {
+        introduction: 'Inclusive leadership is a set of practiced behaviors.',
+        key_points: ['Psychological safety', 'Shared language'],
+      },
+    } as any;
+
+    const out = migrateLessonContent(documentedImportShape);
+    expect(out.textContent).toContain('Inclusive leadership is a set of practiced behaviors.');
+    expect(out.textContent).toContain('Psychological safety');
+    expect(out.textContent).toContain('Shared language');
+  });
+
+  it('promotes introduction/key_points even when schema_version is already set', () => {
+    const alreadyMigrated = {
+      schema_version: CURRENT_CONTENT_SCHEMA_VERSION,
+      introduction: 'Already-migrated intro text.',
+      key_points: ['Point one'],
+    } as any;
+
+    const out = migrateLessonContent(alreadyMigrated);
+    expect(out.textContent).toContain('Already-migrated intro text.');
+    expect(out.textContent).toContain('Point one');
+  });
+
+  it('does not overwrite an existing textContent/content with introduction/key_points', () => {
+    const explicitTextContent = {
+      textContent: 'Explicit text wins.',
+      introduction: 'Should not be used.',
+      key_points: ['Should not be used either'],
+    } as any;
+
+    const out = migrateLessonContent(explicitTextContent);
+    expect(out.textContent).toBe('Explicit text wins.');
+  });
+
   it('normalizes builder-authored quiz options into canonical objects', () => {
     const builderQuiz = {
       schema_version: 1,

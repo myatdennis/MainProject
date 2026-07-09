@@ -83,6 +83,66 @@ interface CoursePlayerProps {
   namespace?: 'admin' | 'client' | 'lms';
 }
 
+type InteractiveOption = { text?: string; feedback?: string; isCorrect?: boolean };
+
+// AdminCourseBuilder.tsx writes 'interactive' lesson content as
+// { scenarioText, options: [{text, feedback, isCorrect}], instructions } —
+// this used to render as a content-blind generic "mark complete" stub that
+// never showed the scenario text or configured options at all.
+const InteractiveActivity: React.FC<{
+  scenarioText: string;
+  instructions: string;
+  options: InteractiveOption[];
+  onComplete: () => void;
+}> = ({ scenarioText, instructions, options, onComplete }) => {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const selectedOption = selectedIndex !== null ? options[selectedIndex] : null;
+
+  return (
+    <Card tone="muted" className="space-y-4">
+      <h3 className="font-heading text-lg font-semibold text-charcoal">Interactive activity</h3>
+      {instructions && <p className="text-sm text-slate/80">{instructions}</p>}
+      {scenarioText && <p className="text-base leading-7 text-charcoal">{scenarioText}</p>}
+      {options.length > 0 ? (
+        <div className="space-y-2">
+          {options.map((option, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => setSelectedIndex(index)}
+              className={cn(
+                'w-full rounded-[16px] border px-4 py-3 text-left text-sm transition-colors',
+                selectedIndex === index
+                  ? 'border-skyblue bg-skyblue/10 text-charcoal'
+                  : 'border-slate/15 bg-white text-slate/80 hover:border-skyblue/40',
+              )}
+            >
+              {option.text || `Option ${index + 1}`}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-slate/60">No response options were configured for this activity.</p>
+      )}
+      {selectedOption && (selectedOption.feedback || typeof selectedOption.isCorrect === 'boolean') && (
+        <div
+          className={cn(
+            'rounded-[16px] border p-4 text-sm',
+            selectedOption.isCorrect
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-amber-200 bg-amber-50 text-amber-800',
+          )}
+        >
+          {selectedOption.feedback || (selectedOption.isCorrect ? 'Good choice.' : 'Consider another approach.')}
+        </div>
+      )}
+      <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
+        Mark activity complete
+      </Button>
+    </Card>
+  );
+};
+
 const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const { courseId, lessonId } = useParams();
   const navigate = useNavigate();
@@ -2523,15 +2583,17 @@ const LessonContent: React.FC<{
   }
 
   if (lessonType === 'interactive') {
-    const instructions = lesson.content.instructions || lesson.description || 'Complete the activity to continue.';
+    const interactiveContent = lesson.content as any;
+    const instructions = interactiveContent.instructions || lesson.description || 'Complete the activity to continue.';
+    const scenarioText = interactiveContent.scenarioText || '';
+    const options: InteractiveOption[] = Array.isArray(interactiveContent.options) ? interactiveContent.options : [];
     return (
-      <Card tone="muted" className="space-y-4">
-        <h3 className="font-heading text-lg font-semibold text-charcoal">Interactive activity</h3>
-        <p className="text-sm text-slate/80">{instructions}</p>
-        <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
-          Mark activity complete
-        </Button>
-      </Card>
+      <InteractiveActivity
+        scenarioText={scenarioText}
+        instructions={instructions}
+        options={options}
+        onComplete={onComplete}
+      />
     );
   }
 

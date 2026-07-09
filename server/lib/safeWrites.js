@@ -180,6 +180,33 @@ export async function safeUpsert(table, payload, { logger = console, requestId =
     throw err;
   }
   try {
+    // Invariant check mirroring safeInsert's (above): safeUpsert is
+    // INSERT ... ON CONFLICT DO UPDATE, so any NOT NULL column left out of a
+    // row here gets written as NULL rather than preserved from the existing
+    // row — this exact class of bug has recurred multiple times on
+    // "assign"-named tables (missing organization_id/course_id/survey_id on
+    // an "update via upsert" patch). Catch it here instead of at the DB.
+    if (String(table).toLowerCase().includes('assign')) {
+      const rows = Array.isArray(payload) ? payload : [payload];
+      const preview = rows.slice(0, 5);
+      for (const r of rows) {
+        const hasOrg = r?.organization_id || r?.org_id || r?.organizationId || r?.orgId;
+        const hasAssignmentType = r?.assignment_type || r?.assignmentType;
+        const hasActive = r && Object.prototype.hasOwnProperty.call(r, 'active');
+        if (!hasOrg || !hasAssignmentType || !hasActive) {
+          logger.error('[ASSIGNMENT UPSERT INVARIANT FAILED]', {
+            requestId,
+            table,
+            upsertPreview: preview,
+            missingOrg: !hasOrg,
+            missingAssignmentType: !hasAssignmentType,
+            missingActive: !hasActive,
+          });
+          throw new Error('Assignment upsert invariant failed: missing required fields');
+        }
+      }
+    }
+
     let res;
     const options = onConflict ? { onConflict } : undefined;
     if (select) {

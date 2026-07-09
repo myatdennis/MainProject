@@ -658,6 +658,17 @@ export const createProgressWriteService = ({
           logger.warn('gamification_progress_course_failed', { userId: canonicalUserId, courseId: course_id, message: gErr instanceof Error ? gErr.message : String(gErr) });
         }
       }
+      // createCertificateIfNotExists() is itself idempotent (checks for an
+      // existing row first), so it's safe to call unconditionally whenever
+      // this path reports completion — this was previously only wired into
+      // saveLearnerSnapshot (the /api/learner/progress path), so a course
+      // completed only via this /api/client/progress/course path never got
+      // a certificate row created at all.
+      if (normalizedCompleted && supabase) {
+        createCertificateIfNotExists(canonicalUserId, course_id, resolvedOrgId ?? null).catch((err) => {
+          logger.warn('certificate_auto_create_unhandled', { userId: canonicalUserId, courseId: course_id, message: err?.message });
+        });
+      }
       return { status: 200, payload: { data: toApiCourseRecord(data, time_spent_s) } };
     } catch (error) {
       recordCourseProgress('supabase', Date.now() - opStart, { status: 'error', userId: canonicalUserId, courseId: course_id, message: error instanceof Error ? error.message : String(error) });
@@ -906,6 +917,20 @@ export const createProgressWriteService = ({
               }
               if (orgIdForRollup) await upsertOrgEngagementMetrics(tx, String(orgIdForRollup));
             });
+            // createCertificateIfNotExists() is itself idempotent, so it's
+            // safe to call for every course_completed event in this batch —
+            // this batch path previously never created a certificate at all,
+            // so a course completed only via the offline-queued batch flow
+            // (VideoPlayer.tsx / batchService.ts) got no certificate.
+            if (supabase) {
+              completionEvents
+                .filter((evt) => evt.eventType === 'course_completed')
+                .forEach((evt) => {
+                  createCertificateIfNotExists(evt.userId, evt.courseId, evt.orgId ?? null).catch((err) => {
+                    logger.warn('certificate_auto_create_unhandled', { userId: evt.userId, courseId: evt.courseId, message: err?.message });
+                  });
+                });
+            }
           }
         }
       } catch (gErr) {

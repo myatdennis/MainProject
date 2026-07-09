@@ -473,6 +473,13 @@ const hasScenarioElements = (lesson) => {
   const body = getLessonContentBody(lesson);
   const elements = Array.isArray(body?.elements) ? body.elements : null;
   if (!elements || elements.length === 0) {
+    // canonicalizeLessonType() maps 'scenario' -> 'interactive' before this
+    // check ever runs, so the two types share this single validator. But
+    // ScenarioBuilder.tsx (the live admin editor for 'scenario' lessons)
+    // writes an entirely different shape — content.scenario.nodes, not
+    // elements[].data[].choices — so fall back to checking that shape too.
+    const nodesCheck = hasScenarioNodes(lesson);
+    if (nodesCheck.ok) return nodesCheck;
     return { ok: false, reason: 'Interactive lessons require branching elements' };
   }
   const invalidElement = elements.find((element) => {
@@ -500,6 +507,30 @@ const hasScenarioElements = (lesson) => {
   });
   if (invalidElement) {
     return { ok: false, reason: 'Interactive branching steps must include text and learner choices' };
+  }
+  return { ok: true };
+};
+
+// ScenarioBuilder.tsx (the live, wired-up admin editor for 'scenario' lessons)
+// writes content.scenario.nodes — {id, prompt, options:[{id, label}]} — a
+// different shape than the elements[].data[].choices shape hasScenarioElements
+// checks above. Accept either shape for 'scenario' so a course round-tripped
+// through the real admin UI still imports cleanly.
+const hasScenarioNodes = (lesson) => {
+  const body = getLessonContentBody(lesson);
+  const nodes = body?.scenario?.nodes;
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    return { ok: false, reason: 'Scenario lessons require at least one branching step' };
+  }
+  const invalidNode = nodes.find((node) => {
+    if (!node || typeof node !== 'object') return true;
+    if (typeof node.prompt !== 'string' || node.prompt.trim().length === 0) return true;
+    const options = Array.isArray(node.options) ? node.options : null;
+    if (!options || options.length === 0) return true;
+    return options.some((option) => typeof option?.label !== 'string' || option.label.trim().length === 0);
+  });
+  if (invalidNode) {
+    return { ok: false, reason: 'Scenario branching steps must include a prompt and at least one labeled option' };
   }
   return { ok: true };
 };

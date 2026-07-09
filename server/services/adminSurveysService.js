@@ -1,5 +1,64 @@
 import { safeInsert, safeUpsert, safeDelete } from '../lib/safeWrites.js';
 
+// metadata.scoringLocked marks questions whose exact structure (type, stage
+// assignment) scoring logic (server/lib/hdiScoring.js) depends on. A client
+// can bypass any UI-level protection by calling this endpoint directly, so
+// this check must also be enforced here, not just in AdminSurveyBuilder.tsx.
+// Wording (title/description) edits are allowed; removing a locked question
+// or changing its type/stage is not.
+const flattenLockedQuestions = (survey) => {
+  const sections = Array.isArray(survey?.sections) ? survey.sections : [];
+  const locked = new Map();
+  sections.forEach((section) => {
+    const questions = Array.isArray(section?.questions) ? section.questions : [];
+    questions.forEach((question) => {
+      if (question?.metadata?.scoringLocked && question?.id) {
+        locked.set(String(question.id), question);
+      }
+    });
+  });
+  return locked;
+};
+
+const getQuestionStageKey = (question) => {
+  const metadata = question?.metadata && typeof question.metadata === 'object' ? question.metadata : {};
+  return String(metadata.stage_key ?? metadata.stageKey ?? question?.stage_key ?? question?.stageKey ?? '')
+    .trim()
+    .toLowerCase();
+};
+
+export const validateScoringLockedQuestions = (existingSurvey, incomingPatch) => {
+  const lockedQuestions = flattenLockedQuestions(existingSurvey);
+  if (lockedQuestions.size === 0) {
+    return { ok: true };
+  }
+
+  const incomingQuestionsById = new Map();
+  (Array.isArray(incomingPatch?.sections) ? incomingPatch.sections : []).forEach((section) => {
+    (Array.isArray(section?.questions) ? section.questions : []).forEach((question) => {
+      if (question?.id) incomingQuestionsById.set(String(question.id), question);
+    });
+  });
+
+  const violations = [];
+  for (const [id, lockedQuestion] of lockedQuestions) {
+    const incoming = incomingQuestionsById.get(id);
+    if (!incoming) {
+      violations.push({ id, title: lockedQuestion.title, reason: 'removed' });
+      continue;
+    }
+    if (incoming.type !== lockedQuestion.type) {
+      violations.push({ id, title: lockedQuestion.title, reason: 'type_changed' });
+      continue;
+    }
+    if (getQuestionStageKey(incoming) !== getQuestionStageKey(lockedQuestion)) {
+      violations.push({ id, title: lockedQuestion.title, reason: 'stage_changed' });
+    }
+  }
+
+  return violations.length > 0 ? { ok: false, violations } : { ok: true };
+};
+
 export const createAdminSurveysService = ({
   logger,
   supabase,
@@ -251,6 +310,34 @@ export const createAdminSurveysService = ({
     if (!supabase) {
       const survey = upsertDemoSurvey({ ...patch, id });
       return { status: 200, data: survey };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, 'sections')) {
+      const { data: existingSurveyRow, error: existingSurveyError } = await supabase
+        .from('surveys')
+        .select('sections')
+        .eq('id', surveyIdForWrite)
+        .maybeSingle();
+      if (existingSurveyError) throw existingSurveyError;
+      if (existingSurveyRow) {
+        const lockCheck = validateScoringLockedQuestions(existingSurveyRow, patch);
+        if (!lockCheck.ok) {
+          logger.warn('survey_scoring_locked_edit_rejected', {
+            requestId: req.requestId ?? null,
+            surveyId: surveyIdForWrite,
+            violations: lockCheck.violations,
+          });
+          return {
+            status: 422,
+            error: {
+              code: 'scoring_locked_question_modified',
+              message:
+                'One or more scoring-locked questions were removed or structurally changed. Wording edits are allowed, but the question type and assessment stage can\'t be changed.',
+              details: lockCheck.violations,
+            },
+          };
+        }
+      }
     }
 
     const assignmentUpdateRequested = Object.prototype.hasOwnProperty.call(patch, 'assignedTo') ||

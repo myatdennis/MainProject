@@ -365,17 +365,35 @@ const ClientSurveyTake = () => {
                     />
                   )}
 
-                  {(question.type === 'likert-scale' || question.type === 'nps' || question.type === 'slider') && (
-                    <input
-                      type="range"
-                      min={question.scale?.min ?? (question.type === 'nps' ? 0 : 1)}
-                      max={question.scale?.max ?? (question.type === 'nps' ? 10 : 5)}
-                      step={1}
-                      value={typeof value === 'number' ? value : question.scale?.min ?? 1}
-                      onChange={(event) => onChangeValue(question.id, Number(event.target.value))}
-                      className="w-full"
-                    />
-                  )}
+                  {(question.type === 'likert-scale' || question.type === 'nps' || question.type === 'slider') && (() => {
+                    const scaleMin = question.scale?.min ?? (question.type === 'nps' ? 0 : 1);
+                    const scaleMax = question.scale?.max ?? (question.type === 'nps' ? 10 : 5);
+                    const currentValue = typeof value === 'number' ? value : scaleMin;
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm text-slate/70">
+                          <span>{question.scale?.minLabel || scaleMin}</span>
+                          {question.scale?.midLabel && <span>{question.scale.midLabel}</span>}
+                          <span>{question.scale?.maxLabel || scaleMax}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={scaleMin}
+                          max={scaleMax}
+                          step={1}
+                          value={currentValue}
+                          onChange={(event) => onChangeValue(question.id, Number(event.target.value))}
+                          className="w-full"
+                          aria-valuemin={scaleMin}
+                          aria-valuemax={scaleMax}
+                          aria-valuenow={currentValue}
+                        />
+                        <p className="text-center text-base font-semibold text-charcoal">
+                          {typeof value === 'number' ? value : '—'}
+                        </p>
+                      </div>
+                    );
+                  })()}
 
                   {(question.type === 'matrix-likert' || question.type === 'matrix') && (
                     <div className="space-y-3">

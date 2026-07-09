@@ -140,4 +140,76 @@ describe('validateCoursePayload', () => {
     }
     expect(result.data?.modules?.[0]?.lessons?.[0]?.content_json?.body?.questions).toHaveLength(1);
   });
+
+  it('accepts scenario lessons using content.scenario.nodes shape when strictly enforced', () => {
+    const payload = {
+      course: {
+        title: 'Scenario Course',
+        description: 'Regression coverage for scenario payload validation',
+        status: 'published',
+      },
+      modules: [
+        {
+          title: 'Module 1',
+          order_index: 1,
+          lessons: [
+            {
+              title: 'Scenario Lesson',
+              type: 'scenario',
+              order_index: 1,
+              content_json: {
+                scenario: {
+                  startNodeId: 'start',
+                  nodes: [
+                    {
+                      id: 'start',
+                      prompt: 'A teammate raises a concern. What do you do?',
+                      options: [
+                        { id: 'opt:1', label: 'Listen and ask follow-up questions' },
+                        { id: 'opt:2', label: 'Dismiss the concern' },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = validateCoursePayload(payload, { enforceLessonContent: true });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects scenario lessons with no nodes when strictly enforced', () => {
+    const payload = {
+      course: {
+        title: 'Empty Scenario Course',
+        description: 'Regression coverage for scenario payload validation',
+        status: 'published',
+      },
+      modules: [
+        {
+          title: 'Module 1',
+          order_index: 1,
+          lessons: [
+            {
+              title: 'Scenario Lesson',
+              type: 'scenario',
+              order_index: 1,
+              content_json: {},
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = validateCoursePayload(payload, { enforceLessonContent: true });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('Expected strict scenario payload validation to fail');
+    }
+    expect((result.issues ?? []).some((issue) => issue.code === 'lesson.interactive.invalid')).toBe(true);
+  });
 });

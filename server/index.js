@@ -14144,6 +14144,35 @@ app.post('/api/client/certificates/:courseId', async (req, res) => {
   const resolvedCertUserId = certContext.userId;
 
   try {
+    // A bare row may already exist here, created by the auto-completion path
+    // (createCertificateIfNotExists, fired from progress-write handlers) by
+    // the time this richer client-side payload (pdf_url, verification
+    // metadata) arrives. Update that row instead of racing a second INSERT
+    // against the unique(user_id, course_id) constraint — that race is what
+    // previously left certificates permanently missing pdf_url/metadata.
+    const { data: existingCert, error: existingCertError } = await supabase
+      .from('certificates')
+      .select('id, metadata')
+      .eq('user_id', resolvedCertUserId)
+      .eq('course_id', courseId)
+      .maybeSingle();
+    if (existingCertError) throw existingCertError;
+
+    if (existingCert) {
+      const mergedMetadata = {
+        ...(existingCert.metadata && typeof existingCert.metadata === 'object' ? existingCert.metadata : {}),
+        ...metadata,
+      };
+      const _certUpdate = await supabase
+        .from('certificates')
+        .update({ pdf_url: pdf_url ?? null, metadata: mergedMetadata })
+        .eq('id', existingCert.id)
+        .select('*');
+      if (_certUpdate.error) throw _certUpdate.error;
+      res.status(200).json({ data: firstRow(_certUpdate) });
+      return;
+    }
+
     const _certCreate = await supabase
       .from('certificates')
       .insert({

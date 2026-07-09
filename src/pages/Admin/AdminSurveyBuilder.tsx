@@ -532,6 +532,16 @@ const AdminSurveyBuilder = () => {
     e.preventDefault();
     if (!survey || !draggedQuestion) return;
 
+    const draggedSection = survey.sections.find((s) => s.id === sectionId);
+    const draggedQuestionRecord = draggedSection?.questions.find((q) => q.id === draggedQuestion);
+    if (draggedQuestionRecord?.metadata?.scoringLocked) {
+      window.alert(
+        `"${draggedQuestionRecord.title}" is a scoring-locked question and can't be reordered — its position determines which assessment stage it counts toward.`,
+      );
+      setDraggedQuestion(null);
+      return;
+    }
+
     setSurvey(prev => {
       if (!prev) return prev;
       const sections = prev.sections.map(s => {
@@ -555,18 +565,40 @@ const AdminSurveyBuilder = () => {
     setDraggedQuestion(null);
   };
 
+  // metadata.scoringLocked marks questions whose exact structure (type, stage
+  // assignment, options/scale) hdiScoring.js depends on — flattenSurveyQuestions
+  // / getStageFromQuestion / validateHdiAnswers require exactly 6 items per
+  // stage, keyed off this structure, not the wording. Wording edits are safe;
+  // structural edits (type, options, scale, metadata/stage) silently break
+  // future scoring if allowed through unchecked.
+  const SCORING_LOCKED_EDITABLE_FIELDS = new Set<keyof SurveyQuestion>(['title', 'description']);
+
   const updateQuestion = (sectionId: string, questionId: string, updates: Partial<SurveyQuestion>) => {
     if (!survey) return;
-    
+
     setSurvey(prev => prev ? {
       ...prev,
-      sections: prev.sections.map(s => 
-        s.id === sectionId 
+      sections: prev.sections.map(s =>
+        s.id === sectionId
           ? {
               ...s,
-              questions: s.questions.map(q => 
-                q.id === questionId ? { ...q, ...updates } : q
-              )
+              questions: s.questions.map(q => {
+                if (q.id !== questionId) return q;
+                if (!q.metadata?.scoringLocked) return { ...q, ...updates };
+
+                const structuralKeys = Object.keys(updates).filter(
+                  (key) => !SCORING_LOCKED_EDITABLE_FIELDS.has(key as keyof SurveyQuestion),
+                );
+                if (structuralKeys.length === 0) return { ...q, ...updates };
+
+                window.alert(
+                  `"${q.title}" is a scoring-locked question — its wording can be edited, but its type, options, and stage can't be changed without breaking assessment scoring. That change was not applied.`,
+                );
+                const allowedUpdates = Object.fromEntries(
+                  Object.entries(updates).filter(([key]) => SCORING_LOCKED_EDITABLE_FIELDS.has(key as keyof SurveyQuestion)),
+                );
+                return { ...q, ...allowedUpdates };
+              }),
             }
           : s
       ),
@@ -576,11 +608,20 @@ const AdminSurveyBuilder = () => {
 
   const deleteQuestion = (sectionId: string, questionId: string) => {
     if (!survey) return;
-    
+
+    const section = survey.sections.find((s) => s.id === sectionId);
+    const question = section?.questions.find((q) => q.id === questionId);
+    if (question?.metadata?.scoringLocked) {
+      window.alert(
+        `"${question.title}" is a scoring-locked question and can't be deleted — removing it would break assessment scoring for everyone who takes this survey.`,
+      );
+      return;
+    }
+
     setSurvey(prev => prev ? {
       ...prev,
-      sections: prev.sections.map(s => 
-        s.id === sectionId 
+      sections: prev.sections.map(s =>
+        s.id === sectionId
           ? { ...s, questions: s.questions.filter(q => q.id !== questionId) }
           : s
       ),

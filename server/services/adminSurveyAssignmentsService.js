@@ -771,7 +771,28 @@ export const createAdminSurveyAssignmentsService = ({
         const { error } = await safeDelete('assignments', (q) => q.eq('id', assignmentId), { requestId: req.requestId ?? null });
         if (error) throw error;
       } else {
-        const { data: upserted, error } = await safeUpsert('assignments', [{ id: assignmentId, active: false }], { select: '*', requestId: req.requestId ?? null });
+        // safeUpsert() is INSERT ... ON CONFLICT (id) DO UPDATE — any column
+        // left out of this payload gets written as NULL, not preserved, so
+        // organization_id/survey_id/assignment_type/course_id/user_id must be
+        // carried over from `existing` explicitly (same bug already found and
+        // fixed for course assignments in courseAssignmentsService.js).
+        const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+        const orgValue = existing?.organization_id ?? existing?.org_id ?? null;
+        const { data: upserted, error } = await safeUpsert(
+          'assignments',
+          [
+            {
+              id: assignmentId,
+              [assignmentsOrgColumn]: orgValue,
+              survey_id: existing?.survey_id ?? null,
+              course_id: existing?.course_id ?? null,
+              assignment_type: existing?.assignment_type ?? surveyAssignmentType,
+              user_id: existing?.user_id ?? null,
+              active: false,
+            },
+          ],
+          { select: '*', requestId: req.requestId ?? null },
+        );
         if (error) throw error;
       }
 

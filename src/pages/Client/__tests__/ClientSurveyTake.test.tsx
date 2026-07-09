@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HelmetProvider } from 'react-helmet-async';
 import ClientSurveyTake from '../ClientSurveyTake';
@@ -88,6 +88,61 @@ describe('ClientSurveyTake', () => {
 
     expect(await screen.findByText('Leadership Pulse')).toBeInTheDocument();
     expect(screen.getByText(/How are you feeling about the team right now\?/i)).toBeInTheDocument();
+  });
+
+  it('renders scale endpoint labels and a visible value readout for likert-scale questions', async () => {
+    fetchAssignedSurveysForLearnerMock.mockResolvedValue([
+      {
+        assignment: {
+          id: 'assignment-1',
+          surveyId: 'survey-1',
+          userId: 'user-1',
+          status: 'assigned',
+          progress: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        survey: {
+          id: 'survey-1',
+          title: 'HDI Assessment',
+          description: 'Development inventory',
+          sections: [
+            {
+              id: 'section-1',
+              questions: [
+                {
+                  id: 'q1',
+                  order: 1,
+                  type: 'likert-scale',
+                  title: 'I seek out feedback from people who challenge my thinking.',
+                  required: true,
+                  scale: { min: 1, max: 5, minLabel: 'Strongly Disagree', maxLabel: 'Strongly Agree' },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={['/client/surveys/survey-1/take?assignmentId=assignment-1']}>
+          <Routes>
+            <Route path="/client/surveys/:surveyId/take" element={<ClientSurveyTake />} />
+          </Routes>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+
+    expect(await screen.findByText('Strongly Disagree')).toBeInTheDocument();
+    expect(screen.getByText('Strongly Agree')).toBeInTheDocument();
+    const slider = screen.getByRole('slider');
+    expect(slider).toHaveAttribute('aria-valuemin', '1');
+    expect(slider).toHaveAttribute('aria-valuemax', '5');
+    expect(screen.getByText('—')).toBeInTheDocument();
+    fireEvent.change(slider, { target: { value: '4' } });
+    expect(await screen.findByText('4')).toBeInTheDocument();
   });
 
   it('shows the submitted state when the assignment is already completed on reload', async () => {

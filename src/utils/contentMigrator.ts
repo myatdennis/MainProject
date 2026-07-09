@@ -90,6 +90,7 @@ export function migrateLessonContent(raw: any): any {
   maybeDeriveVideo(out);
   normalizeReflectionContent(out);
   normalizeSurveyContent(out);
+  normalizeTextContent(out);
 
   // Future migrations can be applied here using switch(out.schema_version) {...}
 
@@ -313,6 +314,32 @@ function normalizeReflectionContent(out: Record<string, any>) {
   if (shouldCollectResponse) {
     out.collectResponse = true;
     out.allowReflection = true;
+  }
+}
+
+// The documented course-import shape (docs/course-import-template.json) writes
+// text lessons as content_json.body.{introduction, key_points} — flattenBody()
+// already promotes those to top-level `introduction`/`key_points`, but nothing
+// ever copied them into `textContent`, the only field CoursePlayer.tsx reads.
+// A text lesson authored exactly per the documented template imports and
+// publishes successfully but renders as an empty placeholder to learners.
+function normalizeTextContent(out: Record<string, any>) {
+  if (firstNonEmptyString(out.textContent, out.content)) {
+    return;
+  }
+
+  const introduction = firstNonEmptyString(out.introduction);
+  const keyPoints = (Array.isArray(out.key_points) ? out.key_points : Array.isArray(out.keyPoints) ? out.keyPoints : [])
+    .filter((point: unknown): point is string => typeof point === 'string' && point.trim().length > 0);
+
+  if (!introduction && keyPoints.length === 0) {
+    return;
+  }
+
+  const keyPointsBlock = keyPoints.length > 0 ? keyPoints.map((point: string) => `- ${point}`).join('\n') : '';
+  const textContent = [introduction, keyPointsBlock].filter(Boolean).join('\n\n');
+  if (textContent) {
+    out.textContent = textContent;
   }
 }
 
