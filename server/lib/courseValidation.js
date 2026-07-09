@@ -318,20 +318,14 @@ const hasSurveyIdentifier = (lesson) => {
   return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
 };
 
-const hasInteractiveSource = (lesson) => {
-  const { interactiveUrl, elements, scenarioText, options } = lesson?.content || {};
-  if (trim(interactiveUrl).length > 0) return true;
-  if (Array.isArray(elements) && elements.length > 0) return true;
-  if (trim(scenarioText).length > 0) return true;
-  if (Array.isArray(options) && options.length > 0) return true;
-  return false;
-};
-
 // ScenarioBuilder.tsx (the live, wired-up admin editor for 'scenario' lessons)
 // writes content.scenario.nodes — a branching tree of
-// {id, prompt, options:[{id, label}]} — which hasInteractiveSource() above
-// never looks at. A scenario lesson authored through the real admin UI could
-// never pass publish validation without this check.
+// {id, prompt, options:[{id, label}]}. This must be checked HERE (inside
+// hasInteractiveSource, not a separate 'scenario'-only branch upstream)
+// because the import pipeline (server/validators/coursePayload.js) already
+// canonicalizes lesson type 'scenario' -> 'interactive' before this
+// publish-time validator ever runs — by the time a switch on lesson.type
+// would fire, an imported scenario lesson's type is already 'interactive'.
 const hasScenarioNodesSource = (lesson) => {
   const nodes = lesson?.content?.scenario?.nodes;
   if (!Array.isArray(nodes) || nodes.length === 0) return false;
@@ -343,6 +337,16 @@ const hasScenarioNodesSource = (lesson) => {
       Array.isArray(node.options) &&
       node.options.some((option) => trim(option?.label).length > 0),
   );
+};
+
+const hasInteractiveSource = (lesson) => {
+  const { interactiveUrl, elements, scenarioText, options } = lesson?.content || {};
+  if (trim(interactiveUrl).length > 0) return true;
+  if (Array.isArray(elements) && elements.length > 0) return true;
+  if (trim(scenarioText).length > 0) return true;
+  if (Array.isArray(options) && options.length > 0) return true;
+  if (hasScenarioNodesSource(lesson)) return true;
+  return false;
 };
 
 const lessonHasPublishableMedia = (lesson, intent) => {
@@ -551,22 +555,12 @@ export const validateCourse = (course, options = {}) => {
           }
           break;
         case 'interactive':
+        case 'scenario':
           if (!hasInteractiveSource(lesson)) {
             pushIssue(issues, {
               code: 'lesson.interactive.content_missing',
               message: `Interactive lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs a URL or configured activity`,
               path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
-              moduleId: module.id,
-              lessonId: lesson?.id,
-            });
-          }
-          break;
-        case 'scenario':
-          if (!hasScenarioNodesSource(lesson) && !hasInteractiveSource(lesson)) {
-            pushIssue(issues, {
-              code: 'lesson.interactive.content_missing',
-              message: `Scenario lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs at least one branching step with a prompt and an option`,
-              path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.scenario`,
               moduleId: module.id,
               lessonId: lesson?.id,
             });
