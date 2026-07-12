@@ -315,6 +315,185 @@ describe('ClientSurveyTake', () => {
     expect(screen.queryByText(/Thanks! Your survey has been submitted./i)).not.toBeInTheDocument();
   });
 
+  it('renders ranking items interactively and submits the reordered array', async () => {
+    fetchAssignedSurveysForLearnerMock.mockResolvedValue([
+      {
+        assignment: {
+          id: 'assignment-1',
+          surveyId: 'survey-1',
+          userId: 'user-1',
+          status: 'assigned',
+          progress: 0,
+          metadata: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        survey: {
+          id: 'survey-1',
+          title: 'Priorities Survey',
+          description: 'Rank what matters most',
+          sections: [
+            {
+              id: 'section-1',
+              questions: [
+                {
+                  id: 'q1',
+                  order: 1,
+                  type: 'ranking',
+                  title: 'Rank these in order of importance',
+                  required: true,
+                  rankingItems: ['Speed', 'Quality', 'Cost'],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    submitLearnerSurveyResponseMock.mockResolvedValue({ id: 'response-1' });
+
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={['/client/surveys/survey-1/take?assignmentId=assignment-1']}>
+          <Routes>
+            <Route path="/client/surveys/:surveyId/take" element={<ClientSurveyTake />} />
+          </Routes>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+
+    expect(await screen.findByText('Speed')).toBeInTheDocument();
+    expect(screen.getByText('Quality')).toBeInTheDocument();
+    expect(screen.getByText('Cost')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Move Quality up' }));
+    await user.click(screen.getByRole('button', { name: /submit survey/i }));
+
+    await waitFor(() => {
+      expect(submitLearnerSurveyResponseMock).toHaveBeenCalledWith(
+        'survey-1',
+        expect.objectContaining({
+          responses: { q1: ['Quality', 'Speed', 'Cost'] },
+        }),
+      );
+    });
+  });
+
+  it('allows submitting when a required matrix question has no configured rows', async () => {
+    fetchAssignedSurveysForLearnerMock.mockResolvedValue([
+      {
+        assignment: {
+          id: 'assignment-1',
+          surveyId: 'survey-1',
+          userId: 'user-1',
+          status: 'assigned',
+          progress: 0,
+          metadata: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        survey: {
+          id: 'survey-1',
+          title: 'Broken Matrix Survey',
+          description: 'Has a misconfigured matrix question',
+          sections: [
+            {
+              id: 'section-1',
+              questions: [
+                {
+                  id: 'q1',
+                  order: 1,
+                  type: 'matrix',
+                  title: 'Rate these items',
+                  required: true,
+                  matrixRows: [],
+                  matrixColumns: ['Good', 'Bad'],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    submitLearnerSurveyResponseMock.mockResolvedValue({ id: 'response-1' });
+
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={['/client/surveys/survey-1/take?assignmentId=assignment-1']}>
+          <Routes>
+            <Route path="/client/surveys/:surveyId/take" element={<ClientSurveyTake />} />
+          </Routes>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+
+    expect(await screen.findByText(/isn.t configured yet and can be skipped/i)).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /submit survey/i }));
+
+    await waitFor(() => {
+      expect(submitLearnerSurveyResponseMock).toHaveBeenCalled();
+    });
+    expect(screen.queryByText(/Please answer all required questions/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a distinct success message (not the error banner) when progress save succeeds', async () => {
+    fetchAssignedSurveysForLearnerMock.mockResolvedValue([
+      {
+        assignment: {
+          id: 'assignment-1',
+          surveyId: 'survey-1',
+          userId: 'user-1',
+          status: 'assigned',
+          progress: 0,
+          metadata: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        survey: {
+          id: 'survey-1',
+          title: 'Leadership Pulse',
+          description: 'Quarterly check-in',
+          sections: [
+            {
+              id: 'section-1',
+              questions: [
+                {
+                  id: 'q1',
+                  order: 1,
+                  type: 'text',
+                  title: 'How are you feeling about the team right now?',
+                  required: true,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    saveLearnerSurveyProgressMock.mockResolvedValue({ id: 'progress-1' });
+
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={['/client/surveys/survey-1/take?assignmentId=assignment-1']}>
+          <Routes>
+            <Route path="/client/surveys/:surveyId/take" element={<ClientSurveyTake />} />
+          </Routes>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /save progress/i }));
+
+    const successMessage = await screen.findByText(/Progress saved\. You can safely return and finish later\./i);
+    expect(successMessage).toHaveClass('text-emerald-700');
+    expect(successMessage).not.toHaveClass('text-red-600');
+    expect(screen.queryByText(/Please answer all required questions/i)).not.toBeInTheDocument();
+  });
+
   it('waits for learner auth readiness before loading the assigned survey', async () => {
     secureAuthState.value = {
       authInitializing: true,

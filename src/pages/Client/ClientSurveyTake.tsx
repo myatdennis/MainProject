@@ -56,6 +56,7 @@ const ClientSurveyTake = () => {
   const [resolvedAssignmentId, setResolvedAssignmentId] = useState<string | undefined>(assignmentId);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -176,7 +177,12 @@ const ClientSurveyTake = () => {
 
   const handleSubmit = async () => {
     if (!surveyId) return;
-    const requiredQuestions = questions.filter((question) => Boolean(question.required));
+    const requiredQuestions = questions.filter((question) => {
+      if (!question.required) return false;
+      const isEmptyMatrix =
+        (question.type === 'matrix' || question.type === 'matrix-likert') && (question.matrixRows ?? []).length === 0;
+      return !isEmptyMatrix;
+    });
     const missing = requiredQuestions.filter((question) => !isAnswered(answers[question.id]));
     if (missing.length > 0) {
       setValidationError('Please answer all required questions before submitting.');
@@ -184,6 +190,7 @@ const ClientSurveyTake = () => {
     }
 
     setValidationError(null);
+    setSaveMessage(null);
     setSubmitting(true);
     console.info('[ClientSurveyTake] survey_submit_started', {
       surveyId,
@@ -221,6 +228,7 @@ const ClientSurveyTake = () => {
   const handleSaveProgress = async () => {
     if (!surveyId) return;
     setValidationError(null);
+    setSaveMessage(null);
     setSaving(true);
     console.info('[ClientSurveyTake] survey_progress_save_started', {
       surveyId,
@@ -235,7 +243,7 @@ const ClientSurveyTake = () => {
           source: 'learner_survey_take',
         },
       });
-      setValidationError('Progress saved. You can safely return and finish later.');
+      setSaveMessage('Progress saved. You can safely return and finish later.');
       console.info('[ClientSurveyTake] survey_progress_save_succeeded', {
         surveyId,
         assignmentId: resolvedAssignmentId ?? null,
@@ -422,18 +430,67 @@ const ClientSurveyTake = () => {
                           </div>
                         );
                       })}
+                      {(question.matrixRows ?? []).length === 0 && (
+                        <p className="text-sm italic text-slate/50">
+                          This question isn&apos;t configured yet and can be skipped.
+                        </p>
+                      )}
                     </div>
                   )}
 
-                  {question.type === 'ranking' && (
-                    <textarea
-                      className="w-full rounded-lg border border-slate/20 p-2 text-sm"
-                      rows={2}
-                      value={typeof value === 'string' ? value : ''}
-                      onChange={(event) => onChangeValue(question.id, event.target.value)}
-                      placeholder="Enter your ranking in order (e.g. Option A, Option B, Option C)"
-                    />
-                  )}
+                  {question.type === 'ranking' && (() => {
+                    const items = Array.isArray(value) ? (value as string[]) : (question.rankingItems ?? []);
+                    const moveItem = (itemIndex: number, direction: -1 | 1) => {
+                      const targetIndex = itemIndex + direction;
+                      if (targetIndex < 0 || targetIndex >= items.length) return;
+                      const next = [...items];
+                      [next[itemIndex], next[targetIndex]] = [next[targetIndex], next[itemIndex]];
+                      onChangeValue(question.id, next);
+                    };
+                    return (
+                      <div className="space-y-2">
+                        {items.map((item, itemIndex) => (
+                          <div
+                            key={item}
+                            className="flex items-center gap-3 rounded-lg border border-slate/20 bg-white px-3 py-2"
+                          >
+                            <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-skyblue/10 text-xs font-semibold text-charcoal">
+                              {itemIndex + 1}
+                            </span>
+                            <span className="flex-1 text-sm text-slate/80">{item}</span>
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => moveItem(itemIndex, -1)}
+                                disabled={itemIndex === 0}
+                                className="rounded border border-slate/20 px-1.5 py-0.5 text-xs leading-none text-slate/70 disabled:opacity-30"
+                                aria-label={`Move ${item} up`}
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveItem(itemIndex, 1)}
+                                disabled={itemIndex === items.length - 1}
+                                className="rounded border border-slate/20 px-1.5 py-0.5 text-xs leading-none text-slate/70 disabled:opacity-30"
+                                aria-label={`Move ${item} down`}
+                              >
+                                ▼
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {items.length === 0 && (
+                          <p className="text-sm italic text-slate/50">No ranking items configured for this question.</p>
+                        )}
+                        {items.length > 0 && (
+                          <p className="text-xs text-slate/50">
+                            Use the arrows to rank items from most (1) to least preferred.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })
@@ -442,6 +499,12 @@ const ClientSurveyTake = () => {
           {validationError && (
             <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
               {validationError}
+            </p>
+          )}
+
+          {saveMessage && (
+            <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {saveMessage}
             </p>
           )}
 

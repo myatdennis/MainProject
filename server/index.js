@@ -5739,11 +5739,16 @@ const loadSurveyRecordsByAssignmentIds = async (surveyIds = []) => {
     return emptyResult;
   }
 
+  // This helper is only ever used to hydrate the LEARNER-facing "my assigned
+  // surveys" list (clientSurveyAssignmentsService.js's listAssigned) — draft
+  // and archived surveys must never appear there or remain takeable just
+  // because an assignment row still points at them.
   const surveyResult = await runTimedQuery('survey.records.load', () =>
     supabase
       .from('surveys')
       .select('*')
-      .in('id', resolvedIds),
+      .in('id', resolvedIds)
+      .eq('status', 'published'),
     10000,
   );
   const surveyRows = Array.isArray(surveyResult?.data) ? surveyResult.data : [];

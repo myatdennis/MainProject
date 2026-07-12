@@ -1,5 +1,45 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { fetchAssignedSurveysForLearner, getAnalytics, invalidateAssignedSurveysForLearnerCache, listSurveys } from '../surveys';
+import {
+  fetchAssignedSurveysForLearner,
+  getAnalytics,
+  invalidateAssignedSurveysForLearnerCache,
+  listSurveys,
+  queueSaveSurvey,
+} from '../surveys';
+import type { Survey } from '../../types/survey';
+
+const buildSurvey = (overrides: Partial<Survey> = {}): Survey =>
+  ({
+    id: 'survey-1720000000000',
+    title: 'New Survey',
+    description: '',
+    type: 'custom',
+    status: 'draft',
+    version: 1,
+    sections: [],
+    blocks: [],
+    branding: { primaryColor: '#000', secondaryColor: '#fff' },
+    settings: {
+      anonymityMode: 'off',
+      anonymityThreshold: 0,
+      allowMultipleResponses: false,
+      showProgressBar: true,
+      consentRequired: false,
+      allowAnonymous: false,
+      allowSaveAndContinue: true,
+      randomizeQuestions: false,
+      randomizeOptions: false,
+    },
+    assignedTo: { organizationIds: [], userIds: [], departmentIds: [], cohortIds: [] },
+    createdBy: 'tester',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    defaultLanguage: 'en',
+    supportedLanguages: ['en'],
+    completionSettings: { thankYouMessage: 'Thanks!', showResources: false, recommendedCourses: [] },
+    reflectionPrompts: [],
+    ...overrides,
+  }) as Survey;
 
 const requestMock = vi.fn();
 
@@ -160,5 +200,33 @@ describe('surveys DAL', () => {
     await expect(getAnalytics('survey-analytics', { organizationId: 'org-1' })).rejects.toThrow(
       'column survey_assignments.organization_id does not exist',
     );
+  });
+
+  it('queueSaveSurvey creates (POST) a survey with a placeholder id and resolves with the real server id', async () => {
+    const survey = buildSurvey({ id: 'survey-1720000000000' });
+    requestMock.mockResolvedValueOnce({ data: { ...survey, id: 'a1b2c3d4-1111-4111-8111-111111111111' } });
+
+    const promise = queueSaveSurvey(survey);
+    await vi.advanceTimersByTimeAsync(3000);
+    const saved = await promise;
+
+    expect(requestMock).toHaveBeenCalledWith('/api/admin/surveys', expect.objectContaining({ method: 'POST' }));
+    expect(saved?.id).toBe('a1b2c3d4-1111-4111-8111-111111111111');
+  });
+
+  it('queueSaveSurvey updates (PUT) a survey that already has a real persisted id, never re-creating it', async () => {
+    const persistedId = 'a1b2c3d4-2222-4222-8222-222222222222';
+    const survey = buildSurvey({ id: persistedId, title: 'Edited title' });
+    requestMock.mockResolvedValueOnce({ data: { ...survey } });
+
+    const promise = queueSaveSurvey(survey);
+    await vi.advanceTimersByTimeAsync(3000);
+    const saved = await promise;
+
+    expect(requestMock).toHaveBeenCalledWith(
+      `/api/admin/surveys/${persistedId}`,
+      expect.objectContaining({ method: 'PUT' }),
+    );
+    expect(saved?.id).toBe(persistedId);
   });
 });

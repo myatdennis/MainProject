@@ -2,6 +2,7 @@ import type { Survey } from '../types/survey';
 import type { CourseAssignment } from '../types/assignment';
 import { request } from './http';
 import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
+import { isUuid } from '../utils/isUuid';
 // Removed unused import
 
 type SurveyApiRecord = any;
@@ -235,8 +236,22 @@ export async function deleteSurvey(id: string) {
   await request(`/api/admin/surveys/${id}`, { method: 'DELETE' });
 }
 
-// Batched save queue: collects surveys and flushes periodically
+// Batched save queue: collects surveys and flushes periodically.
+//
+// IMPORTANT: a survey's id starts as a client-only placeholder (not a real
+// UUID) until the first successful save. flushQueue() below must branch on
+// isUuid(survey.id): a placeholder id means this survey has never been
+// persisted, so it needs a create (POST); a real UUID means it already
+// exists server-side, so every subsequent save MUST be an update (PUT), or
+// every autosave cycle inserts another duplicate row (the create endpoint
+// always inserts a fresh row and discards a non-UUID client id). Callers
+// (e.g. AdminSurveyBuilder.tsx) are expected to await queueSaveSurvey() and
+// adopt the real id it returns after the first save.
 const saveQueue: Survey[] = [];
+const pendingFlushCallbacks = new Map<
+  string,
+  Array<{ resolve: (survey: Survey) => void; reject: (err: unknown) => void }>
+>();
 let flushTimer: number | null = null;
 const FLUSH_INTERVAL = 3000; // ms
 
@@ -251,18 +266,26 @@ const scheduleFlush = () => {
 const flushQueue = async () => {
   if (saveQueue.length === 0) return;
   const itemsToFlush = saveQueue.splice(0, saveQueue.length);
-  try {
-    await Promise.all(itemsToFlush.map(saveSurvey));
-    lastFlushAt = new Date().toISOString();
-    surveyQueueEvents.dispatchEvent(
-      new CustomEvent('flush', { detail: { count: itemsToFlush.length, at: lastFlushAt } }),
-    );
-  } catch (err) {
-    console.warn('flushQueue exception:', err);
-  }
+  await Promise.all(
+    itemsToFlush.map(async (survey) => {
+      const callbacks = pendingFlushCallbacks.get(survey.id) ?? [];
+      pendingFlushCallbacks.delete(survey.id);
+      try {
+        const saved = isUuid(survey.id) ? await updateSurvey(survey.id, survey) : await saveSurvey(survey);
+        callbacks.forEach(({ resolve }) => resolve(saved));
+      } catch (err) {
+        console.warn('flushQueue item failed:', err);
+        callbacks.forEach(({ reject }) => reject(err));
+      }
+    }),
+  );
+  lastFlushAt = new Date().toISOString();
+  surveyQueueEvents.dispatchEvent(
+    new CustomEvent('flush', { detail: { count: itemsToFlush.length, at: lastFlushAt } }),
+  );
 };
 
-export async function queueSaveSurvey(survey: Survey) {
+export async function queueSaveSurvey(survey: Survey): Promise<Survey | null> {
   try {
     const idx = saveQueue.findIndex((s) => s.id === survey.id);
     if (idx >= 0) saveQueue[idx] = survey;
@@ -270,7 +293,12 @@ export async function queueSaveSurvey(survey: Survey) {
 
     surveyQueueEvents.dispatchEvent(new CustomEvent('queuechange'));
     scheduleFlush();
-    return survey;
+
+    return await new Promise<Survey>((resolve, reject) => {
+      const callbacks = pendingFlushCallbacks.get(survey.id) ?? [];
+      callbacks.push({ resolve, reject });
+      pendingFlushCallbacks.set(survey.id, callbacks);
+    });
   } catch (err) {
     console.warn('queueSaveSurvey error:', err);
     return null;

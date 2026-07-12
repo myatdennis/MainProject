@@ -147,6 +147,7 @@ const AdminSurveyBuilder = () => {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string>('');
+  const [saveBlockedError, setSaveBlockedError] = useState<string | null>(null);
   const saveDebounceRef = React.useRef<number | null>(null);
   const initialLoadRef = React.useRef(true);
   const [orgProfiles, setOrgProfiles] = useState<OrganizationProfile[]>([]);
@@ -355,12 +356,12 @@ const AdminSurveyBuilder = () => {
       createdBy: 'Mya Dennis',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      sections: template.sections.map((section, index) => ({
+      sections: template.sections.map((section) => ({
         ...section,
-        id: `section-${Date.now()}-${index}`,
-        questions: section.questions.map((question, qIndex) => ({
+        id: `section-${crypto.randomUUID()}`,
+        questions: section.questions.map((question) => ({
           ...question,
-          id: `question-${Date.now()}-${index}-${qIndex}`
+          id: `question-${crypto.randomUUID()}`
         }))
       })),
       branding: defaultBranding,
@@ -450,7 +451,7 @@ const AdminSurveyBuilder = () => {
     if (!survey) return;
     
     const newSection: SurveySection = {
-      id: `section-${Date.now()}`,
+      id: `section-${crypto.randomUUID()}`,
       title: 'New Section',
       description: '',
       order: survey.sections.length + 1,
@@ -473,7 +474,7 @@ const AdminSurveyBuilder = () => {
     if (!section) return;
 
     const newQuestion: SurveyQuestion = {
-      id: `question-${Date.now()}`,
+      id: `question-${crypto.randomUUID()}`,
       type: questionType as any,
       title: 'New Question',
       required: false,
@@ -638,7 +639,7 @@ const AdminSurveyBuilder = () => {
       const { category: _category, ...questionTemplate } = template;
       return {
         ...questionTemplate,
-        id: `ai-question-${Date.now()}-${index}`,
+        id: `ai-question-${crypto.randomUUID()}`,
         required: true,
         order: section.questions.length + index + 1,
       } as SurveyQuestion;
@@ -661,15 +662,38 @@ const AdminSurveyBuilder = () => {
   const saveSurvey = async () => {
     if (!survey) return;
 
+    const brokenMatrixQuestion = survey.sections
+      .flatMap((section) => section.questions)
+      .find(
+        (question) =>
+          question.required &&
+          (question.type === 'matrix' || question.type === 'matrix-likert') &&
+          (question.matrixRows ?? []).length === 0,
+      );
+    if (brokenMatrixQuestion) {
+      setSaveBlockedError(
+        `"${brokenMatrixQuestion.title || 'Untitled question'}" is a required matrix question with no rows — add at least one row before saving, or learners won't be able to answer it.`,
+      );
+      return;
+    }
+    setSaveBlockedError(null);
+
     setIsSaving(true);
     try {
-      // Simulate saving other survey data (replace with real save API)
-      // persist locally for now
       try {
         // prefer queued save to batch backend writes
-        await queueSaveSurvey(survey as Survey);
+        const saved = await queueSaveSurvey(survey as Survey);
+        // The survey starts with a client-only placeholder id until the
+        // first successful save. Adopt the real server-issued id (and
+        // update the URL to match) so every subsequent save is an update
+        // instead of another create — otherwise every autosave cycle would
+        // insert a brand-new duplicate row forever.
+        if (saved?.id && saved.id !== survey.id) {
+          setSurvey((prev) => (prev ? { ...prev, id: saved.id } : prev));
+          navigate(`/admin/surveys/builder/${saved.id}`, { replace: true });
+        }
       } catch (err) {
-        console.warn('Local save failed', err);
+        console.warn('Survey save failed', err);
       }
 
       // You could show a toast here to confirm save
@@ -1460,6 +1484,12 @@ const AdminSurveyBuilder = () => {
           </div>
         </div>
       </div>
+
+      {saveBlockedError && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {saveBlockedError}
+        </div>
+      )}
 
       {!isPreviewMode && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">

@@ -182,6 +182,15 @@ export const createClientSurveysService = ({
           error: { code: 'survey_not_found', message: `Survey not found for identifier ${id}` },
         };
       }
+      if (surveyRecord.status !== 'published') {
+        return {
+          status: 409,
+          error: {
+            code: 'survey_not_published',
+            message: 'This survey is no longer accepting responses.',
+          },
+        };
+      }
 
       const surveyId = surveyRecord.id ?? id;
       surveyIdForLogs = surveyId;

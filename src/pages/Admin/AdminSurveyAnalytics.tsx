@@ -262,11 +262,19 @@ const AdminSurveyAnalytics = () => {
             <RefreshCw className="h-4 w-4" />
             <span>Refresh</span>
           </button>
-          <button className="btn-outline flex items-center space-x-2">
+          <button
+            disabled
+            title="Sharing is coming soon"
+            className="btn-outline flex items-center space-x-2 cursor-not-allowed opacity-50"
+          >
             <Share className="h-4 w-4" />
             <span>Share</span>
           </button>
-          <button className="btn-cta flex items-center space-x-2">
+          <button
+            disabled
+            title="Export is coming soon"
+            className="btn-cta flex items-center space-x-2 cursor-not-allowed opacity-50"
+          >
             <Download className="h-4 w-4" />
             <span>Export</span>
           </button>
